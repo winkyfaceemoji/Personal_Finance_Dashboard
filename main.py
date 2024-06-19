@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import json
 
 def import_unsortfiles(u_path):
     #Get File names and paths, store in dictionary    
@@ -15,8 +16,16 @@ def import_unsortfiles(u_path):
     return files
 
 #global variables
-unsorted_path = r'E:\Documents\Current Finances\Activity\unsorted\Expenses'
-sorted_path = r'E:\Documents\Current Finances\Activity\sorted'
+with open("setup.json", "r") as setup_file:
+    setup = json.load(setup_file)
+
+# print(type(setup))
+# exit()
+unsorted_path = setup['unsorted_path']
+#r'E:\Documents\Current Finances\Activity\unsorted\Expenses'
+sorted_path = setup['sorted_path']
+#r'E:\Documents\Current Finances\Activity\sorted'
+
 
 def main():
     
