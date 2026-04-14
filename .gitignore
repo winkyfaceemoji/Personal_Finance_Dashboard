@@ -1,0 +1,12 @@
+# 1. Ignore the files inside the folders
+Data/RAW/*
+Data/SORTED/*
+
+# 2. BUT do NOT ignore the .gitkeep files
+!Data/RAW/.gitkeep
+!Data/SORTED/.gitkeep
+
+
+# Other ignores
+.venv/
+**/__pycache__/
