@@ -1,0 +1,87 @@
+/* Dash 4 dropdown theming */
+/* CSS variables are overridden on <html> via JS (dropdown_theme.js),
+   so var(--Dash-Fill-Inverse-Strong) resolves to the theme color everywhere.
+   These rules are belt-and-suspenders for color/text where variables aren't used. */
+
+body.dark-theme { color: #ffffff; }
+body.light-theme { color: #0a0a0f; }
+
+/* Trigger button */
+body.dark-theme .dash-dropdown,
+.dark-theme .dash-dropdown {
+    background-color: #111318 !important;
+    border-color: #252830 !important;
+    color: #ffffff !important;
+}
+
+/* Popup content */
+body.dark-theme .dash-dropdown-content,
+.dark-theme .dash-dropdown-content {
+    background-color: #111318 !important;
+    border-color: #252830 !important;
+    color: #ffffff !important;
+}
+
+/* Option items */
+body.dark-theme .dash-dropdown-option,
+.dark-theme .dash-dropdown-option {
+    color: #ffffff !important;
+}
+body.dark-theme .dash-dropdown-option:hover,
+body.dark-theme .dash-dropdown-option:focus,
+.dark-theme .dash-dropdown-option:hover,
+.dark-theme .dash-dropdown-option:focus {
+    background-color: #252830 !important;
+}
+
+/* Placeholder, search, misc */
+body.dark-theme .dash-dropdown-placeholder,
+.dark-theme .dash-dropdown-placeholder { color: #8a8fa8 !important; }
+
+body.dark-theme .dash-dropdown-search,
+.dark-theme .dash-dropdown-search { color: #ffffff !important; background: transparent !important; }
+
+body.dark-theme .dash-dropdown-search-container,
+.dark-theme .dash-dropdown-search-container {
+    background-color: #111318 !important;
+    border-color: #252830 !important;
+}
+
+body.dark-theme .dash-dropdown-clear,
+body.dark-theme .dash-dropdown-trigger-icon,
+.dark-theme .dash-dropdown-clear,
+.dark-theme .dash-dropdown-trigger-icon { color: #8a8fa8 !important; }
+
+body.dark-theme .dash-dropdown-value,
+.dark-theme .dash-dropdown-value { color: #ffffff !important; }
+
+/* Wrapper inherits dark bg so no white flash */
+body.dark-theme .dash-dropdown-wrapper,
+.dark-theme .dash-dropdown-wrapper { background-color: #111318 !important; }
+
+/* ── Light theme ── */
+body.light-theme .dash-dropdown,
+.light-theme .dash-dropdown {
+    background-color: #f0f1f5 !important;
+    border-color: #dcdee8 !important;
+    color: #0a0a0f !important;
+}
+body.light-theme .dash-dropdown-content,
+.light-theme .dash-dropdown-content {
+    background-color: #f0f1f5 !important;
+    border-color: #dcdee8 !important;
+    color: #0a0a0f !important;
+}
+body.light-theme .dash-dropdown-option,
+.light-theme .dash-dropdown-option { color: #0a0a0f !important; }
+
+body.light-theme .dash-dropdown-option:hover,
+body.light-theme .dash-dropdown-option:focus,
+.light-theme .dash-dropdown-option:hover,
+.light-theme .dash-dropdown-option:focus { background-color: #dcdee8 !important; }
+
+body.light-theme .dash-dropdown-value,
+.light-theme .dash-dropdown-value { color: #0a0a0f !important; }
+
+body.light-theme .dash-dropdown-wrapper,
+.light-theme .dash-dropdown-wrapper { background-color: #f0f1f5 !important; }

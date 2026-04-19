@@ -9,10 +9,18 @@ docker build -t personal-finance-app .
 docker run -p 8050:8050 personal-finance-app
 "
 
-##To not run in docker:
+##To not run in docker - linux:
 "
+python -m venv .venv
 source .venv/bin/activate                                                
  python app.py
+"
+
+##To setup in Windows:
+"
+python -m venv .venv
+ .venv\Scripts\pip install -r requirements.txt
+ .venv\Scripts\python app.py
 "
 
 

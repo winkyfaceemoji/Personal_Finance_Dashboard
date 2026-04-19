@@ -10,3 +10,4 @@ Data/SORTED/*
 # Other ignores
 .venv/
 **/__pycache__/
+.claude/
