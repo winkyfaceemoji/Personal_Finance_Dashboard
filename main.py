@@ -1,25 +1,27 @@
+import re
 import pandas as pd
 from pathlib import Path
 
 # ── Configuration ────────────────────────────────────────────────────────────
-BASE_DIR     = Path(__file__).parent
-INPUT_FOLDER = BASE_DIR / "Data" / "RAW"
-OUTPUT_FILE  = BASE_DIR / "Data" / "SORTED" / "combined_transactions.csv"
-MASTER_FILE  = BASE_DIR / "Data" / "SORTED" / "edited_combined_transactions.csv"
+BASE_DIR              = Path(__file__).parent
+INPUT_FOLDER          = BASE_DIR / "Data" / "RAW"
+OUTPUT_FILE           = BASE_DIR / "Data" / "SORTED" / "combined_transactions.csv"
+MASTER_FILE           = BASE_DIR / "Data" / "SORTED" / "edited_combined_transactions.csv"
+DISCOVER_FIX_FLAG     = BASE_DIR / "Data" / "SORTED" / ".discover_amounts_fixed"
 
 # Unified output schema
 UNIFIED_COLUMNS = [
-    "date", "post_date", "description", "amount", "category",
-    "type", "balance", "memo", "check_or_slip", "source"
+    "date", "post_date", "description", "amount", "original_category",
+    "type", "balance", "memo", "check_or_slip", "source", "card_last4"
 ]
 
-# Master file schema — same as unified + master_category
-MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category"]
+# Master file schema — unified + user-assigned columns
+MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category", "sub_category"]
 
 # Columns used to match existing rows when merging into the master file.
-# All non-master_category columns must match exactly for a row to be
-# considered already present (and have its master_category preserved).
-MATCH_COLUMNS = UNIFIED_COLUMNS
+# card_last4 excluded: old rows lack it and would never match otherwise.
+# User-assigned columns (master_category, sub_category) also excluded.
+MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c != "card_last4"]
 
 # ── Header signatures used to detect which bank format a file is ─────────────
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
@@ -49,7 +51,7 @@ def normalize_chase_debit(df: pd.DataFrame) -> pd.DataFrame:
     out["post_date"]     = pd.to_datetime(df["Posting Date"], errors="coerce")
     out["description"]   = df["Description"].str.strip()
     out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce")
-    out["category"]      = None
+    out["original_category"] = None
     out["type"]          = df["Type"].str.strip()
     out["balance"]       = pd.to_numeric(df["Balance"], errors="coerce")
     out["memo"]          = None
@@ -68,7 +70,7 @@ def normalize_chase_credit(df: pd.DataFrame) -> pd.DataFrame:
     out["post_date"]     = pd.to_datetime(df["Post Date"], errors="coerce")
     out["description"]   = df["Description"].str.strip()
     out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce")
-    out["category"]      = df["Category"].str.strip()
+    out["original_category"] = df["Category"].str.strip()
     out["type"]          = df["Type"].str.strip()
     out["balance"]       = None
     out["memo"]          = df["Memo"].astype(str).str.strip().replace("nan", None)
@@ -86,8 +88,8 @@ def normalize_discover_credit(df: pd.DataFrame) -> pd.DataFrame:
     out["date"]          = pd.to_datetime(df["Trans. Date"], errors="coerce")
     out["post_date"]     = pd.to_datetime(df["Post Date"], errors="coerce")
     out["description"]   = df["Description"].str.strip()
-    out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce")
-    out["category"]      = df["Category"].str.strip()
+    out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce") * -1
+    out["original_category"] = df["Category"].str.strip()
     out["type"]          = None
     out["balance"]       = None
     out["memo"]          = None
@@ -117,8 +119,17 @@ def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
         print(f"  [SKIP] Unrecognized format: {filepath.name}")
         return None
 
-    print(f"  [OK]   {filepath.name} → {fmt}")
-    return NORMALIZERS[fmt](df)
+    result = NORMALIZERS[fmt](df)
+
+    # Extract card last-4 from Chase filenames: Chase_XXXX_Activity...
+    last4 = None
+    m = re.search(r"Chase(\d{4})_", filepath.name, re.IGNORECASE)
+    if m:
+        last4 = m.group(1)
+    result["card_last4"] = last4 if last4 else ""
+
+    print(f"  [OK]   {filepath.name} -> {fmt}" + (f" (card ...{last4})" if last4 else ""))
+    return result
 
 
 def merge_into_master(combined: pd.DataFrame) -> None:
@@ -143,12 +154,46 @@ def merge_into_master(combined: pd.DataFrame) -> None:
     if not MASTER_FILE.exists():
         # First run — create master file from scratch
         combined["master_category"] = None
+        combined["sub_category"]    = None
         combined[MASTER_COLUMNS].to_csv(MASTER_FILE, index=False)
         print(f"  Master file created with {len(combined)} rows → {MASTER_FILE}")
         return
 
     # Load existing master file
-    master = pd.read_csv(MASTER_FILE)
+    master = pd.read_csv(MASTER_FILE, dtype={"card_last4": str})
+
+    master_dirty = False  # tracks whether migrations modified master and need a write
+
+    # ── Schema migrations (old files) ────────────────────────────────────
+    if "category" in master.columns and "original_category" not in master.columns:
+        master = master.rename(columns={"category": "original_category"})
+        master_dirty = True
+        print("  Migrated: renamed 'category' → 'original_category'")
+    if "sub_category" not in master.columns:
+        master["sub_category"] = None
+        master_dirty = True
+    if "card_last4" not in master.columns:
+        master["card_last4"] = ""
+        master_dirty = True
+    else:
+        master["card_last4"] = master["card_last4"].fillna("").astype(str).replace("nan", "")
+
+    # ── One-time migration: fix Discover Credit amount signs ──────────────
+    # Remove all existing Discover rows so merge_into_master re-adds them
+    # from the current ingest (which already applies the correct sign negation).
+    if not DISCOVER_FIX_FLAG.exists():
+        disc_mask = master["source"] == "Discover Credit"
+        n = disc_mask.sum()
+        if n:
+            master = master[~disc_mask].reset_index(drop=True)
+            master_dirty = True
+            print(f"  Removed {n} Discover rows for sign-fix re-ingest")
+        DISCOVER_FIX_FLAG.touch()
+
+    # Write back immediately if any migration changed the file
+    if master_dirty:
+        master.to_csv(MASTER_FILE, index=False)
+        print("  Master file updated with schema/data migrations.")
 
     # Normalise date columns in master for comparison
     for col in ["date", "post_date"]:
@@ -156,7 +201,7 @@ def merge_into_master(combined: pd.DataFrame) -> None:
             master[col] = pd.to_datetime(master[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
     # Build a set of tuples from the master for fast exact-match lookup
-    # Use MATCH_COLUMNS only — master_category is intentionally excluded
+    # Use MATCH_COLUMNS only — user-assigned columns are intentionally excluded
     def row_key(df: pd.DataFrame) -> pd.Series:
         """Return a series of tuples representing each row's match key."""
         return df[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
@@ -164,22 +209,38 @@ def merge_into_master(combined: pd.DataFrame) -> None:
     existing_keys = set(row_key(master))
     combined_keys = row_key(combined)
 
-    new_mask    = ~combined_keys.isin(existing_keys)
-    new_rows    = combined[new_mask].copy()
+    new_mask = ~combined_keys.isin(existing_keys)
+    new_rows = combined[new_mask].copy()
     new_rows["master_category"] = None
+    new_rows["sub_category"]    = None
 
-    if new_rows.empty:
+    # Backfill card_last4 on existing rows that don't have it yet
+    combined_with_last4 = combined[combined["card_last4"].notna()]
+    if not combined_with_last4.empty:
+        key_to_last4 = dict(zip(row_key(combined_with_last4), combined_with_last4["card_last4"]))
+        needs_fill = master["card_last4"].isna() | (master["card_last4"] == "")
+        if needs_fill.any():
+            filled_vals = row_key(master[needs_fill]).map(key_to_last4).astype(object)
+            master.loc[needs_fill, "card_last4"] = filled_vals
+            n_filled = filled_vals.notna().sum()
+            if n_filled:
+                master_dirty = True
+                print(f"  Backfilled card_last4 for {n_filled} existing row(s)")
+
+    if new_rows.empty and not master_dirty:
         print(f"  No new transactions found. Master file unchanged.")
-    else:
+        return
+
+    if not new_rows.empty:
         master = pd.concat([master, new_rows[MASTER_COLUMNS]], ignore_index=True)
+        print(f"  {len(new_rows)} new transaction(s) added to master file")
 
-        # Re-sort by date ascending
-        master["date"] = pd.to_datetime(master["date"], errors="coerce")
-        master.sort_values("date", inplace=True, ignore_index=True)
-        master["date"] = master["date"].dt.strftime("%Y-%m-%d")
-
-        master.to_csv(MASTER_FILE, index=False)
-        print(f"  {len(new_rows)} new transaction(s) added to master file → {MASTER_FILE}")
+    # Re-sort by date ascending and write
+    master["date"] = pd.to_datetime(master["date"], errors="coerce")
+    master.sort_values("date", inplace=True, ignore_index=True)
+    master["date"] = master["date"].dt.strftime("%Y-%m-%d")
+    master.to_csv(MASTER_FILE, index=False)
+    print(f"  Master file saved -> {MASTER_FILE}")
 
 
 def main():
@@ -228,3 +289,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    import subprocess, sys
+    subprocess.run([sys.executable, BASE_DIR / "app.py"])
