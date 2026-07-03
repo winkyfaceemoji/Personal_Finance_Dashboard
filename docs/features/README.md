@@ -2,6 +2,12 @@
 
 The app is split into two runtime concerns: an **ingest pipeline** (`main.py`) that turns raw bank CSVs into a clean master file, and a **Dash dashboard** (`app.py`) that reads that file and presents an interactive spending dashboard. Running `main.py` triggers both in sequence.
 
+**Dev workflow (Docker with hot-reload):**
+```cmd
+docker run -p 8050:8050 -v "%cd%:/app" personal-finance
+```
+Save any `.py` file → Dash reloads automatically. Rebuild the image only when `requirements.txt` changes.
+
 ```
 Bank CSVs (Data/RAW/)
        │
