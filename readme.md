@@ -10,14 +10,14 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 .
 ├── main.py                  # Ingest pipeline → launches dashboard
 ├── app.py                   # Dash dashboard (layout + all callbacks)
+├── config.py                # Data directory resolution (env var > config.json > Test Data/)
+├── config.json              # Your saved data folder path — git-ignored, created on first save
 ├── rules.csv                # Keyword → category auto-tagging rules
 ├── Modules/
 │   └── transforms.py        # Data helpers (load, filter, aggregate)
-├── Data/
-│   ├── RAW/                 # Drop your bank CSVs here (git-ignored)
-│   └── SORTED/
-│       ├── combined_transactions.csv          # Pipeline output (git-ignored)
-│       └── edited_combined_transactions.csv   # Master file with categories (git-ignored)
+├── Test Data/               # Anonymized demo data — works out of the box
+│   ├── RAW/                 # Demo bank CSVs (tracked in git)
+│   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
 ├── assets/
 │   ├── dropdown_theme.css   # Dash 4 dropdown theme overrides
 │   └── dropdown_theme.js    # Runtime CSS-variable injection for theming
@@ -32,8 +32,7 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ## Prerequisites
 
 - Python 3.12+
-- Bank CSV exports placed in `Data/RAW/`
-  Supported formats: Chase Debit, Chase Credit, Discover Credit
+- Supported bank CSV formats: Chase Debit, Chase Credit, Discover Credit
 
 ---
 
@@ -79,6 +78,19 @@ The volume mount overlays your local project directory onto `/app` inside the co
 
 ---
 
+## First launch
+
+On first launch the app automatically uses the included `Test Data/` folder, which contains anonymized demo transactions. No setup required — just run and open the browser.
+
+To use your own bank data, click **Change Data Folder** (or wait for the setup screen on a fresh install with no `Test Data/` folder), browse to your data directory, and click **Save & Launch**. The path is saved to `config.json` and used on every subsequent start.
+
+**Data directory priority:**
+1. `FINANCE_DATA_DIR` environment variable (useful for Docker / CI)
+2. `config.json` in the project root (set via the in-app setup screen)
+3. `Test Data/` folder in the project root (built-in demo data)
+
+---
+
 ## Running
 
 One command starts everything — the ingest pipeline runs first, then the dashboard launches automatically:
@@ -93,7 +105,7 @@ python main.py
 
 Open `http://localhost:8050` in a browser. To stop: `Ctrl+C`.
 
-The ingest step reads every CSV in `Data/RAW/`, normalises each file to a unified schema, deduplicates rows, and merges into `edited_combined_transactions.csv` — preserving any category assignments already present. New transactions are appended; existing ones are untouched.
+The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, deduplicates rows, and merges into `edited_combined_transactions.csv` — preserving any category assignments already present. New transactions are appended; existing ones are untouched.
 
 ---
 
@@ -182,7 +194,9 @@ Edit `rules.csv` directly to add, remove, or adjust rules — no code change nee
 
 ## Data files
 
-`Data/RAW/` and `Data/SORTED/` are git-ignored. The `.gitkeep` files preserve the empty directories in the repository. Do not commit your transaction CSVs.
+`Test Data/RAW/` contains anonymized demo CSVs and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
+
+If you point the app at your own data directory, that folder is entirely outside the repository — your real transaction CSVs are never committed. `config.json` (which stores the path to your folder) is also git-ignored.
 
 ---
 

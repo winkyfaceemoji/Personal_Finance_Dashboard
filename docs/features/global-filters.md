@@ -71,4 +71,4 @@ The `period_label` shown in the stat card titles reflects the active filter scop
 
 ## Expense exclusions
 
-`Transfer Out` and `Credit Card Payment` categories are always excluded from expense totals, regardless of filters. This prevents internal transfers and credit card payment transactions on the debit account from being double-counted alongside the individual credit card purchases. The exclusion set is defined in `EXCLUDED_CATEGORIES` in `app.py`.
+Rows tagged `Transfer` in `master_category` are excluded from all income and expense totals regardless of filters. This prevents internal transfers, brokerage moves, and credit card payments from being double-counted alongside actual spending. The exclusion set is `EXCLUDED_CATEGORIES = {"Transfer"}` in `app.py`, passed to every `get_expenses` and `get_income` call.
