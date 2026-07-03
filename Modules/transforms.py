@@ -4,29 +4,39 @@ from pathlib import Path
 
 # ── Predefined categories ─────────────────────────────────────────────────────
 PREDEFINED_CATEGORIES = [
-    # Expenses
-    "Food & Dining",
-    "Transport",
-    "Utilities",
-    "Rent/Mortgage",
-    "Shopping",
-    "Healthcare",
-    "Entertainment",
-    "Subscriptions",
-    "Personal Care",
-    # Income
-    "Paycheck",
-    "Transfer In",
-    "Venmo/Zelle In",
-    "Reimbursement",
-    # Debit-specific
-    "Transfer Out",
-    "Credit Card Payment",
-    "ATM Withdrawal",
+    "Expense",
+    "Income",
+    "Transfer",
 ]
 
 
-def load_transactions(path: Path | str) -> pd.DataFrame:
+def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd.DataFrame:
+    """
+    Apply keyword-based auto-categorization to rows that have no master_category.
+    Rules are loaded from a CSV with 'keyword' and 'category' columns.
+    First matching rule wins. master_category always takes precedence over rules.
+    """
+    if not rules_path or not Path(rules_path).exists():
+        return df
+    try:
+        rules = pd.read_csv(rules_path)
+    except Exception:
+        return df
+    if rules.empty or not {"keyword", "category"}.issubset(rules.columns):
+        return df
+
+    no_override = df["master_category"] == ""
+    for _, rule in rules.iterrows():
+        keyword  = str(rule["keyword"]).strip().lower()
+        category = str(rule["category"]).strip()
+        if not keyword or not category:
+            continue
+        matches = no_override & df["description"].str.lower().str.contains(keyword, regex=False, na=False)
+        df.loc[matches, "effective_category"] = category
+    return df
+
+
+def load_transactions(path: Path | str, rules_path: Path | str | None = None) -> pd.DataFrame:
     """
     Load edited_combined_transactions.csv and return a cleaned dataframe.
 
@@ -36,7 +46,7 @@ def load_transactions(path: Path | str) -> pd.DataFrame:
     - Ensures amount is numeric
     - Adds convenience columns: month, month_str, year
     """
-    df = pd.read_csv(path, parse_dates=["date", "post_date"])
+    df = pd.read_csv(path, parse_dates=["date", "post_date"], dtype={"card_last4": str})
 
     # Ensure master_category column exists (safety for first run)
     if "master_category" not in df.columns:
@@ -48,14 +58,24 @@ def load_transactions(path: Path | str) -> pd.DataFrame:
     # Drop rows where amount couldn't be parsed
     df = df.dropna(subset=["amount"])
 
-    # Clean category and master_category
-    df["category"] = df["category"].fillna("").str.strip()
-    df["master_category"] = df["master_category"].fillna("").str.strip()
+    # Backward-compat: rename old column name if present
+    if "category" in df.columns and "original_category" not in df.columns:
+        df = df.rename(columns={"category": "original_category"})
+    if "sub_category" not in df.columns:
+        df["sub_category"] = None
+    if "card_last4" not in df.columns:
+        df["card_last4"] = ""
+
+    # Clean original_category and master_category
+    df["original_category"] = df["original_category"].fillna("").str.strip()
+    df["master_category"]   = df["master_category"].fillna("").str.strip()
+    df["sub_category"]      = df["sub_category"].fillna("")
+    df["card_last4"]        = df["card_last4"].fillna("")
 
     # effective_category: master overrides bank, fallback to Uncategorized
     df["effective_category"] = df.apply(
         lambda r: r["master_category"] if r["master_category"] != ""
-                  else (r["category"] if r["category"] != "" else "Uncategorized"),
+                  else (r["original_category"] if r["original_category"] != "" else "Uncategorized"),
         axis=1,
     )
 
@@ -64,92 +84,99 @@ def load_transactions(path: Path | str) -> pd.DataFrame:
     df["month_str"] = df["date"].dt.strftime("%Y-%m")
     df["year"]      = df["date"].dt.year
 
+    apply_auto_categories(df, rules_path)
     return df
 
 
-def get_expenses(df: pd.DataFrame) -> pd.DataFrame:
-    """Return only expense rows (negative amounts)."""
-    return df[df["amount"] < 0].copy()
+def get_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+    """Return only expense rows (negative amounts), skipping excluded categories."""
+    mask = df["amount"] < 0
+    if excluded:
+        mask = mask & ~df["effective_category"].isin(excluded)
+    return df[mask].copy()
 
 
-def get_income(df: pd.DataFrame) -> pd.DataFrame:
-    """Return only income rows (positive amounts)."""
-    return df[df["amount"] > 0].copy()
+def get_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+    """Return only income rows (positive amounts), skipping excluded categories."""
+    mask = df["amount"] > 0
+    if excluded:
+        mask = mask & ~df["effective_category"].isin(excluded)
+    return df[mask].copy()
 
 
-def monthly_expenses(df: pd.DataFrame) -> pd.DataFrame:
+def monthly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
     """
     Total expenses grouped by month.
     Returns: month_str, total_expenses (positive values).
     """
-    expenses = get_expenses(df)
+    expenses = get_expenses(df, excluded)
     grouped = (
         expenses
-        .groupby("month_str")["amount"]
+        .groupby("month_str", sort=True)["amount"]
         .sum()
         .reset_index()
         .rename(columns={"amount": "total_expenses"})
     )
     grouped["total_expenses"] = grouped["total_expenses"].abs()
-    return grouped.sort_values("month_str")
+    return grouped  # already sorted by groupby(sort=True)
 
 
-def monthly_income(df: pd.DataFrame) -> pd.DataFrame:
+def monthly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
     """
     Total income grouped by month.
     Returns: month_str, total_income.
     """
-    income = get_income(df)
+    income = get_income(df, excluded)
     grouped = (
         income
-        .groupby("month_str")["amount"]
+        .groupby("month_str", sort=True)["amount"]
         .sum()
         .reset_index()
         .rename(columns={"amount": "total_income"})
     )
-    return grouped.sort_values("month_str")
+    return grouped  # already sorted by groupby(sort=True)
 
 
-def yearly_expenses(df: pd.DataFrame) -> pd.DataFrame:
+def yearly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
     """
     Total expenses grouped by year.
     Returns: year, total_expenses (positive values).
     """
-    expenses = get_expenses(df)
+    expenses = get_expenses(df, excluded)
     grouped = (
         expenses
-        .groupby("year")["amount"]
+        .groupby("year", sort=True)["amount"]
         .sum()
         .reset_index()
         .rename(columns={"amount": "total_expenses"})
     )
     grouped["total_expenses"] = grouped["total_expenses"].abs()
-    return grouped.sort_values("year")
+    return grouped  # already sorted by groupby(sort=True)
 
 
-def yearly_income(df: pd.DataFrame) -> pd.DataFrame:
+def yearly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
     """
     Total income grouped by year.
     Returns: year, total_income.
     """
-    income = get_income(df)
+    income = get_income(df, excluded)
     grouped = (
         income
-        .groupby("year")["amount"]
+        .groupby("year", sort=True)["amount"]
         .sum()
         .reset_index()
         .rename(columns={"amount": "total_income"})
     )
-    return grouped.sort_values("year")
+    return grouped  # already sorted by groupby(sort=True)
 
 
-def expenses_by_category(df: pd.DataFrame, month_str: str = None) -> pd.DataFrame:
+def expenses_by_category(df: pd.DataFrame, month_str: str = None, excluded: set | None = None) -> pd.DataFrame:
     """
     Total expenses grouped by effective_category.
     Optionally filter to a specific month (e.g. '2024-01').
     Returns: category, total_expenses (positive values).
     """
-    expenses = get_expenses(df)
+    expenses = get_expenses(df, excluded)
     if month_str:
         expenses = expenses[expenses["month_str"] == month_str]
 

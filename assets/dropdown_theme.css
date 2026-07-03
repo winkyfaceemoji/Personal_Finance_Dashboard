@@ -85,3 +85,15 @@ body.light-theme .dash-dropdown-value,
 
 body.light-theme .dash-dropdown-wrapper,
 .light-theme .dash-dropdown-wrapper { background-color: #f0f1f5 !important; }
+
+/* Transactions table row hover — theme-matched colours */
+.dark-theme #editor-table tr:hover td,
+.dark-theme #editor-table tr:hover th {
+    background-color: #252830 !important;
+    color: #ffffff !important;
+}
+.light-theme #editor-table tr:hover td,
+.light-theme #editor-table tr:hover th {
+    background-color: #dcdee8 !important;
+    color: #0a0a0f !important;
+}

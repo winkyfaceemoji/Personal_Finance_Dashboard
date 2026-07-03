@@ -1,0 +1,47 @@
+# Features overview
+
+The app is split into two runtime concerns: an **ingest pipeline** (`main.py`) that turns raw bank CSVs into a clean master file, and a **Dash dashboard** (`app.py`) that reads that file and presents an interactive spending dashboard. Running `main.py` triggers both in sequence.
+
+```
+Bank CSVs (Data/RAW/)
+       │
+       ▼
+  main.py  ──────────────────────────────────────────────────────────────
+  │  detect format (Chase Debit / Chase Credit / Discover Credit)
+  │  normalise to unified schema
+  │  deduplicate
+  │  merge into master, preserving existing master_category values
+       │
+       ▼
+  Data/SORTED/edited_combined_transactions.csv  (the master file)
+       │
+       ▼
+  app.py  ────────────────────────────────────────────────────────────────
+  │  Modules/transforms.py  ← all aggregation / filtering helpers
+  │  rules.csv              ← keyword auto-categorization rules
+  │
+  ├─ Filter bar  (source / year / month / view / reload)
+  │
+  ├─ Summary tab
+  │    ├─ Stat cards  (totals + MoM/YoY delta)
+  │    ├─ Main bar chart  (monthly or yearly, with rolling avg)
+  │    ├─ Net chart  (income − expenses)
+  │    └─ Category breakdown  (bar chart + click drilldown)
+  │
+  └─ All Transactions tab
+       ├─ Transaction table  (paginate, sort — driven by global filters)
+       └─ Import / export CSV
+```
+
+---
+
+## Feature docs
+
+| Document | What it covers |
+|----------|---------------|
+| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: format detection, normalisation, deduplication, master-file merge, auto-launch |
+| [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
+| [global-filters.md](global-filters.md) | Filter bar: source / year / month / view toggle, reload button, uncategorized badge |
+| [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, net chart, stat cards with MoM/YoY delta |
+| [category-breakdown.md](category-breakdown.md) | Category horizontal bar chart, click-to-drilldown, filter-change behaviour |
+| [all-transactions.md](all-transactions.md) | All Transactions tab: transaction table, import/export CSV workflow |
