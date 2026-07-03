@@ -19,11 +19,16 @@ def get_data_dir() -> Path | None:
             d = json.loads(CONFIG_FILE.read_text()).get("data_dir")
             if d:
                 return Path(d)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: ignoring invalid {CONFIG_FILE.name} ({e})")
     if DEFAULT_DATA_DIR.exists():
         return DEFAULT_DATA_DIR
     return None
+
+
+def get_master_path(data_dir: Path | None) -> Path | None:
+    """Return the master transactions file path for a data directory, or None."""
+    return (data_dir / "SORTED" / "edited_combined_transactions.csv") if data_dir else None
 
 
 def save_data_dir(path: str) -> None:

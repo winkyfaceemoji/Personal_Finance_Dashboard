@@ -29,7 +29,8 @@ Bank CSVs (RAW/)
        │
        ▼
   app.py  ────────────────────────────────────────────────────────────────
-  │  setup overlay  ← shown on first launch if no data dir is configured
+  │  setup overlay  ← auto-ingests Test Data/ on first launch;
+  │                    reopen anytime via CHANGE DATA FOLDER
   │  Modules/transforms.py  ← all aggregation / filtering helpers
   │  rules.csv              ← keyword auto-categorization rules
   │
@@ -53,6 +54,7 @@ Bank CSVs (RAW/)
 | Document | What it covers |
 |----------|---------------|
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, deduplication, master-file merge |
+| [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
 | [global-filters.md](global-filters.md) | Filter bar: source / year / month / view toggle, reload button, uncategorized badge |
 | [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, net chart, stat cards with MoM/YoY delta |

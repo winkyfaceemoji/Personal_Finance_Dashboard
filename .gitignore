@@ -4,3 +4,7 @@
 .claude/
 config.json
 Test Data/SORTED/
+
+# Legacy default data folder (pre configurable-data-directory) — may still
+# hold real bank data on machines that used the app before this feature.
+Data/
