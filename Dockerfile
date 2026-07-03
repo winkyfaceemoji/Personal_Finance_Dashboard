@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 8050
 
 # Command to run your app
-CMD ["python", "app.py"]
+CMD ["python", "main.py"]

@@ -56,10 +56,26 @@ pip install -r requirements.txt
 
 ### Docker
 
+Build the image once (only needed again if `requirements.txt` changes):
+
 ```bash
 docker build -t personal-finance .
-docker run -p 8050:8050 personal-finance
 ```
+
+Run with your local code mounted so file changes reload automatically — no rebuild required:
+
+```cmd
+# CMD (Windows) — run from the project root directory
+docker run -p 8050:8050 -v "%cd%:/app" personal-finance
+
+# PowerShell (Windows)
+docker run -p 8050:8050 -v "$($(Get-Location).Path):/app" personal-finance
+
+# bash / macOS / Linux
+docker run -p 8050:8050 -v $(pwd):/app personal-finance
+```
+
+The volume mount overlays your local project directory onto `/app` inside the container. Dash's built-in hot-reloader watches `.py` files and restarts the server within a second or two of any save. Your `Data/` folder is also mounted, so the ingest pipeline reads and writes CSV files directly on your machine.
 
 ---
 
