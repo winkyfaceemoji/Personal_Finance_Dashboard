@@ -31,9 +31,9 @@ MASTER_PATH = (_data_dir / "SORTED" / "edited_combined_transactions.csv") if _da
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 _EMPTY_DF = pd.DataFrame(columns=[
-    "date", "amount", "description", "source", "master_category",
+    "date", "post_date", "amount", "description", "source", "master_category",
     "sub_category", "original_category", "card_last4",
-    "effective_category", "month_str", "year",
+    "effective_category", "month", "month_str", "year",
 ])
 df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and MASTER_PATH.exists()) else _EMPTY_DF
 
@@ -353,7 +353,7 @@ app.layout = html.Div(
         html.Div(
             id="setup-overlay",
             style={
-                "display": "none" if MASTER_PATH else "flex",
+                "display": "none" if (MASTER_PATH and MASTER_PATH.exists()) else "flex",
                 "position": "fixed", "inset": "0", "zIndex": "9999",
                 "background": "var(--bg, #111)", "alignItems": "center",
                 "justifyContent": "center",
@@ -435,7 +435,7 @@ app.layout = html.Div(
 
         # Nav + filters bar
         card([
-            html.Div(style={"display": "flex", "alignItems": "center", "gap": "20px"}, children=[
+            html.Div(style={"display": "flex", "alignItems": "center", "gap": "20px", "flexWrap": "wrap"}, children=[
 
                 # Tab navigation
                 dcc.RadioItems(
@@ -458,7 +458,7 @@ app.layout = html.Div(
                 html.Div(style={"width": "1px", "height": "36px", "background": COLORS["border"], "flexShrink": "0"}),
 
                 # Filters
-                html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flex": "1"}, children=[
+                html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flex": "1", "flexWrap": "wrap"}, children=[
 
                     html.Div([
                         label("SOURCE"),
@@ -1005,6 +1005,8 @@ def import_csv(contents, filename, source, year, month, trigger):
     if missing:
         return dash.no_update, f"⚠ Missing columns: {', '.join(sorted(missing))}", dash.no_update
 
+    if not MASTER_PATH:
+        return dash.no_update, "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
         has_date    = "date"         in import_df.columns
         has_sub_cat = "sub_category" in import_df.columns
@@ -1071,6 +1073,8 @@ def _build_table_data(source: str, year, month: str) -> list[dict]:
 )
 def reload_data(_, trigger):
     global df
+    if not MASTER_PATH:
+        return "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
         from main import main as run_ingest
         run_ingest()
@@ -1133,8 +1137,17 @@ def _pick_folder() -> str:
     prevent_initial_call=True,
 )
 def browse_for_folder(n_clicks):
+    if not n_clicks:
+        return dash.no_update
     path = _pick_folder()
     return path if path else dash.no_update
+
+
+_OVERLAY_HIDDEN  = {
+    "display": "none", "position": "fixed", "inset": "0", "zIndex": "9999",
+    "background": "var(--bg, #111)", "alignItems": "center", "justifyContent": "center",
+}
+_OVERLAY_VISIBLE = {**_OVERLAY_HIDDEN, "display": "flex"}
 
 
 @app.callback(
@@ -1155,14 +1168,24 @@ def save_setup(n_clicks, path):
 
     if not data_dir.exists():
         return dash.no_update, f"Folder not found: {data_dir}"
+
     if not master.exists():
-        return dash.no_update, f"No master file found at {master}"
+        try:
+            from main import main as run_ingest
+            run_ingest()
+        except Exception as e:
+            return dash.no_update, f"Failed to run ingest: {e}"
+        if not master.exists():
+            return dash.no_update, f"Ingest ran but master file was not created at {master}"
 
     save_data_dir(str(data_dir))
     MASTER_PATH = master
-    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    try:
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except Exception as e:
+        return dash.no_update, f"Error loading data: {e}"
 
-    return {"display": "none"}, ""
+    return _OVERLAY_HIDDEN, ""
 
 
 if __name__ == "__main__":
