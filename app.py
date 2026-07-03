@@ -29,6 +29,15 @@ EXCLUDED_CATEGORIES = {"Transfer"}
 _data_dir   = get_data_dir()
 MASTER_PATH = (_data_dir / "SORTED" / "edited_combined_transactions.csv") if _data_dir else None
 
+# First launch: if a data directory resolved (e.g. the default Test Data/) but
+# hasn't been ingested yet, run the pipeline so its data shows immediately.
+if MASTER_PATH and not MASTER_PATH.exists():
+    try:
+        from main import main as _run_ingest
+        _run_ingest()
+    except Exception:
+        pass
+
 # ── Load data ─────────────────────────────────────────────────────────────────
 _EMPTY_DF = pd.DataFrame(columns=[
     "date", "post_date", "amount", "description", "source", "master_category",
@@ -400,12 +409,21 @@ app.layout = html.Div(
                         "cursor": "pointer", "whiteSpace": "nowrap",
                     }),
                 ]),
-                html.Button("Save & Launch", id="setup-save-btn", n_clicks=0, style={
-                    "width": "100%", "padding": "12px",
-                    "background": COLORS["accent"], "border": "none",
-                    "borderRadius": "6px", "color": "#fff",
-                    "fontSize": "14px", "fontWeight": "700", "cursor": "pointer",
-                }),
+                html.Div(style={"display": "flex", "gap": "8px"}, children=[
+                    html.Button("Cancel", id="setup-cancel-btn", n_clicks=0, style={
+                        "flex": "1", "padding": "12px",
+                        "background": "var(--card-bg, #1a1a1a)",
+                        "border": "1px solid var(--border, #555)",
+                        "borderRadius": "6px", "color": "var(--text, #fff)",
+                        "fontSize": "14px", "fontWeight": "600", "cursor": "pointer",
+                    }),
+                    html.Button("Save & Launch", id="setup-save-btn", n_clicks=0, style={
+                        "flex": "2", "padding": "12px",
+                        "background": COLORS["accent"], "border": "none",
+                        "borderRadius": "6px", "color": "#fff",
+                        "fontSize": "14px", "fontWeight": "700", "cursor": "pointer",
+                    }),
+                ]),
                 html.Div(id="setup-status", style={
                     "marginTop": "12px", "fontSize": "13px",
                     "color": "#e05c5c",
@@ -534,6 +552,9 @@ app.layout = html.Div(
                             "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
                         }),
                         html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
+                            html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
+                                        className="btn-secondary",
+                                        style={"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}),
                             html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
                                         className="btn-secondary",
                                         style={"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}),
@@ -1132,7 +1153,7 @@ def _pick_folder() -> str:
 
 
 @app.callback(
-    Output("setup-path-input", "value"),
+    Output("setup-path-input", "value", allow_duplicate=True),
     Input("setup-browse-btn", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1151,8 +1172,34 @@ _OVERLAY_VISIBLE = {**_OVERLAY_HIDDEN, "display": "flex"}
 
 
 @app.callback(
-    Output("setup-overlay", "style"),
-    Output("setup-status", "children"),
+    Output("setup-overlay", "style", allow_duplicate=True),
+    Output("setup-status", "children", allow_duplicate=True),
+    Output("setup-path-input", "value", allow_duplicate=True),
+    Input("open-setup-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def open_setup(n_clicks):
+    if not n_clicks:
+        return dash.no_update, dash.no_update, dash.no_update
+    current = str(MASTER_PATH.parent.parent) if MASTER_PATH else ""
+    return _OVERLAY_VISIBLE, "", current
+
+
+@app.callback(
+    Output("setup-overlay", "style", allow_duplicate=True),
+    Output("setup-status", "children", allow_duplicate=True),
+    Input("setup-cancel-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def cancel_setup(n_clicks):
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+    return _OVERLAY_HIDDEN, ""
+
+
+@app.callback(
+    Output("setup-overlay", "style", allow_duplicate=True),
+    Output("setup-status", "children", allow_duplicate=True),
     Input("setup-save-btn", "n_clicks"),
     State("setup-path-input", "value"),
     prevent_initial_call=True,
