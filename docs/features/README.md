@@ -9,7 +9,13 @@ docker run -p 8050:8050 -v "%cd%:/app" personal-finance
 Save any `.py` file → Dash reloads automatically. Rebuild the image only when `requirements.txt` changes.
 
 ```
-Bank CSVs (Data/RAW/)
+config.py  ─────────────────────────────────────────────────────────────
+│  resolve data directory: FINANCE_DATA_DIR env var
+│                        → config.json (saved via setup screen)
+│                        → Test Data/ (built-in demo, default)
+       │
+       ▼
+Bank CSVs (RAW/)
        │
        ▼
   main.py  ──────────────────────────────────────────────────────────────
@@ -19,10 +25,11 @@ Bank CSVs (Data/RAW/)
   │  merge into master, preserving existing master_category values
        │
        ▼
-  Data/SORTED/edited_combined_transactions.csv  (the master file)
+  SORTED/edited_combined_transactions.csv  (the master file)
        │
        ▼
   app.py  ────────────────────────────────────────────────────────────────
+  │  setup overlay  ← shown on first launch if no data dir is configured
   │  Modules/transforms.py  ← all aggregation / filtering helpers
   │  rules.csv              ← keyword auto-categorization rules
   │
@@ -45,7 +52,7 @@ Bank CSVs (Data/RAW/)
 
 | Document | What it covers |
 |----------|---------------|
-| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: format detection, normalisation, deduplication, master-file merge, auto-launch |
+| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, deduplication, master-file merge |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
 | [global-filters.md](global-filters.md) | Filter bar: source / year / month / view toggle, reload button, uncategorized badge |
 | [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, net chart, stat cards with MoM/YoY delta |

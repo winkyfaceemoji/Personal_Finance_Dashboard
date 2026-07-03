@@ -16,9 +16,21 @@ In dev Docker mode the local project directory is mounted into the container at 
 
 ---
 
+## Data directory
+
+The pipeline resolves its working folder at runtime via `config.get_data_dir()`, which checks in order:
+
+1. `FINANCE_DATA_DIR` environment variable
+2. `config.json` in the project root (written by the in-app setup screen)
+3. `Test Data/` folder in the project root (built-in demo data)
+
+`INPUT_FOLDER`, `OUTPUT_FILE`, and `MASTER_FILE` are all derived from this resolved directory, so `main()` always operates on the currently configured data location.
+
+---
+
 ## Inputs
 
-Drop CSV files into `Data/RAW/`. The pipeline auto-detects the bank format from the column headers. Three formats are supported:
+Drop CSV files into the configured `RAW/` folder (default: `Test Data/RAW/`). The pipeline auto-detects the bank format from the column headers. Three formats are supported:
 
 | Format constant | Source | Key columns used |
 |----------------|--------|-----------------|
@@ -57,18 +69,19 @@ Every normalised row has these columns:
 ## Processing steps
 
 ```
-1. Glob Data/RAW/ for *.csv (recursive)
-2. For each file:
+1. Resolve data directory via config.get_data_dir()
+2. Glob RAW/ for *.csv (recursive)
+3. For each file:
    a. Read with pandas, strip column-header whitespace
    b. detect_format() → match header set against known signatures
    c. Call the matching normaliser → unified-schema DataFrame
    d. Extract card_last4 from filename (Chase files only)
-3. Concatenate all normalised frames
-4. Deduplicate on all columns except card_last4
+4. Concatenate all normalised frames
+5. Deduplicate on all columns except card_last4
    (same transaction exported from two overlapping date-range files → one row)
-5. Sort by date ascending
-6. Write Data/SORTED/combined_transactions.csv  (raw pipeline output)
-7. merge_into_master()
+6. Sort by date ascending
+7. Write SORTED/combined_transactions.csv  (raw pipeline output)
+8. merge_into_master()
 ```
 
 ---
@@ -102,7 +115,6 @@ On each run, `merge_into_master` checks for and automatically applies these one-
 | Rename `category` → `original_category` | Old `category` column present | Renames in-place |
 | Add `sub_category` | Column missing | Added with blank values |
 | Add `card_last4` | Column missing | Added, then backfilled from current ingest |
-| Fix Discover amount signs | Flag file absent | Removes wrong-sign duplicate Discover rows |
 
 ---
 
@@ -110,5 +122,7 @@ On each run, `merge_into_master` checks for and automatically applies these one-
 
 | File | Updated by | Used by |
 |------|-----------|---------|
-| `Data/SORTED/combined_transactions.csv` | Every pipeline run | Not read by the app directly |
-| `Data/SORTED/edited_combined_transactions.csv` | Every pipeline run (append-only for new rows) | `app.py` on startup and after reload |
+| `SORTED/combined_transactions.csv` | Every pipeline run | Not read by the app directly |
+| `SORTED/edited_combined_transactions.csv` | Every pipeline run (append-only for new rows) | `app.py` on startup and after reload |
+
+Paths are relative to the configured data directory (default: `Test Data/`).
