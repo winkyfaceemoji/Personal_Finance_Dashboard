@@ -1,13 +1,10 @@
 import re
 import pandas as pd
 from pathlib import Path
+from config import get_data_dir
 
 # ── Configuration ────────────────────────────────────────────────────────────
-BASE_DIR              = Path(__file__).parent
-INPUT_FOLDER          = BASE_DIR / "Data" / "RAW"
-OUTPUT_FILE           = BASE_DIR / "Data" / "SORTED" / "combined_transactions.csv"
-MASTER_FILE           = BASE_DIR / "Data" / "SORTED" / "edited_combined_transactions.csv"
-DISCOVER_FIX_FLAG     = BASE_DIR / "Data" / "SORTED" / ".discover_amounts_fixed"
+BASE_DIR = Path(__file__).parent
 
 # Unified output schema
 UNIFIED_COLUMNS = [
@@ -132,7 +129,7 @@ def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
     return result
 
 
-def merge_into_master(combined: pd.DataFrame) -> None:
+def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
     """
     Merge newly ingested transactions into edited_combined_transactions.csv.
 
@@ -151,16 +148,16 @@ def merge_into_master(combined: pd.DataFrame) -> None:
         if col in combined.columns:
             combined[col] = pd.to_datetime(combined[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    if not MASTER_FILE.exists():
+    if not master_file.exists():
         # First run — create master file from scratch
         combined["master_category"] = None
         combined["sub_category"]    = None
-        combined[MASTER_COLUMNS].to_csv(MASTER_FILE, index=False)
-        print(f"  Master file created with {len(combined)} rows → {MASTER_FILE}")
+        combined[MASTER_COLUMNS].to_csv(master_file, index=False)
+        print(f"  Master file created with {len(combined)} rows → {master_file}")
         return
 
     # Load existing master file
-    master = pd.read_csv(MASTER_FILE, dtype={"card_last4": str})
+    master = pd.read_csv(master_file, dtype={"card_last4": str})
 
     master_dirty = False  # tracks whether migrations modified master and need a write
 
@@ -178,21 +175,9 @@ def merge_into_master(combined: pd.DataFrame) -> None:
     else:
         master["card_last4"] = master["card_last4"].fillna("").astype(str).replace("nan", "")
 
-    # ── One-time migration: fix Discover Credit amount signs ──────────────
-    # Remove all existing Discover rows so merge_into_master re-adds them
-    # from the current ingest (which already applies the correct sign negation).
-    if not DISCOVER_FIX_FLAG.exists():
-        disc_mask = master["source"] == "Discover Credit"
-        n = disc_mask.sum()
-        if n:
-            master = master[~disc_mask].reset_index(drop=True)
-            master_dirty = True
-            print(f"  Removed {n} Discover rows for sign-fix re-ingest")
-        DISCOVER_FIX_FLAG.touch()
-
     # Write back immediately if any migration changed the file
     if master_dirty:
-        master.to_csv(MASTER_FILE, index=False)
+        master.to_csv(master_file, index=False)
         print("  Master file updated with schema/data migrations.")
 
     # Normalise date columns in master for comparison
@@ -239,17 +224,26 @@ def merge_into_master(combined: pd.DataFrame) -> None:
     master["date"] = pd.to_datetime(master["date"], errors="coerce")
     master.sort_values("date", inplace=True, ignore_index=True)
     master["date"] = master["date"].dt.strftime("%Y-%m-%d")
-    master.to_csv(MASTER_FILE, index=False)
-    print(f"  Master file saved -> {MASTER_FILE}")
+    master.to_csv(master_file, index=False)
+    print(f"  Master file saved -> {master_file}")
 
 
 def main():
-    csv_files = [f for f in INPUT_FOLDER.rglob("*") if f.suffix.lower() == ".csv"]
-    if not csv_files:
-        print(f"No CSV files found in {INPUT_FOLDER}")
+    data_dir = get_data_dir()
+    if not data_dir:
+        print("No data directory configured. Launch the dashboard to set one up.")
         return
 
-    print(f"Found {len(csv_files)} CSV file(s) in {INPUT_FOLDER}\n")
+    input_folder = data_dir / "RAW"
+    output_file  = data_dir / "SORTED" / "combined_transactions.csv"
+    master_file  = data_dir / "SORTED" / "edited_combined_transactions.csv"
+
+    csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
+    if not csv_files:
+        print(f"No CSV files found in {input_folder}")
+        return
+
+    print(f"Found {len(csv_files)} CSV file(s) in {input_folder}\n")
 
     frames = []
     for f in csv_files:
@@ -273,18 +267,18 @@ def main():
     combined.sort_values("date", inplace=True, ignore_index=True)
 
     # Write combined_transactions.csv (clean pipeline output)
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(OUTPUT_FILE, index=False)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(output_file, index=False)
 
     print(f"\nPipeline complete.")
     print(f"  Rows before dedup : {before}")
     print(f"  Rows after dedup  : {after}")
     print(f"  Duplicates removed: {before - after}")
-    print(f"  Output saved to   : {OUTPUT_FILE}")
+    print(f"  Output saved to   : {output_file}")
 
     # Merge into master file, preserving existing master_category assignments
     print(f"\nMerging into master file...")
-    merge_into_master(combined)
+    merge_into_master(combined, master_file)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import dash
 from dash import dcc, html, dash_table, Input, Output, State
 import plotly.graph_objects as go
 
+from config import get_data_dir, save_data_dir
 from Modules.transforms import (
     load_transactions,
     monthly_expenses,
@@ -21,13 +22,20 @@ from Modules.transforms import (
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR   = Path(__file__).parent
-MASTER_PATH = BASE_DIR / "Data" / "SORTED" / "edited_combined_transactions.csv"
+BASE_DIR    = Path(__file__).parent
 RULES_PATH  = BASE_DIR / "rules.csv"
 EXCLUDED_CATEGORIES = {"Transfer"}
 
+_data_dir   = get_data_dir()
+MASTER_PATH = (_data_dir / "SORTED" / "edited_combined_transactions.csv") if _data_dir else None
+
 # ── Load data ─────────────────────────────────────────────────────────────────
-df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+_EMPTY_DF = pd.DataFrame(columns=[
+    "date", "amount", "description", "source", "master_category",
+    "sub_category", "original_category", "card_last4",
+    "effective_category", "month_str", "year",
+])
+df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and MASTER_PATH.exists()) else _EMPTY_DF
 
 # ── Colour palette ────────────────────────────────────────────────────────────
 # HTML/Dash elements use CSS custom properties so they respond to theme changes.
@@ -340,6 +348,71 @@ app.layout = html.Div(
 
         # Floating theme toggle button (position:fixed via CSS)
         html.Button("☽", id="theme-toggle-btn", n_clicks=0),
+
+        # ── Setup overlay (shown when no data directory is configured) ──────
+        html.Div(
+            id="setup-overlay",
+            style={
+                "display": "none" if MASTER_PATH else "flex",
+                "position": "fixed", "inset": "0", "zIndex": "9999",
+                "background": "var(--bg, #111)", "alignItems": "center",
+                "justifyContent": "center",
+            },
+            children=html.Div(style={
+                "background": "var(--card-bg, #1a1a1a)",
+                "border": "1px solid var(--border, #333)",
+                "borderRadius": "12px", "padding": "48px",
+                "width": "480px", "maxWidth": "90vw",
+            }, children=[
+                html.H1("FINANCE", style={
+                    "fontFamily": "'Syne', sans-serif", "fontSize": "32px",
+                    "fontWeight": "800", "letterSpacing": "-1px",
+                    "color": "var(--text)", "display": "inline",
+                }),
+                html.Span(" DASHBOARD", style={
+                    "fontFamily": "'Syne', sans-serif", "fontSize": "32px",
+                    "fontWeight": "800", "letterSpacing": "-1px",
+                    "color": COLORS["accent"],
+                }),
+                html.P(
+                    "Choose the folder that contains your RAW and SORTED data.",
+                    style={"marginTop": "24px", "marginBottom": "16px",
+                           "color": "var(--subtext, #888)", "fontSize": "14px"},
+                ),
+                html.Div(style={"display": "flex", "gap": "8px", "marginBottom": "12px"}, children=[
+                    dcc.Input(
+                        id="setup-path-input",
+                        type="text",
+                        placeholder=r"e.g. C:\Users\you\Finance\Data",
+                        debounce=False,
+                        style={
+                            "flex": "1", "padding": "10px 14px",
+                            "background": "var(--input-bg, #222)",
+                            "border": "1px solid var(--border, #444)",
+                            "borderRadius": "6px", "color": "var(--text, #fff)",
+                            "fontSize": "13px",
+                        },
+                    ),
+                    html.Button("Browse", id="setup-browse-btn", n_clicks=0, style={
+                        "padding": "10px 16px", "background": "var(--card-bg, #1a1a1a)",
+                        "border": "1px solid var(--border, #555)",
+                        "borderRadius": "6px", "color": "var(--text, #fff)",
+                        "cursor": "pointer", "whiteSpace": "nowrap",
+                    }),
+                ]),
+                html.Button("Save & Launch", id="setup-save-btn", n_clicks=0, style={
+                    "width": "100%", "padding": "12px",
+                    "background": COLORS["accent"], "border": "none",
+                    "borderRadius": "6px", "color": "#fff",
+                    "fontSize": "14px", "fontWeight": "700", "cursor": "pointer",
+                }),
+                html.Div(id="setup-status", style={
+                    "marginTop": "12px", "fontSize": "13px",
+                    "color": "#e05c5c",
+                }),
+            ]),
+        ),
+        # ────────────────────────────────────────────────────────────────────
 
 
         # Header
@@ -1018,6 +1091,78 @@ def update_uncategorized_count(_):
     return f"⚠ {n:,} uncategorized"
 
 
+
+
+# ── Setup overlay callbacks ───────────────────────────────────────────────────
+
+def _pick_folder() -> str:
+    """Open a native OS folder picker. Returns the selected path or ''."""
+    import sys, subprocess
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Add-Type -AssemblyName System.Windows.Forms; "
+                 "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                 "$d.Description = 'Select your Data folder'; "
+                 "$d.ShowNewFolderButton = $true; "
+                 "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
+                 "{ $d.SelectedPath }"],
+                capture_output=True, text=True, timeout=120,
+            )
+            return result.stdout.strip()
+        except Exception:
+            pass
+    # macOS / Linux fallback
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", True)
+        path = filedialog.askdirectory(title="Select your Data folder")
+        root.destroy()
+        return path or ""
+    except Exception:
+        return ""
+
+
+@app.callback(
+    Output("setup-path-input", "value"),
+    Input("setup-browse-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def browse_for_folder(n_clicks):
+    path = _pick_folder()
+    return path if path else dash.no_update
+
+
+@app.callback(
+    Output("setup-overlay", "style"),
+    Output("setup-status", "children"),
+    Input("setup-save-btn", "n_clicks"),
+    State("setup-path-input", "value"),
+    prevent_initial_call=True,
+)
+def save_setup(n_clicks, path):
+    global df, MASTER_PATH
+
+    if not path or not path.strip():
+        return dash.no_update, "Please enter or browse to a folder path."
+
+    data_dir = Path(path.strip())
+    master   = data_dir / "SORTED" / "edited_combined_transactions.csv"
+
+    if not data_dir.exists():
+        return dash.no_update, f"Folder not found: {data_dir}"
+    if not master.exists():
+        return dash.no_update, f"No master file found at {master}"
+
+    save_data_dir(str(data_dir))
+    MASTER_PATH = master
+    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+
+    return {"display": "none"}, ""
 
 
 if __name__ == "__main__":
