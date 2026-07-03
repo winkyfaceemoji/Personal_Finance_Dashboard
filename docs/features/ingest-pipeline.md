@@ -4,6 +4,18 @@ The pipeline converts raw bank CSVs into a single, deduplicated, schema-normalis
 
 ---
 
+## Launch modes
+
+| Mode | Command | Hot-reload |
+|------|---------|-----------|
+| venv (local) | `.venv\Scripts\python main.py` | No — restart manually |
+| Docker (dev) | `docker run -p 8050:8050 -v "%cd%:/app" personal-finance` | Yes — Dash reloads on `.py` save |
+| Docker (prod) | `docker run -p 8050:8050 personal-finance` | No — code is baked into image |
+
+In dev Docker mode the local project directory is mounted into the container at `/app`. Dash's built-in reloader watches `.py` files and restarts the server automatically on save. Only rebuild the image (`docker build -t personal-finance .`) when `requirements.txt` changes.
+
+---
+
 ## Inputs
 
 Drop CSV files into `Data/RAW/`. The pipeline auto-detects the bank format from the column headers. Three formats are supported:
