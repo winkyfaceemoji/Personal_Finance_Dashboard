@@ -80,9 +80,11 @@ The volume mount overlays your local project directory onto `/app` inside the co
 
 ## First launch
 
-On first launch the app automatically uses the included `Test Data/` folder, which contains anonymized demo transactions. No setup required — just run and open the browser.
+On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its anonymized demo transactions, populates and displays immediately. No setup required — just run and open the browser.
 
-To use your own bank data, click **Change Data Folder** (or wait for the setup screen on a fresh install with no `Test Data/` folder), browse to your data directory, and click **Save & Launch**. The path is saved to `config.json` and used on every subsequent start.
+To use your own bank data, click **CHANGE DATA FOLDER** in the nav bar at any time. This reopens the setup overlay — prefilled with your current path — where you can browse to a new directory and click **Save & Launch**, or click **Cancel** to close it without changing anything. The chosen path is saved to `config.json` and used on every subsequent start.
+
+The overlay only blocks the dashboard automatically if no data directory could be resolved at all (for example, if `Test Data/` is deleted and nothing else is configured).
 
 **Data directory priority:**
 1. `FINANCE_DATA_DIR` environment variable (useful for Docker / CI)
@@ -126,6 +128,7 @@ A persistent bar at the top of every page. All controls here apply to both the S
 | VIEW | Switch between MONTH BY MONTH and ALL YEARS chart modes |
 | Uncategorized badge | Shows count of transactions with no master category assigned |
 | RELOAD DATA | Re-runs the ingest pipeline without leaving the browser |
+| CHANGE DATA FOLDER | Reopens the setup overlay to point the app at a different data directory |
 
 ### Summary tab
 
@@ -196,7 +199,7 @@ Edit `rules.csv` directly to add, remove, or adjust rules — no code change nee
 
 `Test Data/RAW/` contains anonymized demo CSVs and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
 
-If you point the app at your own data directory, that folder is entirely outside the repository — your real transaction CSVs are never committed. `config.json` (which stores the path to your folder) is also git-ignored.
+If you point the app at your own data directory, that folder is entirely outside the repository — your real transaction CSVs are never committed. `config.json` (which stores the path to your folder) is also git-ignored. As a fallback, a `Data/` folder at the project root (the old default before configurable data directories existed) is also git-ignored, in case one still exists from before this feature was added.
 
 ---
 
@@ -204,6 +207,7 @@ If you point the app at your own data directory, that folder is entirely outside
 
 - [Feature overview](docs/features/README.md)
 - [Ingest pipeline](docs/features/ingest-pipeline.md)
+- [Setup screen](docs/features/setup-screen.md)
 - [Data transforms layer](docs/features/transforms.md)
 - [Global filters](docs/features/global-filters.md)
 - [Overview charts](docs/features/overview-charts.md)

@@ -5,7 +5,7 @@ import dash
 from dash import dcc, html, dash_table, Input, Output, State
 import plotly.graph_objects as go
 
-from config import get_data_dir, save_data_dir
+from config import get_data_dir, get_master_path, save_data_dir
 from Modules.transforms import (
     load_transactions,
     monthly_expenses,
@@ -26,17 +26,21 @@ BASE_DIR    = Path(__file__).parent
 RULES_PATH  = BASE_DIR / "rules.csv"
 EXCLUDED_CATEGORIES = {"Transfer"}
 
-_data_dir   = get_data_dir()
-MASTER_PATH = (_data_dir / "SORTED" / "edited_combined_transactions.csv") if _data_dir else None
+
+def _run_ingest_pipeline(data_dir: Path | None = None) -> None:
+    from main import main as run_ingest
+    run_ingest(data_dir)
+
+
+MASTER_PATH = get_master_path(get_data_dir())
 
 # First launch: if a data directory resolved (e.g. the default Test Data/) but
 # hasn't been ingested yet, run the pipeline so its data shows immediately.
 if MASTER_PATH and not MASTER_PATH.exists():
     try:
-        from main import main as _run_ingest
-        _run_ingest()
-    except Exception:
-        pass
+        _run_ingest_pipeline()
+    except Exception as e:
+        print(f"Warning: auto-ingest at startup failed: {e}")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 _EMPTY_DF = pd.DataFrame(columns=[
@@ -341,6 +345,12 @@ app.index_string = '''
 '''
 
 # ── Layout ────────────────────────────────────────────────────────────────────
+_OVERLAY_HIDDEN  = {
+    "display": "none", "position": "fixed", "inset": "0", "zIndex": "9999",
+    "background": "var(--bg, #111)", "alignItems": "center", "justifyContent": "center",
+}
+_OVERLAY_VISIBLE = {**_OVERLAY_HIDDEN, "display": "flex"}
+
 app.layout = html.Div(
     id="app-root",
     className="dark-theme",
@@ -361,12 +371,7 @@ app.layout = html.Div(
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
             id="setup-overlay",
-            style={
-                "display": "none" if (MASTER_PATH and MASTER_PATH.exists()) else "flex",
-                "position": "fixed", "inset": "0", "zIndex": "9999",
-                "background": "var(--bg, #111)", "alignItems": "center",
-                "justifyContent": "center",
-            },
+            style=_OVERLAY_HIDDEN if (MASTER_PATH and MASTER_PATH.exists()) else _OVERLAY_VISIBLE,
             children=html.Div(style={
                 "background": "var(--card-bg, #1a1a1a)",
                 "border": "1px solid var(--border, #333)",
@@ -1026,7 +1031,7 @@ def import_csv(contents, filename, source, year, month, trigger):
     if missing:
         return dash.no_update, f"⚠ Missing columns: {', '.join(sorted(missing))}", dash.no_update
 
-    if not MASTER_PATH:
+    if not MASTER_PATH or not MASTER_PATH.exists():
         return dash.no_update, "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
         has_date    = "date"         in import_df.columns
@@ -1097,8 +1102,7 @@ def reload_data(_, trigger):
     if not MASTER_PATH:
         return "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
-        from main import main as run_ingest
-        run_ingest()
+        _run_ingest_pipeline()
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
         return "✓ Reloaded", (trigger or 0) + 1
     except Exception as e:
@@ -1164,13 +1168,6 @@ def browse_for_folder(n_clicks):
     return path if path else dash.no_update
 
 
-_OVERLAY_HIDDEN  = {
-    "display": "none", "position": "fixed", "inset": "0", "zIndex": "9999",
-    "background": "var(--bg, #111)", "alignItems": "center", "justifyContent": "center",
-}
-_OVERLAY_VISIBLE = {**_OVERLAY_HIDDEN, "display": "flex"}
-
-
 @app.callback(
     Output("setup-overlay", "style", allow_duplicate=True),
     Output("setup-status", "children", allow_duplicate=True),
@@ -1211,15 +1208,14 @@ def save_setup(n_clicks, path):
         return dash.no_update, "Please enter or browse to a folder path."
 
     data_dir = Path(path.strip())
-    master   = data_dir / "SORTED" / "edited_combined_transactions.csv"
+    master   = get_master_path(data_dir)
 
     if not data_dir.exists():
         return dash.no_update, f"Folder not found: {data_dir}"
 
     if not master.exists():
         try:
-            from main import main as run_ingest
-            run_ingest()
+            _run_ingest_pipeline(data_dir)
         except Exception as e:
             return dash.no_update, f"Failed to run ingest: {e}"
         if not master.exists():

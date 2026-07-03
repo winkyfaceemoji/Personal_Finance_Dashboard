@@ -18,13 +18,17 @@ In dev Docker mode the local project directory is mounted into the container at 
 
 ## Data directory
 
-The pipeline resolves its working folder at runtime via `config.get_data_dir()`, which checks in order:
+`main(data_dir: Path | None = None)` resolves its working folder from the `data_dir` argument if one is passed, otherwise falls back to `config.get_data_dir()`, which checks in order:
 
 1. `FINANCE_DATA_DIR` environment variable
 2. `config.json` in the project root (written by the in-app setup screen)
 3. `Test Data/` folder in the project root (built-in demo data)
 
-`INPUT_FOLDER`, `OUTPUT_FILE`, and `MASTER_FILE` are all derived from this resolved directory, so `main()` always operates on the currently configured data location.
+`input_folder`, `output_file`, and `master_file` (the latter via `config.get_master_path(data_dir)`) are all derived from this resolved directory, so `main()` always operates on the currently configured — or explicitly passed — data location.
+
+The explicit-argument form matters for `save_setup` (see [setup-screen.md](setup-screen.md#save--launch-save_setup)): it passes the just-picked folder directly instead of relying on `config.json` already being updated, since `get_data_dir()` alone would otherwise resolve the *previous* directory.
+
+`app.py` also runs this pipeline automatically at startup if the resolved directory has no master file yet — see [setup-screen.md](setup-screen.md#first-launch-auto-ingest).
 
 ---
 
@@ -38,7 +42,7 @@ Drop CSV files into the configured `RAW/` folder (default: `Test Data/RAW/`). Th
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
 
-Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same source can coexist in `Data/RAW/` — duplicates are removed later.
+Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same source can coexist in the configured `RAW/` folder — duplicates are removed later.
 
 **Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column.
 
@@ -115,6 +119,7 @@ On each run, `merge_into_master` checks for and automatically applies these one-
 | Rename `category` → `original_category` | Old `category` column present | Renames in-place |
 | Add `sub_category` | Column missing | Added with blank values |
 | Add `card_last4` | Column missing | Added, then backfilled from current ingest |
+| Fix Discover Credit amount signs | `<data_dir>/SORTED/.discover_amounts_fixed` flag file absent | Removes all existing `Discover Credit` rows so they're re-added from the current ingest (which already negates the sign correctly); touches the flag file so this only runs once per data directory |
 
 ---
 

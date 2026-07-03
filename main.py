@@ -1,7 +1,7 @@
 import re
 import pandas as pd
 from pathlib import Path
-from config import get_data_dir
+from config import get_data_dir, get_master_path
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -153,7 +153,7 @@ def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
         combined["master_category"] = None
         combined["sub_category"]    = None
         combined[MASTER_COLUMNS].to_csv(master_file, index=False)
-        print(f"  Master file created with {len(combined)} rows → {master_file}")
+        print(f"  Master file created with {len(combined)} rows -> {master_file}")
         return
 
     # Load existing master file
@@ -165,7 +165,7 @@ def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
     if "category" in master.columns and "original_category" not in master.columns:
         master = master.rename(columns={"category": "original_category"})
         master_dirty = True
-        print("  Migrated: renamed 'category' → 'original_category'")
+        print("  Migrated: renamed 'category' -> 'original_category'")
     if "sub_category" not in master.columns:
         master["sub_category"] = None
         master_dirty = True
@@ -174,6 +174,19 @@ def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
         master_dirty = True
     else:
         master["card_last4"] = master["card_last4"].fillna("").astype(str).replace("nan", "")
+
+    # ── One-time migration: fix Discover Credit amount signs ──────────────
+    # Remove all existing Discover rows so merge_into_master re-adds them
+    # from the current ingest (which already applies the correct sign negation).
+    discover_fix_flag = master_file.parent / ".discover_amounts_fixed"
+    if not discover_fix_flag.exists():
+        disc_mask = master["source"] == "Discover Credit"
+        n = disc_mask.sum()
+        if n:
+            master = master[~disc_mask].reset_index(drop=True)
+            master_dirty = True
+            print(f"  Removed {n} Discover rows for sign-fix re-ingest")
+        discover_fix_flag.touch()
 
     # Write back immediately if any migration changed the file
     if master_dirty:
@@ -228,15 +241,15 @@ def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
     print(f"  Master file saved -> {master_file}")
 
 
-def main():
-    data_dir = get_data_dir()
+def main(data_dir: Path | None = None):
+    data_dir = data_dir or get_data_dir()
     if not data_dir:
         print("No data directory configured. Launch the dashboard to set one up.")
         return
 
     input_folder = data_dir / "RAW"
     output_file  = data_dir / "SORTED" / "combined_transactions.csv"
-    master_file  = data_dir / "SORTED" / "edited_combined_transactions.csv"
+    master_file  = get_master_path(data_dir)
 
     csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
     if not csv_files:
