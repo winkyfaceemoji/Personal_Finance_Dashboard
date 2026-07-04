@@ -1,6 +1,6 @@
 # Ingest pipeline (`main.py`)
 
-The pipeline converts raw bank CSVs into a single, deduplicated, schema-normalised master file. Run it once per batch of new exports before starting the dashboard — or click **RELOAD DATA** in the browser to run it without leaving the app.
+The pipeline converts raw bank CSVs into a single, schema-normalised master file, rebuilt fresh from `RAW/` on every run. Run it once per batch of new exports before starting the dashboard — or click **RELOAD DATA** in the browser (Settings menu, top right) to run it without leaving the app. Both paths call the exact same `main()` function, so there's only one code path to reason about.
 
 ---
 
@@ -42,7 +42,7 @@ Drop CSV files into the configured `RAW/` folder (default: `Test Data/RAW/`). Th
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
 
-Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same source can coexist in the configured `RAW/` folder — duplicates are removed later.
+Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same source — including overlapping re-exports of the same account's history — can coexist in the configured `RAW/` folder; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below).
 
 **Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column.
 
@@ -80,46 +80,67 @@ Every normalised row has these columns:
    b. detect_format() → match header set against known signatures
    c. Call the matching normaliser → unified-schema DataFrame
    d. Extract card_last4 from filename (Chase files only)
-4. Concatenate all normalised frames
-5. Deduplicate on all columns except card_last4
-   (same transaction exported from two overlapping date-range files → one row)
-6. Sort by date ascending
+4. Group normalised frames by physical account: (source, card_last4)
+5. Within each account, merge overlapping files by date coverage
+   (see "Merging overlapping exports" below) — never by comparing row values
+6. Concatenate every account's merged result, sort by date ascending
 7. Write SORTED/combined_transactions.csv  (raw pipeline output)
-8. merge_into_master()
+8. rebuild_master()
 ```
 
 ---
 
-## Master file merge (`merge_into_master`)
+## Merging overlapping exports (`_merge_by_coverage`)
 
-The master file `edited_combined_transactions.csv` adds user-assigned columns: `master_category` and `sub_category`. The merge logic ensures existing assignments are never overwritten.
+Banks get re-exported periodically with overlapping, shifting date ranges — e.g. a "since account opening" export downloaded in 2025 fully contains an earlier "last 12 months" export from 2024. The overlapping segment between two such exports covers the exact same real transactions.
+
+Earlier versions of this pipeline deduplicated by comparing row values (date, description, amount, ...) across the whole RAW folder at once. That breaks on genuine same-day repeat purchases — two subway swipes, two identical bakery visits — because they're indistinguishable from a real duplicate by value alone. A blanket value-based dedup silently collapsed both cases into one row.
+
+`_merge_by_coverage` instead decides *which file owns a given date*, and never compares rows to each other at all:
 
 ```
-For each row in the freshly combined data:
-  Build a match key from all unified columns except card_last4
-  If that exact key already exists in the master file → skip (preserve master_category / sub_category)
-  If it is new → append with master_category = None, sub_category = None
-
-Backfill card_last4 for any existing rows where it is blank.
-Re-sort the master file by date, write back.
+For each (source, card_last4) account:
+  Sort that account's files by (date span, row count) descending
+    — i.e. the file with the widest verified date range goes first;
+    file modification time is deliberately NOT used, since bulk copies,
+    git checkouts, and drive migrations rewrite mtimes with no relation
+    to when a statement was actually downloaded.
+  covered = []  (list of claimed date intervals, empty at first)
+  For each file in that order:
+    Keep only the rows whose date falls outside every interval in `covered`
+    Add (min date, max date) of the newly-kept rows to `covered`
+  Concatenate everything kept for this account
 ```
 
-If the master file does not exist yet (first run), it is created from the combined data with `master_category` and `sub_category` set to `None`.
-
-**Match key detail:** `MATCH_COLUMNS` = all unified columns except `card_last4`. Excluding `card_last4` means existing rows are matched correctly even if the card number wasn't captured in a previous run.
+Whichever file owns a date contributes *all* of its rows for that date — duplicates included — so genuine repeat transactions on the same day survive intact. Rows with an unparseable date are always kept, since their coverage can't be checked.
 
 ---
 
-## Schema migrations
+## Master file rebuild (`rebuild_master`)
 
-On each run, `merge_into_master` checks for and automatically applies these one-time migrations to the master file:
+The master file `edited_combined_transactions.csv` adds user-assigned columns: `master_category` and `sub_category`. Every other column is **regenerated from RAW on every run** — the master file is fully rebuilt, not appended to. Only the categorization is carried forward, by matching each rebuilt row's key against the prior master file:
 
-| Migration | Condition | Action |
-|-----------|-----------|--------|
-| Rename `category` → `original_category` | Old `category` column present | Renames in-place |
-| Add `sub_category` | Column missing | Added with blank values |
-| Add `card_last4` | Column missing | Added, then backfilled from current ingest |
-| Fix Discover Credit amount signs | `<data_dir>/SORTED/.discover_amounts_fixed` flag file absent | Removes all existing `Discover Credit` rows so they're re-added from the current ingest (which already negates the sign correctly); touches the flag file so this only runs once per data directory |
+```
+Build a match key (MATCH_COLUMNS = all unified columns except card_last4)
+  for every row in both the prior master file and the freshly rebuilt data.
+
+For each match key, collect the prior master's (master_category, sub_category)
+  values for that key, in the order they appeared (a queue per key — a key
+  that occurred N times previously has N entries).
+
+For each rebuilt row, in order:
+  If its key still has an unused entry in that queue → inherit it
+    (pop the next entry, in order)
+  Otherwise → it's a genuinely new occurrence of that key → leave blank
+
+Sort the rebuilt data by date, write it as the new master file.
+```
+
+This means a match key that occurs *more* times in the rebuilt data than it did before (e.g. a same-day repeat transaction an older, value-based dedup had collapsed away) has its first N occurrences inherit the N prior categorizations, and any occurrences beyond that start uncategorized for manual review.
+
+If the master file doesn't exist yet (first run), it's created directly from the combined data with `master_category` and `sub_category` set to `None` — there's nothing to inherit from.
+
+**Backup:** before rebuilding, the existing master file is renamed to `edited_combined_transactions.csv.bak` (overwriting any previous backup). This is a rolling one-generation backup, not a full history — enough to recover from a bad run without accumulating files indefinitely.
 
 ---
 
@@ -127,7 +148,8 @@ On each run, `merge_into_master` checks for and automatically applies these one-
 
 | File | Updated by | Used by |
 |------|-----------|---------|
-| `SORTED/combined_transactions.csv` | Every pipeline run | Not read by the app directly |
-| `SORTED/edited_combined_transactions.csv` | Every pipeline run (append-only for new rows) | `app.py` on startup and after reload |
+| `SORTED/combined_transactions.csv` | Every pipeline run (full rebuild) | Not read by the app directly |
+| `SORTED/edited_combined_transactions.csv` | Every pipeline run (full rebuild; categorization carried forward by match key) | `app.py` on startup and after reload |
+| `SORTED/edited_combined_transactions.csv.bak` | Every pipeline run (overwritten each time) | Manual recovery only — not read by the app |
 
 Paths are relative to the configured data directory (default: `Test Data/`).

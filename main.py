@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict, deque
 import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
@@ -15,7 +16,7 @@ UNIFIED_COLUMNS = [
 # Master file schema — unified + user-assigned columns
 MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category", "sub_category"]
 
-# Columns used to match existing rows when merging into the master file.
+# Columns used to match a rebuilt row back to its prior categorization.
 # card_last4 excluded: old rows lack it and would never match otherwise.
 # User-assigned columns (master_category, sub_category) also excluded.
 MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c != "card_last4"]
@@ -129,116 +130,105 @@ def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
     return result
 
 
-def merge_into_master(combined: pd.DataFrame, master_file: Path) -> None:
+def _merge_by_coverage(file_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     """
-    Merge newly ingested transactions into edited_combined_transactions.csv.
+    Merge multiple raw exports of the same physical account into one
+    timeline, using each file's actual transaction-date coverage to decide
+    which file owns a given date — rather than comparing row values.
 
-    Rules:
-    - If the master file doesn't exist yet, create it from combined with
-      a blank master_category column.
-    - For each row in combined, check if it already exists in the master
-      file by matching ALL columns in MATCH_COLUMNS exactly.
-    - Rows that already exist are left untouched (master_category preserved).
-    - Rows that are genuinely new are appended with a blank master_category.
+    Banks get re-exported periodically with overlapping date ranges; the
+    overlapping segment between two exports covers the same real
+    transactions. Deduplicating by row value (date, description, amount, ...)
+    breaks on genuine same-day repeat purchases (e.g. two subway swipes),
+    since they're indistinguishable by value alone. Deciding ownership by
+    date range instead means rows are never compared against each other —
+    whichever file owns a date contributes all of its rows for that date,
+    duplicates included.
+
+    File modification time is deliberately NOT used to pick a winner: bulk
+    copies, git checkouts, and drive migrations all rewrite mtimes without
+    any relation to when a statement was actually downloaded. Instead, the
+    file with the widest verified date span (derived from its own parsed
+    transactions) wins any date it covers; ties broken by row count.
+    """
+    def span(d: pd.DataFrame) -> pd.Timedelta:
+        valid = d["date"].dropna()
+        return valid.max() - valid.min() if not valid.empty else pd.Timedelta(0)
+
+    ordered = sorted(file_dfs, key=lambda d: (span(d), len(d)), reverse=True)
+
+    covered: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    kept = []
+    for d in ordered:
+        already_covered = pd.Series(False, index=d.index)
+        for lo, hi in covered:
+            already_covered |= d["date"].between(lo, hi)
+        new_rows = d[~already_covered]
+        if not new_rows.empty:
+            kept.append(new_rows)
+            dated = new_rows["date"].dropna()
+            if not dated.empty:
+                covered.append((dated.min(), dated.max()))
+
+    return pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
+
+
+def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
+    """
+    Rebuild edited_combined_transactions.csv from the freshly-merged combined
+    data, carrying forward existing master_category / sub_category
+    assignments by matching each row's MATCH_COLUMNS key against the prior
+    master file.
+
+    Every unified-schema column is regenerated from RAW on every run — only
+    the user-assigned categorization is preserved. A match key that occurs
+    more times in the new combined data than in the prior master (e.g. a
+    same-day repeat transaction an older, buggy ingest had collapsed away)
+    inherits the category of an existing occurrence of that key, in order;
+    any occurrence beyond what the prior master had is genuinely new and
+    starts uncategorized.
     """
     combined = combined.copy()
-
-    # Normalise date columns to plain date strings for consistent comparison
     for col in ["date", "post_date"]:
-        if col in combined.columns:
-            combined[col] = pd.to_datetime(combined[col], errors="coerce").dt.strftime("%Y-%m-%d")
+        combined[col] = pd.to_datetime(combined[col], errors="coerce").dt.strftime("%Y-%m-%d")
+    combined["master_category"] = None
+    combined["sub_category"]    = None
 
-    if not master_file.exists():
-        # First run — create master file from scratch
-        combined["master_category"] = None
-        combined["sub_category"]    = None
-        combined[MASTER_COLUMNS].to_csv(master_file, index=False)
-        print(f"  Master file created with {len(combined)} rows -> {master_file}")
-        return
+    def row_key(d: pd.DataFrame) -> pd.Series:
+        return d[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
 
-    # Load existing master file
-    master = pd.read_csv(master_file, dtype={"card_last4": str})
+    if master_file.exists():
+        # Keep a rolling backup — this rebuild replaces the whole file.
+        master_file.replace(master_file.with_suffix(".csv.bak"))
+        old_master = pd.read_csv(master_file.with_suffix(".csv.bak"), dtype={"card_last4": str})
+        if "category" in old_master.columns and "original_category" not in old_master.columns:
+            old_master = old_master.rename(columns={"category": "original_category"})
+        for col in ("master_category", "sub_category"):
+            if col not in old_master.columns:
+                old_master[col] = None
+        for col in ["date", "post_date"]:
+            if col in old_master.columns:
+                old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    master_dirty = False  # tracks whether migrations modified master and need a write
+        categorization = defaultdict(deque)
+        for key, mc, sc in zip(row_key(old_master), old_master["master_category"], old_master["sub_category"]):
+            categorization[key].append((mc, sc))
 
-    # ── Schema migrations (old files) ────────────────────────────────────
-    if "category" in master.columns and "original_category" not in master.columns:
-        master = master.rename(columns={"category": "original_category"})
-        master_dirty = True
-        print("  Migrated: renamed 'category' -> 'original_category'")
-    if "sub_category" not in master.columns:
-        master["sub_category"] = None
-        master_dirty = True
-    if "card_last4" not in master.columns:
-        master["card_last4"] = ""
-        master_dirty = True
-    else:
-        master["card_last4"] = master["card_last4"].fillna("").astype(str).replace("nan", "")
+        carried = 0
+        for idx, key in zip(combined.index, row_key(combined)):
+            bucket = categorization.get(key)
+            if bucket:
+                mc, sc = bucket.popleft()
+                combined.at[idx, "master_category"] = mc
+                combined.at[idx, "sub_category"]    = sc
+                carried += 1
+        print(f"  Categorization carried over for {carried}/{len(combined)} row(s)")
 
-    # ── One-time migration: fix Discover Credit amount signs ──────────────
-    # Remove all existing Discover rows so merge_into_master re-adds them
-    # from the current ingest (which already applies the correct sign negation).
-    discover_fix_flag = master_file.parent / ".discover_amounts_fixed"
-    if not discover_fix_flag.exists():
-        disc_mask = master["source"] == "Discover Credit"
-        n = disc_mask.sum()
-        if n:
-            master = master[~disc_mask].reset_index(drop=True)
-            master_dirty = True
-            print(f"  Removed {n} Discover rows for sign-fix re-ingest")
-        discover_fix_flag.touch()
-
-    # Write back immediately if any migration changed the file
-    if master_dirty:
-        master.to_csv(master_file, index=False)
-        print("  Master file updated with schema/data migrations.")
-
-    # Normalise date columns in master for comparison
-    for col in ["date", "post_date"]:
-        if col in master.columns:
-            master[col] = pd.to_datetime(master[col], errors="coerce").dt.strftime("%Y-%m-%d")
-
-    # Build a set of tuples from the master for fast exact-match lookup
-    # Use MATCH_COLUMNS only — user-assigned columns are intentionally excluded
-    def row_key(df: pd.DataFrame) -> pd.Series:
-        """Return a series of tuples representing each row's match key."""
-        return df[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
-
-    existing_keys = set(row_key(master))
-    combined_keys = row_key(combined)
-
-    new_mask = ~combined_keys.isin(existing_keys)
-    new_rows = combined[new_mask].copy()
-    new_rows["master_category"] = None
-    new_rows["sub_category"]    = None
-
-    # Backfill card_last4 on existing rows that don't have it yet
-    combined_with_last4 = combined[combined["card_last4"].notna()]
-    if not combined_with_last4.empty:
-        key_to_last4 = dict(zip(row_key(combined_with_last4), combined_with_last4["card_last4"]))
-        needs_fill = master["card_last4"].isna() | (master["card_last4"] == "")
-        if needs_fill.any():
-            filled_vals = row_key(master[needs_fill]).map(key_to_last4).astype(object)
-            master.loc[needs_fill, "card_last4"] = filled_vals
-            n_filled = filled_vals.notna().sum()
-            if n_filled:
-                master_dirty = True
-                print(f"  Backfilled card_last4 for {n_filled} existing row(s)")
-
-    if new_rows.empty and not master_dirty:
-        print(f"  No new transactions found. Master file unchanged.")
-        return
-
-    if not new_rows.empty:
-        master = pd.concat([master, new_rows[MASTER_COLUMNS]], ignore_index=True)
-        print(f"  {len(new_rows)} new transaction(s) added to master file")
-
-    # Re-sort by date ascending and write
-    master["date"] = pd.to_datetime(master["date"], errors="coerce")
-    master.sort_values("date", inplace=True, ignore_index=True)
-    master["date"] = master["date"].dt.strftime("%Y-%m-%d")
-    master.to_csv(master_file, index=False)
-    print(f"  Master file saved -> {master_file}")
+    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    combined.sort_values("date", inplace=True, ignore_index=True)
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
+    combined[MASTER_COLUMNS].to_csv(master_file, index=False)
+    print(f"  Master file rebuilt with {len(combined)} rows -> {master_file}")
 
 
 def main(data_dir: Path | None = None):
@@ -258,22 +248,27 @@ def main(data_dir: Path | None = None):
 
     print(f"Found {len(csv_files)} CSV file(s) in {input_folder}\n")
 
-    frames = []
+    groups: dict[tuple, list[pd.DataFrame]] = defaultdict(list)
     for f in csv_files:
         normalized = load_and_normalize(f)
-        if normalized is not None:
-            frames.append(normalized)
+        if normalized is None or normalized.empty:
+            continue
+        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+        key = (normalized["source"].iat[0], normalized["card_last4"].iat[0])
+        groups[key].append(normalized)
 
-    if not frames:
+    if not groups:
         print("No valid files were processed. Exiting.")
         return
 
-    combined = pd.concat(frames, ignore_index=True)
-    before   = len(combined)
+    before = sum(len(d) for file_dfs in groups.values() for d in file_dfs)
 
-    # Deduplicate across all unified columns
-    dedup_cols = [c for c in UNIFIED_COLUMNS if c != "source"]
-    combined.drop_duplicates(subset=dedup_cols, keep="first", inplace=True)
+    # Merge each account's exports by date-range ownership, so re-downloaded
+    # overlapping statements don't collapse genuine same-day repeat transactions.
+    combined = pd.concat(
+        [_merge_by_coverage(file_dfs) for file_dfs in groups.values()],
+        ignore_index=True,
+    )
     after = len(combined)
 
     # Sort by date ascending
@@ -284,14 +279,14 @@ def main(data_dir: Path | None = None):
     combined.to_csv(output_file, index=False)
 
     print(f"\nPipeline complete.")
-    print(f"  Rows before dedup : {before}")
-    print(f"  Rows after dedup  : {after}")
-    print(f"  Duplicates removed: {before - after}")
-    print(f"  Output saved to   : {output_file}")
+    print(f"  Rows before merge      : {before}")
+    print(f"  Rows after merge       : {after}")
+    print(f"  Collapsed as re-exported overlap: {before - after}")
+    print(f"  Output saved to        : {output_file}")
 
-    # Merge into master file, preserving existing master_category assignments
-    print(f"\nMerging into master file...")
-    merge_into_master(combined, master_file)
+    # Rebuild the master file, carrying forward existing categorization
+    print(f"\nRebuilding master file...")
+    rebuild_master(combined, master_file)
 
 
 if __name__ == "__main__":
