@@ -125,21 +125,20 @@ A persistent bar at the top of every page. All controls here apply to both the S
 | YEAR | Filter to a specific year or all |
 | MONTH | Filter to a specific month (options update based on Source + Year) |
 | SHOW ON CHARTS | Toggle expenses and/or income bars on the main chart |
-| VIEW | Switch between MONTH BY MONTH and ALL YEARS chart modes |
-| Uncategorized badge | Shows count of transactions with no master category assigned |
-| RELOAD DATA | Re-runs the ingest pipeline without leaving the browser |
-| CHANGE DATA FOLDER | Reopens the setup overlay to point the app at a different data directory |
+
+The Summary tab's main chart granularity follows Year/Month automatically — Year = All and Month = All shows one bar per year; any specific year or month shows a month-by-month breakdown. There's no separate view control.
+
+The gear icon (top right) opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
 
 ### Summary tab
 
 | Area | What it shows |
 |------|---------------|
-| Stat cards | Total expenses, total income, average spend — each shows a MoM or YoY delta when a specific month or year is filtered |
-| Main chart | Monthly or yearly expense/income bars; monthly view adds a 3-month rolling-average overlay on expenses |
-| Net chart | Income minus expenses per period; green bars = positive net, red = negative |
-| Category breakdown | Horizontal bar chart of spend by category; click any bar to expand a transaction drilldown beneath it |
+| Stat cards | Total expenses, net (with savings rate), total income, average spend — deltas show MoM or YoY change when a specific month or year is filtered |
+| Main chart | Monthly or yearly expense/income bars, depending on the Year/Month filters; monthly mode adds a 3-month rolling-average overlay on expenses, plus a dotted average-spend reference line |
+| Category breakdown | Horizontal bar chart of the top 10 spend categories (+ an "Other" bar); labels show each category's change vs the prior period when one is filtered; click any bar to expand a transaction drilldown beneath it |
 
-> **Note:** Rows tagged `Transfer` in the **Type of Transaction** field are automatically excluded from all income and expense calculations. Use the Excel import workflow to tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
+> **Note:** All Summary totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the All Transactions tab shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
 ### All Transactions tab
 
@@ -175,7 +174,7 @@ Each transaction has three category fields:
 
 The dashboard displays a single **CATEGORY** column: `sub_category` if set, otherwise `original_category`.
 
-Rows tagged `Transfer` are silently excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning.
+Rows tagged `Transfer` are excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning. Unlabeled rows are also excluded (they haven't been classified yet); a note on the All Transactions tab counts how many are being ignored.
 
 ---
 

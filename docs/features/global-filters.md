@@ -12,7 +12,6 @@ The filter bar sits at the top of every page and applies to **both tabs** simult
 | Year | `global-year-filter` | All Years | One entry per distinct year |
 | Month | `global-month-filter` | All Months | Options update based on active Source + Year; resets to All when either changes |
 | Show on Charts | `toggle-income-expenses` | Expenses | Checklist to include/exclude expenses and income bars |
-| View | `overview-view-toggle` | Month by Month | Switches between monthly and yearly chart mode |
 | Uncategorized badge | `uncategorized-count` | — | Shows "⚠ N uncategorized" when transactions have no master category; empty when all are categorized |
 | Reload Data | `reload-data-btn` | — | Re-runs `main.main()` in-process, reloads `df`, increments `refresh-trigger` |
 
@@ -38,9 +37,9 @@ def apply_global_filters(source, year, month="all"):
 
 ## Filter scope
 
-All three dropdowns apply consistently. The same `filtered` DataFrame drives the net chart, category bar chart, summary stat cards, category drilldown, and the All Transactions table.
+All three dropdowns apply consistently. The same `filtered` DataFrame drives the main bar chart, category bar chart, summary stat cards, category drilldown, and the All Transactions table.
 
-The one deliberate exception is the **ALL YEARS bar chart** (VIEW = ALL YEARS). That chart uses a source-only slice so all years appear side-by-side even when a specific year is selected. All other panels use the fully filtered data.
+There is no separate view toggle — the main chart's granularity is derived directly from the Year/Month filters (see [overview-charts.md](overview-charts.md#chart-granularity)), so there's no combination where a chart silently ignores the active filters.
 
 ---
 
@@ -49,9 +48,8 @@ The one deliberate exception is the **ALL YEARS bar chart** (VIEW = ALL YEARS). 
 | Event | What updates |
 |-------|-------------|
 | Source changes | Month dropdown options + value reset; all charts and table re-render |
-| Year changes | Month dropdown options + value reset; all charts and table re-render |
-| Month changes | All charts and table re-render; month dropdown options unchanged |
-| View changes | Summary charts re-render (monthly vs yearly mode) |
+| Year changes | Month dropdown options + value reset; all charts and table re-render (main chart granularity may switch monthly/yearly) |
+| Month changes | All charts and table re-render; month dropdown options unchanged (main chart granularity may switch monthly/yearly) |
 | Reload Data clicked | Ingest runs, `df` reloads, all charts and table re-render |
 | Any filter changes | Category drilldown clears (stale data is not shown) |
 

@@ -49,12 +49,14 @@ Steps:
 
 ## Row-type helpers
 
-| Function | Signature | Returns |
-|----------|-----------|---------|
-| `get_expenses(df, excluded=None)` | `excluded`: set of category names to skip | Copy of rows where `amount < 0` and `effective_category` not in `excluded` |
-| `get_income(df, excluded=None)` | `excluded`: set of category names to skip | Copy of rows where `amount > 0` and `effective_category` not in `excluded` |
+Bucketing is **label-based**: only the `master_category` label decides whether a row counts, never the sign of the amount.
 
-`EXCLUDED_CATEGORIES = {"Transfer"}` is passed as `excluded` to both helpers everywhere in `app.py`. Rows tagged `Transfer` are silently dropped from every income and expense calculation.
+| Function | Returns |
+|----------|---------|
+| `get_expenses(df)` | Copy of rows where `master_category == "Expense"` |
+| `get_income(df)` | Copy of rows where `master_category == "Income"` |
+
+Everything else is ignored by every income and expense calculation: `Transfer` rows deliberately, and unlabeled rows (or rows with any other label) because they haven't been classified yet. The All Transactions tab shows a count of ignored rows that aren't Transfers.
 
 ---
 
@@ -64,21 +66,23 @@ All accept a filtered DataFrame and return a small summary DataFrame ready for P
 
 ### Monthly
 
-| Function | Signature | Output columns | Sort |
-|----------|-----------|---------------|------|
-| `monthly_expenses(df, excluded=None)` | passes `excluded` to `get_expenses` | `month_str`, `total_expenses` (positive) | `month_str` ascending |
-| `monthly_income(df, excluded=None)` | passes `excluded` to `get_income` | `month_str`, `total_income` | same |
+| Function | Output columns | Sort |
+|----------|---------------|------|
+| `monthly_expenses(df)` | `month_str`, `total_expenses` (positive) | `month_str` ascending |
+| `monthly_income(df)` | `month_str`, `total_income` | same |
 
 ### Yearly
 
-| Function | Signature | Output columns | Sort |
-|----------|-----------|---------------|------|
-| `yearly_expenses(df, excluded=None)` | passes `excluded` to `get_expenses` | `year`, `total_expenses` (positive) | `year` ascending |
-| `yearly_income(df, excluded=None)` | passes `excluded` to `get_income` | `year`, `total_income` | same |
+| Function | Output columns | Sort |
+|----------|---------------|------|
+| `yearly_expenses(df)` | `year`, `total_expenses` (positive) | `year` ascending |
+| `yearly_income(df)` | `year`, `total_income` | same |
+
+Expense totals are negated sums (not absolute values), so a refund row labeled `Expense` (positive amount) nets against — reduces — the expense total rather than inflating it.
 
 ### By category
 
-`expenses_by_category(df, month_str=None, excluded=None)` — groups expenses by `effective_category`, optionally pre-filtered to a single month. Returns `category`, `total_expenses` sorted by total descending. Excluded categories do not appear in the output.
+`expenses_by_category(df, month_str=None)` — groups Expense-labeled rows by `category_display`, optionally pre-filtered to a single month. Returns `category`, `total_expenses` sorted by total descending.
 
 ---
 

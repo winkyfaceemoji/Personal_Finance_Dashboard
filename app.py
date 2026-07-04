@@ -1,3 +1,5 @@
+import base64
+
 import pandas as pd
 from pathlib import Path
 
@@ -24,7 +26,22 @@ from Modules.transforms import (
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
 RULES_PATH  = BASE_DIR / "rules.csv"
-EXCLUDED_CATEGORIES = {"Transfer"}
+
+# ── Settings gear icon (Feather "settings" glyph, painted via CSS mask so it
+# picks up the button's currentColor across themes) ───────────────────────────
+_GEAR_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+    "stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+    "<circle cx='12' cy='12' r='3'></circle>"
+    "<path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 "
+    "1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 "
+    "1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 "
+    "4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 "
+    "0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83"
+    "l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'>"
+    "</path></svg>"
+)
+GEAR_ICON_URI = "data:image/svg+xml;base64," + base64.b64encode(_GEAR_SVG.encode()).decode()
 
 
 def _run_ingest_pipeline(data_dir: Path | None = None) -> None:
@@ -46,7 +63,7 @@ if MASTER_PATH and not MASTER_PATH.exists():
 _EMPTY_DF = pd.DataFrame(columns=[
     "date", "post_date", "amount", "description", "source", "master_category",
     "sub_category", "original_category", "card_last4",
-    "effective_category", "month", "month_str", "year",
+    "effective_category", "category_display", "month", "month_str", "year",
 ])
 df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and MASTER_PATH.exists()) else _EMPTY_DF
 
@@ -122,7 +139,7 @@ app = dash.Dash(
     suppress_callback_exceptions=True,
 )
 
-app.index_string = '''
+app.index_string = ('''
 <!DOCTYPE html>
 <html>
 <head>
@@ -185,19 +202,17 @@ app.index_string = '''
             border-bottom: 2px solid #6c8aff !important;
         }
         .dark-theme .tab-container .tab:hover { color: #ffffff !important; }
-        .dark-theme #active-tab label,
-        .dark-theme #overview-view-toggle label {
+        .dark-theme #active-tab label {
             color: #8a8fa8; background: #0a0a0f; border: 1px solid #252830;
             transition: all 0.15s;
         }
-        .dark-theme #active-tab input[type="radio"]:checked + label,
-        .dark-theme #overview-view-toggle input[type="radio"]:checked + label {
+        .dark-theme #active-tab input[type="radio"]:checked + label {
             color: #ffffff !important; border-color: #6c8aff !important;
             background: rgba(108,138,255,0.18) !important; font-weight: 600 !important;
         }
         .dark-theme .btn-primary { background: #6c8aff; color: #0a0a0f; }
         .dark-theme .btn-secondary { color: #6c8aff; border-color: #6c8aff; }
-        .dark-theme #theme-toggle-btn { background: #111318; border-color: #252830; color: #ffffff; }
+        .dark-theme #settings-menu-btn { background: #111318; border-color: #252830; color: #ffffff; }
 
         /* ── LIGHT THEME ────────────────────────────────────────────────── */
         /* Override Dash 4 CSS variables for light theme */
@@ -249,19 +264,17 @@ app.index_string = '''
         .light-theme .dash-dropdown-search { color: #0a0a0f !important; background: transparent !important; }
         .light-theme .dash-dropdown-search-container { background-color: #f0f1f5 !important; border-color: #dcdee8 !important; }
         .light-theme .dash-dropdown-clear { color: #5c5f72 !important; }
-        .light-theme #active-tab label,
-        .light-theme #overview-view-toggle label {
+        .light-theme #active-tab label {
             color: #5c5f72; background: #ffffff; border: 1px solid #dcdee8;
             transition: all 0.15s;
         }
-        .light-theme #active-tab input[type="radio"]:checked + label,
-        .light-theme #overview-view-toggle input[type="radio"]:checked + label {
+        .light-theme #active-tab input[type="radio"]:checked + label {
             color: #0a0a0f !important; border-color: #4a68e8 !important;
             background: rgba(74,104,232,0.12) !important; font-weight: 600 !important;
         }
         .light-theme .btn-primary { background: #4a68e8; color: #ffffff; }
         .light-theme .btn-secondary { color: #4a68e8; border-color: #4a68e8; }
-        .light-theme #theme-toggle-btn { background: #f0f1f5; border-color: #dcdee8; color: #0a0a0f; }
+        .light-theme #settings-menu-btn { background: #f0f1f5; border-color: #dcdee8; color: #0a0a0f; }
 
         /* ── Portal-level theming (dash-dropdown-content renders in body) ── */
         body.dark-theme {
@@ -326,15 +339,25 @@ app.index_string = '''
             font-weight: 600; letter-spacing: 1px; cursor: pointer;
         }
         .btn-secondary:hover { opacity: 0.85; }
-        #theme-toggle-btn {
-            position: fixed; bottom: 32px; right: 32px;
-            width: 48px; height: 48px; border-radius: 50%;
-            font-size: 20px; cursor: pointer; z-index: 9999;
+        #settings-menu-wrapper { position: fixed; top: 32px; right: 40px; z-index: 9999; }
+        #settings-menu-btn {
+            width: 44px; height: 44px; border-radius: 50%;
+            cursor: pointer; z-index: 9999;
             box-shadow: 0 4px 16px rgba(0,0,0,0.25); transition: all 0.2s;
             display: flex; align-items: center; justify-content: center;
             line-height: 1; padding: 0;
         }
-        #theme-toggle-btn:hover { transform: scale(1.1); }
+        #settings-menu-btn:hover { transform: scale(1.1); }
+        #settings-menu-btn .gear-icon {
+            width: 20px; height: 20px; display: inline-block;
+            background-color: currentColor;
+            -webkit-mask: url("__GEAR_ICON_URI__") center / contain no-repeat;
+            mask: url("__GEAR_ICON_URI__") center / contain no-repeat;
+        }
+        #settings-menu-panel {
+            position: absolute; top: 56px; right: 0;
+            min-width: 220px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
     </style>
 </head>
 <body>
@@ -342,7 +365,7 @@ app.index_string = '''
     <footer>{%config%}{%scripts%}{%renderer%}</footer>
 </body>
 </html>
-'''
+'''.replace("__GEAR_ICON_URI__", GEAR_ICON_URI))
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 _OVERLAY_HIDDEN  = {
@@ -365,8 +388,34 @@ app.layout = html.Div(
         # callbacks (charts, uncategorized badge) re-render automatically.
         dcc.Store(id="refresh-trigger", data=0),
 
-        # Floating theme toggle button (position:fixed via CSS)
-        html.Button("☽", id="theme-toggle-btn", n_clicks=0),
+        # Settings menu (position:fixed via CSS) — gear button expands/collapses the panel
+        dcc.Store(id="settings-menu-open", data=False),
+        html.Div(id="settings-menu-wrapper", children=[
+            html.Button(html.Span(className="gear-icon"), id="settings-menu-btn", n_clicks=0),
+            html.Div(id="settings-menu-panel", className="app-card", style={
+                "display": "none", "flexDirection": "column", "gap": "10px", "padding": "16px",
+            }, children=[
+                html.Div(id="uncategorized-count", style={
+                    "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
+                }),
+                html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
+                            className="btn-secondary",
+                            style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
+                html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
+                    html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
+                                className="btn-secondary",
+                                style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px", "flex": "1"}),
+                ]),
+                html.Span(id="reload-status", style={"fontSize": "11px", "color": COLORS["accent3"]}),
+                html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
+                html.Div(style={"display": "flex", "gap": "8px"}, children=[
+                    html.Button("LIGHT", id="theme-light-btn", n_clicks=0,
+                                className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                    html.Button("DARK", id="theme-dark-btn", n_clicks=0,
+                                className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                ]),
+            ]),
+        ]),
 
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
@@ -456,116 +505,78 @@ app.layout = html.Div(
             ),
         ]),
 
-        # Nav + filters bar
+        # Tab navigation
         card([
-            html.Div(style={"display": "flex", "alignItems": "center", "gap": "20px", "flexWrap": "wrap"}, children=[
+            dcc.RadioItems(
+                id="active-tab",
+                options=[
+                    {"label": "SUMMARY",         "value": "summary"},
+                    {"label": "ALL TRANSACTIONS", "value": "editor"},
+                ],
+                value="summary",
+                inline=True,
+                inputStyle={"display": "none"},
+                labelStyle={
+                    "marginRight": "6px", "padding": "7px 18px",
+                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
+                    "fontWeight": "600", "letterSpacing": "1px",
+                },
+            ),
+        ], style={"padding": "16px 24px", "marginBottom": "16px"}),
 
-                # Tab navigation
-                dcc.RadioItems(
-                    id="active-tab",
-                    options=[
-                        {"label": "SUMMARY",         "value": "summary"},
-                        {"label": "ALL TRANSACTIONS", "value": "editor"},
-                    ],
-                    value="summary",
-                    inline=True,
-                    inputStyle={"display": "none"},
-                    labelStyle={
-                        "marginRight": "6px", "padding": "7px 18px",
-                        "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
-                        "fontWeight": "600", "letterSpacing": "1px",
-                    },
-                ),
+        # Filters
+        card([
+            html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flexWrap": "wrap"}, children=[
 
-                # Divider
-                html.Div(style={"width": "1px", "height": "36px", "background": COLORS["border"], "flexShrink": "0"}),
+                html.Div([
+                    label("SOURCE"),
+                    dcc.Dropdown(
+                        id="global-source-filter",
+                        options=[{"label": "All Sources", "value": "all"}] +
+                                [{"label": s, "value": s} for s in available_sources(df)],
+                        value="all",
+                        clearable=False,
+                        style={"width": "200px"},
+                    ),
+                ]),
 
-                # Filters
-                html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flex": "1", "flexWrap": "wrap"}, children=[
+                html.Div([
+                    label("YEAR"),
+                    dcc.Dropdown(
+                        id="global-year-filter",
+                        options=[{"label": "All Years", "value": "all"}] +
+                                [{"label": str(y), "value": y} for y in available_years(df)],
+                        value="all",
+                        clearable=False,
+                        style={"width": "140px"},
+                    ),
+                ]),
 
-                    html.Div([
-                        label("SOURCE"),
-                        dcc.Dropdown(
-                            id="global-source-filter",
-                            options=[{"label": "All Sources", "value": "all"}] +
-                                    [{"label": s, "value": s} for s in available_sources(df)],
-                            value="all",
-                            clearable=False,
-                            style={"width": "200px"},
-                        ),
-                    ]),
+                html.Div([
+                    label("MONTH"),
+                    dcc.Dropdown(
+                        id="global-month-filter",
+                        options=[{"label": "All Months", "value": "all"}],
+                        value="all",
+                        clearable=False,
+                        style={"width": "160px"},
+                    ),
+                ]),
 
-                    html.Div([
-                        label("YEAR"),
-                        dcc.Dropdown(
-                            id="global-year-filter",
-                            options=[{"label": "All Years", "value": "all"}] +
-                                    [{"label": str(y), "value": y} for y in available_years(df)],
-                            value="all",
-                            clearable=False,
-                            style={"width": "140px"},
-                        ),
-                    ]),
-
-                    html.Div([
-                        label("MONTH"),
-                        dcc.Dropdown(
-                            id="global-month-filter",
-                            options=[{"label": "All Months", "value": "all"}],
-                            value="all",
-                            clearable=False,
-                            style={"width": "160px"},
-                        ),
-                    ]),
-
-                    html.Div([
-                        label("SHOW ON CHARTS"),
-                        dcc.Checklist(
-                            id="toggle-income-expenses",
-                            options=[
-                                {"label": "  Expenses", "value": "expenses"},
-                                {"label": "  Income",   "value": "income"},
-                            ],
-                            value=["expenses"],
-                            inline=True,
-                            style={"fontSize": "13px"},
-                            inputStyle={"marginRight": "6px"},
-                            labelStyle={"marginRight": "20px"},
-                        ),
-                    ]),
-
-                    html.Div([
-                        label("VIEW"),
-                        dcc.RadioItems(
-                            id="overview-view-toggle",
-                            options=[
-                                {"label": "MONTH BY MONTH", "value": "monthly"},
-                                {"label": "ALL YEARS",      "value": "yearly"},
-                            ],
-                            value="monthly",
-                            inline=True,
-                            inputStyle={"display": "none"},
-                            labelStyle={
-                                "marginRight": "8px", "padding": "6px 16px",
-                                "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
-                            },
-                        ),
-                    ]),
-
-                    html.Div(style={"marginLeft": "auto", "display": "flex", "flexDirection": "column", "gap": "6px", "alignItems": "flex-end"}, children=[
-                        html.Div(id="uncategorized-count", style={
-                            "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
-                        }),
-                        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
-                            html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
-                                        className="btn-secondary",
-                                        style={"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}),
-                            html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
-                                        className="btn-secondary",
-                                        style={"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}),
-                            html.Span(id="reload-status", style={"fontSize": "11px", "color": COLORS["accent3"]}),
-                        ]),
-                    ]),
+                html.Div([
+                    label("SHOW ON CHARTS"),
+                    dcc.Checklist(
+                        id="toggle-income-expenses",
+                        options=[
+                            {"label": "  Expenses", "value": "expenses"},
+                            {"label": "  Income",   "value": "income"},
+                        ],
+                        value=["expenses"],
+                        inline=True,
+                        style={"fontSize": "13px"},
+                        inputStyle={"marginRight": "6px"},
+                        labelStyle={"marginRight": "20px"},
+                    ),
                 ]),
             ]),
         ], style={"padding": "16px 24px", "marginBottom": "16px"}),
@@ -576,7 +587,7 @@ app.layout = html.Div(
                     # Summary stat cards
                     html.Div(id="summary-stats", style={
                         "display": "grid",
-                        "gridTemplateColumns": "repeat(3, 1fr)",
+                        "gridTemplateColumns": "repeat(4, minmax(0, 1fr))",
                         "gap": "16px",
                         "marginBottom": "16px",
                     }),
@@ -587,12 +598,6 @@ app.layout = html.Div(
                             "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
                         }),
                         dcc.Graph(id="overview-main-chart", config={"displayModeBar": False}),
-                    ]),
-
-                    # Net chart
-                    card([
-                        section_title("MONTHLY NET (INCOME − EXPENSES)"),
-                        dcc.Graph(id="net-chart", config={"displayModeBar": False}),
                     ]),
 
                     # Category breakdown
@@ -622,6 +627,11 @@ app.layout = html.Div(
                             dcc.Download(id="export-csv-download"),
                             html.Span(id="import-status", style={"fontSize": "12px", "color": COLORS["accent3"], "marginLeft": "4px"}),
                         ]),
+
+                        # Unlabeled rows are ignored by every Summary total — surface the count
+                        html.Div(id="unlabeled-note", style={
+                            "fontSize": "12px", "color": COLORS["subtext"], "marginBottom": "12px",
+                        }),
 
                         # Transactions table
                         dash_table.DataTable(
@@ -702,44 +712,59 @@ def switch_tab(active):
 # ── Theme callbacks ───────────────────────────────────────────────────────────
 
 @app.callback(
-    Output("theme-store",      "data"),
-    Output("app-root",         "className"),
-    Output("theme-toggle-btn", "children"),
-    Input("theme-toggle-btn",  "n_clicks"),
-    State("theme-store",       "data"),
+    Output("theme-store", "data"),
+    Output("app-root",    "className"),
+    Input("theme-light-btn", "n_clicks"),
+    Input("theme-dark-btn",  "n_clicks"),
     prevent_initial_call=True,
 )
-def toggle_theme(_, current):
-    new = "light" if current == "dark" else "dark"
-    icon = "☽" if new == "dark" else "☀"
-    return new, f"{new}-theme", icon
+def set_theme(_, __):
+    from dash import ctx
+    new = "light" if ctx.triggered_id == "theme-light-btn" else "dark"
+    return new, f"{new}-theme"
 
+
+# ── Settings menu callback ────────────────────────────────────────────────────
+
+@app.callback(
+    Output("settings-menu-open",  "data"),
+    Output("settings-menu-panel", "style"),
+    Input("settings-menu-btn",    "n_clicks"),
+    State("settings-menu-open",   "data"),
+    State("settings-menu-panel",  "style"),
+    prevent_initial_call=True,
+)
+def toggle_settings_menu(_, is_open, style):
+    new_open = not is_open
+    new_style = dict(style)
+    new_style["display"] = "flex" if new_open else "none"
+    return new_open, new_style
 
 
 @app.callback(
     Output("overview-main-chart",  "figure"),
     Output("overview-chart-title", "children"),
-    Output("net-chart",            "figure"),
     Output("category-bar-chart",   "figure"),
     Output("summary-stats",        "children"),
     Input("global-source-filter",   "value"),
     Input("global-year-filter",     "value"),
     Input("global-month-filter",    "value"),
     Input("toggle-income-expenses", "value"),
-    Input("overview-view-toggle",   "value"),
     Input("theme-store",            "data"),
     Input("refresh-trigger",        "data"),
 )
-def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
+def update_overview(source, year, month, toggles, theme, _refresh):
     import calendar
     tmpl = chart_template(theme)
     c    = _CHART[theme]
 
-    excluded      = EXCLUDED_CATEGORIES
     filtered      = apply_global_filters(source, year, month)
-    source_df     = df if source == "all" else df[df["source"] == source]
     show_expenses = "expenses" in toggles
     show_income   = "income"   in toggles
+
+    # No specific year or month selected → show one bar per year; otherwise
+    # break the selected year (or single month) down by month.
+    view_mode = "yearly" if (year == "all" and month == "all") else "monthly"
 
     data_df = filtered
 
@@ -748,7 +773,7 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
     if view_mode == "monthly":
         chart_title = "MONTH BY MONTH"
         if show_expenses:
-            me = monthly_expenses(filtered, excluded)
+            me = monthly_expenses(filtered)
             xlabels = [calendar.month_abbr[int(m.split("-")[1])] if year != "all" else pd.to_datetime(m).strftime("%b '%y") for m in me["month_str"]]
             fig_main.add_trace(go.Bar(
                 x=xlabels, y=me["total_expenses"], name="Expenses",
@@ -765,7 +790,7 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
                     hovertemplate="<b>%{x}</b><br>3-mo avg: $%{y:,.2f}<extra></extra>",
                 ))
         if show_income:
-            mi = monthly_income(filtered, excluded)
+            mi = monthly_income(filtered)
             xlabels_i = [calendar.month_abbr[int(m.split("-")[1])] if year != "all" else pd.to_datetime(m).strftime("%b '%y") for m in mi["month_str"]]
             fig_main.add_trace(go.Bar(
                 x=xlabels_i, y=mi["total_income"], name="Income",
@@ -775,14 +800,14 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
     else:
         chart_title = "YEAR TO YEAR"
         if show_expenses:
-            ye = yearly_expenses(source_df, excluded)
+            ye = yearly_expenses(filtered)
             fig_main.add_trace(go.Bar(
                 x=ye["year"].astype(str), y=ye["total_expenses"], name="Expenses",
                 marker_color=c["accent2"], marker_line_width=0,
                 hovertemplate="<b>%{x}</b><br>Expenses: $%{y:,.2f}<extra></extra>",
             ))
         if show_income:
-            yi = yearly_income(source_df, excluded)
+            yi = yearly_income(filtered)
             fig_main.add_trace(go.Bar(
                 x=yi["year"].astype(str), y=yi["total_income"], name="Income",
                 marker_color=c["accent3"], marker_line_width=0,
@@ -790,55 +815,25 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
             ))
     fig_main.update_layout(**tmpl, barmode="group", height=320)
 
-    # ── Net chart (income − expenses per period) ───────────────────────────
-    me_net = monthly_expenses(data_df, excluded).rename(columns={"total_expenses": "exp"})
-    mi_net = monthly_income(data_df, excluded).rename(columns={"total_income": "inc"})
-    net    = me_net.merge(mi_net, on="month_str", how="outer").fillna(0).sort_values("month_str").reset_index(drop=True)
-    net["net"] = net["inc"] - net["exp"]
-
-    if view_mode == "monthly":
-        net_x = [calendar.month_abbr[int(m.split("-")[1])] if year != "all" else pd.to_datetime(m).strftime("%b '%y") for m in net["month_str"]]
-    else:
-        net["year_str"] = net["month_str"].str[:4]
-        net = net.groupby("year_str", as_index=False)["net"].sum()
-        net_x = net["year_str"].tolist()
-
-    bar_colors = [c["accent3"] if v >= 0 else c["accent2"] for v in net["net"]]
-    fig_net = go.Figure(go.Bar(
-        x=net_x, y=net["net"],
-        marker_color=bar_colors, marker_line_width=0,
-        hovertemplate="<b>%{x}</b><br>Net: $%{y:,.2f}<extra></extra>",
-    ))
-    fig_net.add_hline(y=0, line_color=c["border"], line_width=1)
-    fig_net.update_layout(**tmpl, height=240, showlegend=False)
-
-    # ── Category horizontal bar ────────────────────────────────────────────
-    cat = expenses_by_category(data_df, excluded=excluded)
-    fig_cat = go.Figure(go.Bar(
-        x=cat["total_expenses"], y=cat["category"],
-        orientation="h",
-        marker_color=PIE_COLORS[:len(cat)], marker_line_width=0,
-        hovertemplate="<b>%{y}</b><br>$%{x:,.2f}<extra></extra>",
-    ))
-    fig_cat.update_layout(**tmpl, height=max(300, len(cat) * 36))
-    fig_cat.update_yaxes(autorange="reversed")
-
-    # ── Summary stat cards ─────────────────────────────────────────────────
-    me_s      = monthly_expenses(data_df, excluded)
+    # ── Totals and prior-period comparison ─────────────────────────────────
+    me_s      = monthly_expenses(data_df)
     total_exp = me_s["total_expenses"].sum()
-    total_inc = monthly_income(data_df, excluded)["total_income"].sum()
+    total_inc = monthly_income(data_df)["total_income"].sum()
+    net_val   = total_inc - total_exp
 
     # Previous-period totals for MoM / YoY delta
     prev_exp = prev_inc = None
+    _prev_df = None
     if month != "all":
         prev_m   = (pd.Period(month, "M") - 1).strftime("%Y-%m")
         _prev_df = apply_global_filters(source, "all", prev_m)
-        prev_exp = monthly_expenses(_prev_df, excluded)["total_expenses"].sum()
-        prev_inc = monthly_income(_prev_df, excluded)["total_income"].sum()
+        prev_exp = monthly_expenses(_prev_df)["total_expenses"].sum()
+        prev_inc = monthly_income(_prev_df)["total_income"].sum()
     elif year != "all":
         _prev_df = apply_global_filters(source, int(year) - 1, "all")
-        prev_exp = monthly_expenses(_prev_df, excluded)["total_expenses"].sum()
-        prev_inc = monthly_income(_prev_df, excluded)["total_income"].sum()
+        prev_exp = monthly_expenses(_prev_df)["total_expenses"].sum()
+        prev_inc = monthly_income(_prev_df)["total_income"].sum()
+    prev_net = (prev_inc - prev_exp) if prev_exp is not None else None
 
     if view_mode == "monthly":
         if month != "all":
@@ -849,33 +844,96 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
             period_label = "ALL YEARS"
         avg_label    = "AVG MONTHLY SPEND"
         avg_val      = me_s["total_expenses"].mean() if not me_s.empty else 0
+        n_periods    = len(me_s)
     else:
         period_label = str(year) if year != "all" else "ALL YEARS"
         avg_label    = "AVG YEARLY SPEND"
-        ye_s         = yearly_expenses(data_df, excluded)
+        ye_s         = yearly_expenses(data_df)
         avg_val      = ye_s["total_expenses"].mean() if not ye_s.empty else 0
+        n_periods    = len(ye_s)
 
+    # Flat average-spend reference line: reads each bar as above/below normal
+    if show_expenses and n_periods >= 2 and avg_val:
+        fig_main.add_hline(
+            y=avg_val, line_dash="dot", line_width=1, line_color=c["text"],
+            opacity=0.55,
+            annotation_text=f"avg ${avg_val:,.0f}", annotation_position="top left",
+            annotation_font=dict(size=10, color=c["text"]),
+        )
+
+    # ── Category horizontal bar (top N + Other, with vs-prior deltas) ──────
+    TOP_N = 10
+    cat = expenses_by_category(data_df)
+    top = cat.head(TOP_N).copy()
+    other_label = None
+    if len(cat) > TOP_N:
+        rest        = cat.iloc[TOP_N:]
+        other_label = f"Other · {len(rest)} categories"
+        top = pd.concat([top, pd.DataFrame([{
+            "category": other_label, "total_expenses": rest["total_expenses"].sum(),
+        }])], ignore_index=True)
+
+    prev_cat_map = None
+    if _prev_df is not None:
+        prev_cat     = expenses_by_category(_prev_df)
+        prev_cat_map = dict(zip(prev_cat["category"], prev_cat["total_expenses"]))
+
+    top_names = set(cat.head(TOP_N)["category"])
+    bar_texts = []
+    for name, val in zip(top["category"], top["total_expenses"]):
+        if prev_cat_map is None:
+            bar_texts.append(f"${val:,.0f}")
+            continue
+        if name == other_label:
+            prev_val = sum(v for k, v in prev_cat_map.items() if k not in top_names)
+        else:
+            prev_val = prev_cat_map.get(name, 0)
+        d = val - prev_val
+        bar_texts.append(f"${val:,.0f} · {'+' if d >= 0 else '-'}${abs(d):,.0f}")
+
+    grand = cat["total_expenses"].sum()
+    pcts  = (top["total_expenses"] / grand * 100) if grand else top["total_expenses"] * 0
+    fig_cat = go.Figure(go.Bar(
+        x=top["total_expenses"], y=top["category"],
+        orientation="h",
+        marker_color=PIE_COLORS[:len(top)], marker_line_width=0,
+        text=bar_texts, textposition="outside", cliponaxis=False,
+        textfont=dict(size=10),
+        customdata=pcts,
+        hovertemplate="<b>%{y}</b><br>$%{x:,.2f} · %{customdata:.0f}% of total<extra></extra>",
+    ))
+    fig_cat.update_layout(**tmpl, height=max(300, len(top) * 36))
+    fig_cat.update_layout(margin=dict(l=40, r=120, t=40, b=40))
+    fig_cat.update_yaxes(autorange="reversed")
+
+    # ── Summary stat cards ─────────────────────────────────────────────────
     def _delta(current, prev, higher_is_bad=True):
         """Return (label_str, is_green) or (None, None) when no comparison is available."""
         if prev is None or prev == 0:
             return None, None
         delta = current - prev
-        pct   = delta / prev * 100
-        sign  = "+" if delta >= 0 else ""
+        pct   = delta / abs(prev) * 100
+        sign  = "+" if delta >= 0 else "-"
         is_green = (delta < 0) if higher_is_bad else (delta >= 0)
-        return f"{sign}${abs(delta):,.0f} ({sign}{pct:.0f}%) vs prior", is_green
+        return f"{sign}${abs(delta):,.0f} ({sign}{abs(pct):.0f}%) vs prior", is_green
 
-    def stat_card(lbl, value, color, prev=None, higher_is_bad=True):
+    def stat_card(lbl, value, color, prev=None, higher_is_bad=True, sub=None):
         delta_lbl, is_green = _delta(value, prev, higher_is_bad)
+        value_str = f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
         children = [
             html.P(lbl, className="app-label", style={
                 "fontSize": "10px", "letterSpacing": "2px", "marginBottom": "8px",
             }),
-            html.P(f"${value:,.2f}", style={
+            html.P(value_str, style={
                 "fontSize": "22px", "fontWeight": "600",
                 "fontFamily": "'Syne', sans-serif", "color": color,
             }),
         ]
+        if sub:
+            children.append(html.P(sub, style={
+                "fontSize": "11px", "marginTop": "4px", "fontWeight": "500",
+                "color": COLORS["subtext"],
+            }))
         if delta_lbl:
             children.append(html.P(delta_lbl, style={
                 "fontSize": "11px", "marginTop": "4px", "fontWeight": "500",
@@ -883,12 +941,16 @@ def update_overview(source, year, month, toggles, view_mode, theme, _refresh):
             }))
         return card(children, style={"padding": "20px 24px", "marginBottom": "0"})
 
+    savings_sub = f"{net_val / total_inc * 100:.0f}% savings rate" if total_inc > 0 else None
+    net_color   = c["accent3"] if net_val >= 0 else c["accent2"]
+
     stats = [
         stat_card(f"TOTAL EXPENSES · {period_label}", total_exp, c["accent2"], prev=prev_exp, higher_is_bad=True),
+        stat_card(f"NET · {period_label}",            net_val,   net_color,    prev=prev_net, higher_is_bad=False, sub=savings_sub),
         stat_card(f"TOTAL INCOME · {period_label}",   total_inc, c["accent3"], prev=prev_inc, higher_is_bad=False),
         stat_card(avg_label,                           avg_val,   _CHART[theme]["text"]),
     ]
-    return fig_main, chart_title, fig_net, fig_cat, stats
+    return fig_main, chart_title, fig_cat, stats
 
 
 @app.callback(
@@ -925,12 +987,15 @@ def category_drilldown(click_data, source, year, month, theme):
         return []
 
     category = click_data["points"][0]["y"]
+    if category.startswith("Other · "):  # aggregated tail of the top-N chart, not a real category
+        return []
     c = _CHART[theme]
 
     filtered = apply_global_filters(source, year, month)
-    cat_txns = filtered[filtered["effective_category"] == category].copy()
-    cat_txns = cat_txns[cat_txns["amount"] < 0]
-    cat_txns["amount"] = cat_txns["amount"].abs()
+    match_category = filtered["category_display"].where(filtered["category_display"] != "", "Uncategorized")
+    cat_txns = filtered[match_category == category].copy()
+    cat_txns = cat_txns[cat_txns["master_category"] == "Expense"]
+    cat_txns["amount"] = -cat_txns["amount"]
     cat_txns = cat_txns.sort_values("date", ascending=False)
     cat_txns["date"] = cat_txns["date"].astype(str)
     display = cat_txns[["date", "description", "amount", "source"]].head(100)
@@ -987,6 +1052,24 @@ def category_drilldown(click_data, source, year, month, theme):
 )
 def update_editor_table(source, year, month, _refresh):
     return _build_table_data(source, year, month)
+
+
+@app.callback(
+    Output("unlabeled-note", "children"),
+    Input("global-source-filter", "value"),
+    Input("global-year-filter",   "value"),
+    Input("global-month-filter",  "value"),
+    Input("refresh-trigger",      "data"),
+)
+def update_unlabeled_note(source, year, month, _refresh):
+    filtered = apply_global_filters(source, year, month)
+    # Anything outside Expense / Income / Transfer (including blank) never
+    # reaches a Summary total — Transfer is deliberate, the rest deserve a flag.
+    n = int((~filtered["master_category"].isin(PREDEFINED_CATEGORIES)).sum())
+    if n == 0:
+        return ""
+    return (f"⚠ {n} of {len(filtered)} transactions in view have no valid TYPE OF TRANSACTION label "
+            f"(Expense / Income / Transfer) and are ignored in all Summary totals.")
 
 
 @app.callback(
@@ -1081,9 +1164,6 @@ def _build_table_data(source: str, year, month: str) -> list[dict]:
     filtered = filtered.copy()
     filtered["date"]            = filtered["date"].astype(str)
     filtered["master_category"] = filtered["master_category"].fillna("")
-    sub = filtered["sub_category"].fillna("").str.strip()
-    orig = filtered["original_category"].fillna("").str.strip()
-    filtered["category_display"] = sub.where(sub != "", orig)
     if "card_last4" in filtered.columns:
         filtered["card_last4"] = filtered["card_last4"].fillna("")
     cols = ["date", "description", "amount", "source", "card_last4", "master_category", "category_display"]
