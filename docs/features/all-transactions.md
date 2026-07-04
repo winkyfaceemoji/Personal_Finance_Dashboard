@@ -20,6 +20,10 @@ Displays rows from `edited_combined_transactions.csv` after the global filters a
 
 The table is paginated at 25 rows and supports native column sorting. The `refresh-trigger` store fires the table reload automatically after any import or data reload so the view stays current without a manual page interaction.
 
+### Unlabeled-rows note (`unlabeled-note`)
+
+Summary totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. A note above the table shows how many rows in the current filter scope have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every Summary number — e.g. `⚠ 40 of 2100 transactions in view have no valid TYPE OF TRANSACTION label…`. Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything in view is labeled, and updates with the global filters and after imports/reloads.
+
 ---
 
 ## Import / export workflow
@@ -55,7 +59,7 @@ The **CATEGORY** column in the table shows `sub_category` when set, and falls ba
 
 ## Handling transfers
 
-Rows tagged `Transfer` in `master_category` are automatically excluded from all income and expense calculations — charts, stat cards, net chart, and MoM/YoY deltas. They still appear in this table so you can see them.
+Rows tagged `Transfer` in `master_category` are excluded from all income and expense calculations — charts, stat cards, and MoM/YoY deltas. (So are unlabeled rows — see the note above — but Transfers are excluded deliberately and don't appear in the ignored count.) They still appear in this table so you can see them.
 
 **Recommended workflow:**
 1. Export CSV

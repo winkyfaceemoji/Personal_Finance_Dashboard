@@ -37,10 +37,9 @@ Bank CSVs (RAW/)
   ├─ Filter bar  (source / year / month / view / reload)
   │
   ├─ Summary tab
-  │    ├─ Stat cards  (totals + MoM/YoY delta)
-  │    ├─ Main bar chart  (monthly or yearly, with rolling avg)
-  │    ├─ Net chart  (income − expenses)
-  │    └─ Category breakdown  (bar chart + click drilldown)
+  │    ├─ Stat cards  (expenses / net + savings rate / income / avg, with MoM/YoY delta)
+  │    ├─ Main bar chart  (monthly or yearly, rolling avg + avg reference line)
+  │    └─ Category breakdown  (top 10 + Other, deltas vs prior, click drilldown)
   │
   └─ All Transactions tab
        ├─ Transaction table  (paginate, sort — driven by global filters)
@@ -53,10 +52,10 @@ Bank CSVs (RAW/)
 
 | Document | What it covers |
 |----------|---------------|
-| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, deduplication, master-file merge |
+| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
-| [global-filters.md](global-filters.md) | Filter bar: source / year / month / view toggle, reload button, uncategorized badge |
-| [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, net chart, stat cards with MoM/YoY delta |
+| [global-filters.md](global-filters.md) | Filter bar: source / year / month, reload button, uncategorized badge |
+| [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, average reference line, stat cards with MoM/YoY delta |
 | [category-breakdown.md](category-breakdown.md) | Category horizontal bar chart, click-to-drilldown, filter-change behaviour |
 | [all-transactions.md](all-transactions.md) | All Transactions tab: transaction table, import/export CSV workflow |

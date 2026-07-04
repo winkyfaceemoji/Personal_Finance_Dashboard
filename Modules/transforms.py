@@ -69,7 +69,7 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     # Clean original_category and master_category
     df["original_category"] = df["original_category"].fillna("").str.strip()
     df["master_category"]   = df["master_category"].fillna("").str.strip()
-    df["sub_category"]      = df["sub_category"].fillna("")
+    df["sub_category"]      = df["sub_category"].fillna("").str.strip()
     df["card_last4"]        = df["card_last4"].fillna("")
 
     # effective_category: master overrides bank, fallback to Uncategorized
@@ -77,6 +77,14 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
         lambda r: r["master_category"] if r["master_category"] != ""
                   else (r["original_category"] if r["original_category"] != "" else "Uncategorized"),
         axis=1,
+    )
+
+    # category_display: the transaction-level category shown in the Transactions
+    # tab and used for the Spend by Category chart. Sub-category overrides the
+    # bank's original category; master_category is not involved here since it
+    # represents the broader "type of transaction" grouping, shown separately.
+    df["category_display"] = df["sub_category"].where(
+        df["sub_category"] != "", df["original_category"]
     )
 
     # Convenience columns
@@ -88,28 +96,25 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     return df
 
 
-def get_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
-    """Return only expense rows (negative amounts), skipping excluded categories."""
-    mask = df["amount"] < 0
-    if excluded:
-        mask = mask & ~df["effective_category"].isin(excluded)
-    return df[mask].copy()
+def get_expenses(df: pd.DataFrame) -> pd.DataFrame:
+    """Return rows labeled Expense in master_category.
+    Unlabeled and Transfer rows are ignored — totals are label-based."""
+    return df[df["master_category"] == "Expense"].copy()
 
 
-def get_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
-    """Return only income rows (positive amounts), skipping excluded categories."""
-    mask = df["amount"] > 0
-    if excluded:
-        mask = mask & ~df["effective_category"].isin(excluded)
-    return df[mask].copy()
+def get_income(df: pd.DataFrame) -> pd.DataFrame:
+    """Return rows labeled Income in master_category.
+    Unlabeled and Transfer rows are ignored — totals are label-based."""
+    return df[df["master_category"] == "Income"].copy()
 
 
-def monthly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+def monthly_expenses(df: pd.DataFrame) -> pd.DataFrame:
     """
     Total expenses grouped by month.
-    Returns: month_str, total_expenses (positive values).
+    Returns: month_str, total_expenses (positive values; refund rows labeled
+    Expense net against the total).
     """
-    expenses = get_expenses(df, excluded)
+    expenses = get_expenses(df)
     grouped = (
         expenses
         .groupby("month_str", sort=True)["amount"]
@@ -117,16 +122,16 @@ def monthly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFr
         .reset_index()
         .rename(columns={"amount": "total_expenses"})
     )
-    grouped["total_expenses"] = grouped["total_expenses"].abs()
+    grouped["total_expenses"] = -grouped["total_expenses"]
     return grouped  # already sorted by groupby(sort=True)
 
 
-def monthly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+def monthly_income(df: pd.DataFrame) -> pd.DataFrame:
     """
     Total income grouped by month.
     Returns: month_str, total_income.
     """
-    income = get_income(df, excluded)
+    income = get_income(df)
     grouped = (
         income
         .groupby("month_str", sort=True)["amount"]
@@ -137,12 +142,13 @@ def monthly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFram
     return grouped  # already sorted by groupby(sort=True)
 
 
-def yearly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+def yearly_expenses(df: pd.DataFrame) -> pd.DataFrame:
     """
     Total expenses grouped by year.
-    Returns: year, total_expenses (positive values).
+    Returns: year, total_expenses (positive values; refund rows labeled
+    Expense net against the total).
     """
-    expenses = get_expenses(df, excluded)
+    expenses = get_expenses(df)
     grouped = (
         expenses
         .groupby("year", sort=True)["amount"]
@@ -150,16 +156,16 @@ def yearly_expenses(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFra
         .reset_index()
         .rename(columns={"amount": "total_expenses"})
     )
-    grouped["total_expenses"] = grouped["total_expenses"].abs()
+    grouped["total_expenses"] = -grouped["total_expenses"]
     return grouped  # already sorted by groupby(sort=True)
 
 
-def yearly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame:
+def yearly_income(df: pd.DataFrame) -> pd.DataFrame:
     """
     Total income grouped by year.
     Returns: year, total_income.
     """
-    income = get_income(df, excluded)
+    income = get_income(df)
     grouped = (
         income
         .groupby("year", sort=True)["amount"]
@@ -170,24 +176,29 @@ def yearly_income(df: pd.DataFrame, excluded: set | None = None) -> pd.DataFrame
     return grouped  # already sorted by groupby(sort=True)
 
 
-def expenses_by_category(df: pd.DataFrame, month_str: str = None, excluded: set | None = None) -> pd.DataFrame:
+def expenses_by_category(df: pd.DataFrame, month_str: str = None) -> pd.DataFrame:
     """
-    Total expenses grouped by effective_category.
+    Total expenses grouped by category_display (the same category shown in the
+    Transactions tab: sub_category if set, else the bank's original category).
     Optionally filter to a specific month (e.g. '2024-01').
     Returns: category, total_expenses (positive values).
     """
-    expenses = get_expenses(df, excluded)
+    expenses = get_expenses(df)
     if month_str:
         expenses = expenses[expenses["month_str"] == month_str]
+    expenses = expenses.copy()
+    expenses["category_display"] = expenses["category_display"].where(
+        expenses["category_display"] != "", "Uncategorized"
+    )
 
     grouped = (
         expenses
-        .groupby("effective_category")["amount"]
+        .groupby("category_display")["amount"]
         .sum()
         .reset_index()
-        .rename(columns={"effective_category": "category", "amount": "total_expenses"})
+        .rename(columns={"category_display": "category", "amount": "total_expenses"})
     )
-    grouped["total_expenses"] = grouped["total_expenses"].abs()
+    grouped["total_expenses"] = -grouped["total_expenses"]
     return grouped.sort_values("total_expenses", ascending=False)
 
 
