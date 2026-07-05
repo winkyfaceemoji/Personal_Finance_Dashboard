@@ -51,7 +51,7 @@ Bank CSVs (RAW/)
 |----------|---------------|
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
-| [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
+| [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-labeling rules, aggregation helpers |
 | [overview-charts.md](overview-charts.md) | Range chips, chart selector, net view, year-over-year trends, performance card |
 | [category-breakdown.md](category-breakdown.md) | Categories chart (share lines / snapshot bars), click-to-drilldown |
 | [import-export.md](import-export.md) | Import/export card: CSV labeling workflow, category system, transfers |
