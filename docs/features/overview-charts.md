@@ -1,74 +1,72 @@
 # Overview charts
 
-All charts live on the Summary tab and are produced by the `update_overview` callback. They re-render together whenever any global filter or the refresh trigger changes.
+The Summary tab is two cards, both produced by the `update_overview` callback:
+
+1. **Graph card** — a chart-view selector (NET / TRENDS / CATEGORIES), four range chips (1M / YTD / 1Y / 3Y), and a compact source dropdown in the header; one chart body visible at a time.
+2. **Performance card** — the range's metrics (expenses, income, net, savings rate) with deltas vs the prior equivalent window.
+
+The page header row above holds the title, the tab pills, and the settings gear. The Source/Year/Month filter card lives on the All Transactions tab only and does not affect the Summary tab.
+
+## Range chips (`summary-range`)
+
+Calendar-anchored windows computed by `_range_window` in `app.py`:
+
+| Chip | Window | Prior window (for deltas) |
+|------|--------|---------------------------|
+| 1M | The current calendar month | The previous calendar month |
+| YTD (default) | Jan 1 of the current year → now | The previous year's Jan → same month |
+| 1Y | Trailing 12 calendar months | The 12 months before those |
+| 3Y | Trailing 36 calendar months | The 36 months before those |
+
+Windows are anchored to *today*, not to the newest data — if statements lag the calendar, 1M can legitimately show an empty chart. The `summary-source` dropdown scopes everything on the tab to one account.
+
+## Chart selector (`chart-view-toggle`)
+
+The selector pills swap which chart body is visible — NET (per-period net bars), TRENDS (same-month YoY lines), or CATEGORIES (the category breakdown + drilldown). The pills are styled like the tab nav. Visibility styles are emitted by `update_overview` itself (the selector is one of its Inputs) so the figure redraw and the unhide land in the same render cycle — a Plotly graph drawn while `display:none` mis-sizes.
 
 ---
 
-## Chart granularity
+## Net view (`net-position-chart` / `net-position-header`)
 
-There is no separate view control — `update_overview` derives the granularity directly from the Year/Month filters already selected:
+The default chart view: how much you kept (or overspent) per period. Headline numbers live in the performance card below, so the chart carries only a plain title — `MONTHLY NET · TRAILING 1Y` (or `DAILY NET · JUL 2026` on the 1M range).
 
-```python
-view_mode = "yearly" if (year == "all" and month == "all") else "monthly"
-```
+**Chart:** per-period net bars — green when net ≥ 0, red when negative, with a zero line. Monthly bars for YTD/1Y/3Y; the 1M range switches to **daily** resolution within the current month (days with no transactions render as zero).
 
-| Filters | `view_mode` | Main chart shows |
-|---------|------------|-----------------|
-| Year = All, Month = All | `"yearly"` | One bar per calendar year |
-| A specific year (Month = All), or a specific month | `"monthly"` | One bar per calendar month in the filtered data |
-
-This means every combination of filters maps to exactly one chart granularity — there's no state where a toggle disagrees with the Year/Month filters, or where the chart silently ignores them.
+There is deliberately no cumulative/net-worth line — the app monitors period cash flow, not account balances.
 
 ---
 
-## Main bar chart (`overview-main-chart`)
+## Trends chart (`overview-main-chart`)
 
-Grouped bar chart of expenses and/or income, toggled by the **SHOW ON CHARTS** checklist.
+Same-calendar-month year-over-year comparison of one metric at a time — expenses or income, picked by the Expenses/Income radio (`toggle-income-expenses`) in this chart body's header.
 
-### Monthly mode
+**This view deliberately ignores the range chips.** It is inherently an all-years chart: one `Scatter` line per calendar year over a fixed Jan–Dec axis, so every February shares a column and Feb '25 vs Feb '26 is a straight vertical read. The chips keep driving the NET and CATEGORIES views and the performance card; trends always shows the full source-scoped history.
 
-- **Expenses bar**: `monthly_expenses(filtered)` → one bar per `month_str`.
-- **Income bar**: `monthly_income(filtered)` → one bar per `month_str`.
-- X-axis labels: abbreviated month names (`"Jan"`, `"Feb"`, …) when a specific year is filtered; `"Jan '24"` style when year = All (prevents duplicate labels across years).
-- **3-month rolling average** (expenses only): shown as a dashed line overlay whenever there are 2 or more months in view. Computed with `rolling(3, min_periods=1).mean()` so it degrades gracefully to a 1-month window at the start of the series.
-- **Average-spend reference line**: a dotted horizontal line at the average spend per period in view (monthly average in monthly mode, yearly average in yearly mode), annotated `avg $X`. Drawn whenever expenses are shown and there are 2 or more periods, so each bar reads as above/below normal at a glance. The rolling average shows the trend; this flat line shows the baseline.
+- Each year gets its own colour from `PIE_COLORS`, stable across metric switches, with a year legend.
+- The **current year** is drawn heaviest (3.5px, full opacity, larger markers); other years are thin at 0.55 opacity.
+- Hover on any point shows the value plus the change vs the same month the prior year (`+$312 (+18%) vs Mar 2025`); blank when the prior year has no data for that month.
+- Partial years simply render as shorter lines (missing months are gaps, not zeros).
 
-### Yearly mode
-
-- **Expenses bar**: `yearly_expenses(filtered)` — this mode only triggers when Year and Month are both "All", so `filtered` is source-filtered only and every year appears.
-- **Income bar**: `yearly_income(filtered)` — same.
-- No rolling average in yearly mode (the average-spend reference line still appears).
+A cumulative "pace" variant of this chart was tried and reverted — the ahead/behind-last-year aggregate it visualised is already stated numerically by the performance card, while the monthly shape (spike months, seasonality) is information only this chart carries.
 
 All numbers on this tab are **label-based**: expenses are rows with `master_category == "Expense"`, income is rows with `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total — the All Transactions tab shows how many non-Transfer rows are being ignored.
 
 ---
 
-## Summary stat cards (`summary-stats`)
+## Performance card (`performance-card` / `performance-title`)
 
-Four cards rendered as a 4-column grid below the filter bar.
+One card below the graphs, titled `PERFORMANCE · {range label}`, holding four metrics in a responsive grid — all computed within the selected range's window:
 
-| Card | Value | Label |
-|------|-------|-------|
-| Total Expenses | Sum of `monthly_expenses(data_df)["total_expenses"]` | "TOTAL EXPENSES · {period_label}" |
-| Net | Total income − total expenses; green when ≥ 0, red when negative. A sub-line shows the savings rate (`net / income`, only when income > 0) | "NET · {period_label}" |
-| Total Income | Sum of `monthly_income(data_df)["total_income"]` | "TOTAL INCOME · {period_label}" |
-| Average spend | Mean of monthly totals (monthly mode) or mean of yearly totals (yearly mode) | "AVG MONTHLY SPEND" or "AVG YEARLY SPEND" |
+| Metric | Value | Delta |
+|--------|-------|-------|
+| Total Expenses | Sum of `monthly_expenses(data_df)` | vs prior window, green when spending fell |
+| Total Income | Sum of `monthly_income(data_df)` | vs prior window, green when income rose |
+| Net | Income − expenses; green when ≥ 0, red when negative | vs prior window |
+| Savings rate | `net / income` (— when the window has no income) | percentage-point change vs the prior window's rate |
 
-Negative values render as `-$1,372.65` (sign before the dollar sign). There is no separate net chart — net lives here as a headline number.
+Negative values render as `-$1,372.65` (sign before the dollar sign). Dollar deltas read `+$142 (+8%) vs prior`; the percentage divides by `abs(prev)` so it stays meaningful when the prior net was negative. Prior-window totals use the same label-based rules, so `Transfer` and unlabeled rows never affect them.
 
-### MoM / YoY delta
-
-When a specific month or year is selected, each card shows a delta line below the dollar value comparing the current period to the prior one:
-
-- **Month selected** → compares to the previous calendar month
-- **Year selected** → compares to the previous year
-- Format: `+$142 (+8%) vs prior` in green when favourable, red when unfavourable
-- Expenses: green = decreased (lower is better); Net and Income: green = increased (higher is better)
-- The percentage divides by `abs(prev)` so it stays meaningful when the prior net was negative
-- No delta is shown when All Months / All Years is selected (no single prior period to compare)
-- Prior-period totals use the same label-based rules, so `Transfer` and unlabeled rows never affect deltas
-
-`period_label` reflects the active filter scope — see [global-filters.md](global-filters.md).
+**Prior-window coverage:** deltas (here and on the category bars) are shown only when the prior window is *fully* covered by data — if it reaches back before the first month in the data, all "vs prior" comparisons are suppressed rather than comparing a full window against a sliver. With ~3.5 years of data, 3Y shows totals only; its deltas appear once 6 years exist.
 
 ---
 

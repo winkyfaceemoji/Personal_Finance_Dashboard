@@ -12,8 +12,6 @@ from Modules.transforms import (
     load_transactions,
     monthly_expenses,
     monthly_income,
-    yearly_expenses,
-    yearly_income,
     expenses_by_category,
     get_uncategorized,
     available_months,
@@ -132,6 +130,9 @@ def section_title(text):
     })
 
 
+_CHIP_STYLE = {"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}
+
+
 # ── App ────────────────────────────────────────────────────────────────────────
 app = dash.Dash(
     __name__,
@@ -202,11 +203,14 @@ app.index_string = ('''
             border-bottom: 2px solid #6c8aff !important;
         }
         .dark-theme .tab-container .tab:hover { color: #ffffff !important; }
-        .dark-theme #active-tab label {
+        .dark-theme #active-tab label, .dark-theme #chart-view-toggle label,
+        .dark-theme #summary-range label {
             color: #8a8fa8; background: #0a0a0f; border: 1px solid #252830;
             transition: all 0.15s;
         }
-        .dark-theme #active-tab input[type="radio"]:checked + label {
+        .dark-theme #active-tab input[type="radio"]:checked + label,
+        .dark-theme #chart-view-toggle input[type="radio"]:checked + label,
+        .dark-theme #summary-range input[type="radio"]:checked + label {
             color: #ffffff !important; border-color: #6c8aff !important;
             background: rgba(108,138,255,0.18) !important; font-weight: 600 !important;
         }
@@ -264,11 +268,14 @@ app.index_string = ('''
         .light-theme .dash-dropdown-search { color: #0a0a0f !important; background: transparent !important; }
         .light-theme .dash-dropdown-search-container { background-color: #f0f1f5 !important; border-color: #dcdee8 !important; }
         .light-theme .dash-dropdown-clear { color: #5c5f72 !important; }
-        .light-theme #active-tab label {
+        .light-theme #active-tab label, .light-theme #chart-view-toggle label,
+        .light-theme #summary-range label {
             color: #5c5f72; background: #ffffff; border: 1px solid #dcdee8;
             transition: all 0.15s;
         }
-        .light-theme #active-tab input[type="radio"]:checked + label {
+        .light-theme #active-tab input[type="radio"]:checked + label,
+        .light-theme #chart-view-toggle input[type="radio"]:checked + label,
+        .light-theme #summary-range input[type="radio"]:checked + label {
             color: #0a0a0f !important; border-color: #4a68e8 !important;
             background: rgba(74,104,232,0.12) !important; font-weight: 600 !important;
         }
@@ -339,7 +346,8 @@ app.index_string = ('''
             font-weight: 600; letter-spacing: 1px; cursor: pointer;
         }
         .btn-secondary:hover { opacity: 0.85; }
-        #settings-menu-wrapper { position: fixed; top: 32px; right: 40px; z-index: 9999; }
+        .btn-secondary:disabled { opacity: 0.35; cursor: default; }
+        #settings-menu-wrapper { position: relative; z-index: 9999; }
         #settings-menu-btn {
             width: 44px; height: 44px; border-radius: 50%;
             cursor: pointer; z-index: 9999;
@@ -388,34 +396,7 @@ app.layout = html.Div(
         # callbacks (charts, uncategorized badge) re-render automatically.
         dcc.Store(id="refresh-trigger", data=0),
 
-        # Settings menu (position:fixed via CSS) — gear button expands/collapses the panel
         dcc.Store(id="settings-menu-open", data=False),
-        html.Div(id="settings-menu-wrapper", children=[
-            html.Button(html.Span(className="gear-icon"), id="settings-menu-btn", n_clicks=0),
-            html.Div(id="settings-menu-panel", className="app-card", style={
-                "display": "none", "flexDirection": "column", "gap": "10px", "padding": "16px",
-            }, children=[
-                html.Div(id="uncategorized-count", style={
-                    "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
-                }),
-                html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
-                            className="btn-secondary",
-                            style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
-                html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
-                    html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
-                                className="btn-secondary",
-                                style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px", "flex": "1"}),
-                ]),
-                html.Span(id="reload-status", style={"fontSize": "11px", "color": COLORS["accent3"]}),
-                html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
-                html.Div(style={"display": "flex", "gap": "8px"}, children=[
-                    html.Button("LIGHT", id="theme-light-btn", n_clicks=0,
-                                className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
-                    html.Button("DARK", id="theme-dark-btn", n_clicks=0,
-                                className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
-                ]),
-            ]),
-        ]),
 
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
@@ -487,130 +468,257 @@ app.layout = html.Div(
         # ────────────────────────────────────────────────────────────────────
 
 
-        # Header
-        html.Div(style={"marginBottom": "32px"}, children=[
-            html.H1("FINANCE", style={
-                "fontFamily": "'Syne', sans-serif", "fontSize": "48px",
-                "fontWeight": "800", "letterSpacing": "-2px",
-                "color": COLORS["text"], "display": "inline",
-            }),
-            html.Span(" DASHBOARD", style={
-                "fontFamily": "'Syne', sans-serif", "fontSize": "48px",
-                "fontWeight": "800", "letterSpacing": "-2px", "color": COLORS["accent"],
-            }),
-            html.P(
-                f"{len(df):,} transactions · {df['source'].nunique()} sources · "
-                f"{df['month_str'].nunique()} months",
-                style={"color": COLORS["subtext"], "marginTop": "8px", "fontSize": "13px"},
-            ),
-        ]),
-
-        # Tab navigation
-        card([
-            dcc.RadioItems(
-                id="active-tab",
-                options=[
-                    {"label": "SUMMARY",         "value": "summary"},
-                    {"label": "ALL TRANSACTIONS", "value": "editor"},
-                ],
-                value="summary",
-                inline=True,
-                inputStyle={"display": "none"},
-                labelStyle={
-                    "marginRight": "6px", "padding": "7px 18px",
-                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
-                    "fontWeight": "600", "letterSpacing": "1px",
-                },
-            ),
-        ], style={"padding": "16px 24px", "marginBottom": "16px"}),
-
-        # Filters
-        card([
-            html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flexWrap": "wrap"}, children=[
-
-                html.Div([
-                    label("SOURCE"),
-                    dcc.Dropdown(
-                        id="global-source-filter",
-                        options=[{"label": "All Sources", "value": "all"}] +
-                                [{"label": s, "value": s} for s in available_sources(df)],
-                        value="all",
-                        clearable=False,
-                        style={"width": "200px"},
-                    ),
-                ]),
-
-                html.Div([
-                    label("YEAR"),
-                    dcc.Dropdown(
-                        id="global-year-filter",
-                        options=[{"label": "All Years", "value": "all"}] +
-                                [{"label": str(y), "value": y} for y in available_years(df)],
-                        value="all",
-                        clearable=False,
-                        style={"width": "140px"},
-                    ),
-                ]),
-
-                html.Div([
-                    label("MONTH"),
-                    dcc.Dropdown(
-                        id="global-month-filter",
-                        options=[{"label": "All Months", "value": "all"}],
-                        value="all",
-                        clearable=False,
-                        style={"width": "160px"},
-                    ),
-                ]),
-
-                html.Div([
-                    label("SHOW ON CHARTS"),
-                    dcc.Checklist(
-                        id="toggle-income-expenses",
-                        options=[
-                            {"label": "  Expenses", "value": "expenses"},
-                            {"label": "  Income",   "value": "income"},
-                        ],
-                        value=["expenses"],
-                        inline=True,
-                        style={"fontSize": "13px"},
-                        inputStyle={"marginRight": "6px"},
-                        labelStyle={"marginRight": "20px"},
-                    ),
+        # Header: title left; tab pills + settings gear docked right
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "alignItems": "center", "flexWrap": "wrap", "gap": "16px",
+            "marginBottom": "24px",
+        }, children=[
+            html.Div([
+                html.H1("FINANCE", style={
+                    "fontFamily": "'Syne', sans-serif", "fontSize": "48px",
+                    "fontWeight": "800", "letterSpacing": "-2px",
+                    "color": COLORS["text"], "display": "inline",
+                }),
+                html.Span(" DASHBOARD", style={
+                    "fontFamily": "'Syne', sans-serif", "fontSize": "48px",
+                    "fontWeight": "800", "letterSpacing": "-2px", "color": COLORS["accent"],
+                }),
+                html.P(
+                    f"{len(df):,} transactions · {df['source'].nunique()} sources · "
+                    f"{df['month_str'].nunique()} months",
+                    style={"color": COLORS["subtext"], "marginTop": "8px", "fontSize": "13px"},
+                ),
+            ]),
+            html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px"}, children=[
+                dcc.RadioItems(
+                    id="active-tab",
+                    options=[
+                        {"label": "SUMMARY",         "value": "summary"},
+                        {"label": "ALL TRANSACTIONS", "value": "editor"},
+                    ],
+                    value="summary",
+                    inline=True,
+                    style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
+                    inputStyle={"display": "none"},
+                    labelStyle={
+                        "padding": "7px 18px", "whiteSpace": "nowrap",
+                        "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
+                        "fontWeight": "600", "letterSpacing": "1px",
+                    },
+                ),
+                # Settings menu — gear button expands/collapses the panel
+                html.Div(id="settings-menu-wrapper", children=[
+                    html.Button(html.Span(className="gear-icon"), id="settings-menu-btn", n_clicks=0),
+                    html.Div(id="settings-menu-panel", className="app-card", style={
+                        "display": "none", "flexDirection": "column", "gap": "10px", "padding": "16px",
+                    }, children=[
+                        html.Div(id="uncategorized-count", style={
+                            "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
+                        }),
+                        html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
+                                    className="btn-secondary",
+                                    style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
+                        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
+                            html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
+                                        className="btn-secondary",
+                                        style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px", "flex": "1"}),
+                        ]),
+                        html.Span(id="reload-status", style={"fontSize": "11px", "color": COLORS["accent3"]}),
+                        html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
+                        html.Div(style={"display": "flex", "gap": "8px"}, children=[
+                            html.Button("LIGHT", id="theme-light-btn", n_clicks=0,
+                                        className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                            html.Button("DARK", id="theme-dark-btn", n_clicks=0,
+                                        className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                        ]),
+                    ]),
                 ]),
             ]),
-        ], style={"padding": "16px 24px", "marginBottom": "16px"}),
+        ]),
 
         # ── SUMMARY content ───────────────────────────────────────────────────
         html.Div(id="summary-content", style={"paddingTop": "8px"}, children=[
 
-                    # Summary stat cards
-                    html.Div(id="summary-stats", style={
-                        "display": "grid",
-                        "gridTemplateColumns": "repeat(4, minmax(0, 1fr))",
-                        "gap": "16px",
-                        "marginBottom": "16px",
-                    }),
-
-                    # Main chart (monthly or yearly)
+                    # 1. Graphs — view selector left, range chips + source right
                     card([
-                        html.Div(id="overview-chart-title", className="app-label", style={
-                            "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
-                        }),
-                        dcc.Graph(id="overview-main-chart", config={"displayModeBar": False}),
+                        html.Div(style={
+                            "display": "flex", "justifyContent": "space-between",
+                            "alignItems": "center", "flexWrap": "wrap", "gap": "12px",
+                            "marginBottom": "20px",
+                        }, children=[
+                            dcc.RadioItems(
+                                id="chart-view-toggle",
+                                options=[
+                                    {"label": "NET",        "value": "position"},
+                                    {"label": "TRENDS",     "value": "trends"},
+                                    {"label": "CATEGORIES", "value": "categories"},
+                                ],
+                                value="position",
+                                inline=True,
+                                inputStyle={"display": "none"},
+                                labelStyle={
+                                    "padding": "7px 18px", "whiteSpace": "nowrap",
+                                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
+                                    "fontWeight": "600", "letterSpacing": "1px",
+                                },
+                                style={"display": "flex", "flexWrap": "wrap", "alignItems": "center", "gap": "6px"},
+                            ),
+                            html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap"}, children=[
+                                dcc.RadioItems(
+                                    id="summary-range",
+                                    options=[
+                                        {"label": "1M",  "value": "1m"},
+                                        {"label": "YTD", "value": "ytd"},
+                                        {"label": "1Y",  "value": "1y"},
+                                        {"label": "3Y",  "value": "3y"},
+                                    ],
+                                    value="ytd",
+                                    inline=True,
+                                    inputStyle={"display": "none"},
+                                    labelStyle={
+                                        "padding": "6px 14px", "whiteSpace": "nowrap",
+                                        "borderRadius": "6px", "cursor": "pointer", "fontSize": "12px",
+                                        "fontWeight": "600", "letterSpacing": "1px",
+                                    },
+                                    style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
+                                ),
+                                dcc.Dropdown(
+                                    id="summary-source",
+                                    options=[{"label": "All Sources", "value": "all"}] +
+                                            [{"label": s, "value": s} for s in available_sources(df)],
+                                    value="all",
+                                    clearable=False,
+                                    style={"width": "170px"},
+                                ),
+                            ]),
+                        ]),
+
+                        # Net view: per-period net bars
+                        html.Div(id="chart-position-card", children=[
+                            html.Div(id="net-position-header", className="app-label", style={
+                                "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
+                            }),
+                            dcc.Graph(id="net-position-chart", config={"displayModeBar": False}),
+                        ]),
+
+                        # Trends: same-month year-over-year
+                        html.Div(id="chart-trends-card", style={"display": "none"}, children=[
+                            html.Div(style={
+                                "display": "flex", "justifyContent": "space-between",
+                                "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
+                                "marginBottom": "16px",
+                            }, children=[
+                                html.Div(id="overview-chart-title", className="app-label", style={
+                                    "fontSize": "11px", "letterSpacing": "2px",
+                                }),
+                                dcc.RadioItems(
+                                    id="toggle-income-expenses",
+                                    options=[
+                                        {"label": "  Expenses", "value": "expenses"},
+                                        {"label": "  Income",   "value": "income"},
+                                    ],
+                                    value="expenses",
+                                    inline=True,
+                                    style={"fontSize": "12px"},
+                                    inputStyle={"marginRight": "6px"},
+                                    labelStyle={"marginRight": "16px"},
+                                ),
+                            ]),
+                            dcc.Graph(id="overview-main-chart", config={"displayModeBar": False}),
+                        ]),
+
+                        # Category breakdown
+                        html.Div(id="chart-categories-card", style={"display": "none"}, children=[
+                            section_title("SPEND BY CATEGORY"),
+                            dcc.Graph(id="category-bar-chart", config={"displayModeBar": False}),
+                            html.Div(id="category-drilldown"),
+                        ]),
                     ]),
 
-                    # Category breakdown
+                    # 2. Performance card — the metrics for the selected range
                     card([
-                        section_title("SPEND BY CATEGORY"),
-                        dcc.Graph(id="category-bar-chart", config={"displayModeBar": False}),
-                        html.Div(id="category-drilldown"),
+                        html.Div(id="performance-title", className="app-label", style={
+                            "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
+                        }),
+                        html.Div(id="performance-card", style={
+                            "display": "grid",
+                            "gridTemplateColumns": "repeat(auto-fit, minmax(170px, 1fr))",
+                            "gap": "20px",
+                        }),
                     ]),
 
         ]),
 
         # ── CATEGORY EDITOR content ───────────────────────────────────────────
         html.Div(id="editor-content", style={"display": "none", "paddingTop": "8px"}, children=[
+
+                    # Filters — drive the transactions table only
+                    card([
+                        # Quick ranges (set Year/Month in one click) + reset
+                        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px", "flexWrap": "wrap", "marginBottom": "16px"}, children=[
+                            html.Span("QUICK RANGE", style={"fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"], "marginRight": "4px"}),
+                            html.Button("THIS MONTH", id="range-this-month", n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
+                            html.Button("LAST MONTH", id="range-last-month", n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
+                            html.Button("THIS YEAR",  id="range-this-year",  n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
+                            html.Button("ALL",        id="range-all",        n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
+                            html.Button("RESET",      id="filters-reset",    n_clicks=0, className="btn-secondary",
+                                        style={**_CHIP_STYLE, "marginLeft": "auto"}),
+                        ]),
+                        html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flexWrap": "wrap"}, children=[
+
+                            html.Div([
+                                label("PERIOD"),
+                                html.Div(style={"display": "flex", "alignItems": "center", "gap": "6px"}, children=[
+                                    html.Button("‹", id="period-prev", n_clicks=0, className="btn-secondary",
+                                                style={"fontSize": "14px", "padding": "5px 12px"}),
+                                    html.Span(id="period-stepper-label", style={
+                                        "fontSize": "13px", "fontWeight": "600", "minWidth": "84px",
+                                        "textAlign": "center", "color": COLORS["text"],
+                                    }),
+                                    html.Button("›", id="period-next", n_clicks=0, className="btn-secondary",
+                                                style={"fontSize": "14px", "padding": "5px 12px"}),
+                                ]),
+                            ]),
+
+                            html.Div([
+                                label("SOURCE"),
+                                dcc.Dropdown(
+                                    id="global-source-filter",
+                                    options=[{"label": "All Sources", "value": "all"}] +
+                                            [{"label": s, "value": s} for s in available_sources(df)],
+                                    value="all",
+                                    clearable=False,
+                                    style={"width": "200px"},
+                                ),
+                            ]),
+
+                            html.Div([
+                                label("YEAR"),
+                                dcc.Dropdown(
+                                    id="global-year-filter",
+                                    options=[{"label": "All Years", "value": "all"}] +
+                                            [{"label": str(y), "value": y} for y in available_years(df)],
+                                    value="all",
+                                    clearable=False,
+                                    style={"width": "140px"},
+                                ),
+                            ]),
+
+                            html.Div([
+                                label("MONTH"),
+                                dcc.Dropdown(
+                                    id="global-month-filter",
+                                    options=[{"label": "All Months", "value": "all"}],
+                                    value="all",
+                                    clearable=False,
+                                    style={"width": "160px"},
+                                ),
+                            ]),
+
+                        ]),
+                    ], style={"padding": "16px 24px", "marginBottom": "16px"}),
+
                     card([
                         section_title("TRANSACTIONS"),
 
@@ -683,6 +791,41 @@ app.layout = html.Div(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _range_window(rng: str):
+    """Calendar-anchored month windows for the summary range chips.
+    Returns (start, end, prev_start, prev_end, label) — months as YYYY-MM,
+    where the prev window is the equivalent span immediately before."""
+    now = pd.Timestamp.today().to_period("M")
+    end = now.strftime("%Y-%m")
+    if rng == "1m":
+        p = (now - 1).strftime("%Y-%m")
+        return end, end, p, p, now.strftime("%b %Y").upper()
+    if rng == "ytd":
+        return (f"{now.year}-01", end,
+                f"{now.year - 1}-01", (now - 12).strftime("%Y-%m"), f"YTD {now.year}")
+    if rng == "1y":
+        return ((now - 11).strftime("%Y-%m"), end,
+                (now - 23).strftime("%Y-%m"), (now - 12).strftime("%Y-%m"), "TRAILING 1Y")
+    return ((now - 35).strftime("%Y-%m"), end,
+            (now - 71).strftime("%Y-%m"), (now - 36).strftime("%Y-%m"), "TRAILING 3Y")
+
+
+def _summary_window(rng: str, source: str):
+    """Source-scoped frames for the selected range: (window df, prev-window df,
+    source-only df, start, end, label, prior_ok).
+
+    prior_ok is False when the prior window reaches back before the first month
+    of data — a partially-covered prior would make every "vs prior" delta
+    nonsense (e.g. a full 3Y window compared against a few months)."""
+    start, end, p_start, p_end, label = _range_window(rng)
+    src_df   = df if source == "all" else df[df["source"] == source]
+    data_df  = src_df[(src_df["month_str"] >= start) & (src_df["month_str"] <= end)]
+    prev_df  = src_df[(src_df["month_str"] >= p_start) & (src_df["month_str"] <= p_end)]
+    months   = src_df["month_str"].dropna()
+    prior_ok = (not months.empty) and p_start >= months.min()
+    return data_df, prev_df, src_df, start, end, label, prior_ok
+
+
 def apply_global_filters(source: str, year, month: str = "all") -> pd.DataFrame:
     filtered = df.copy()
     if source != "all":
@@ -742,124 +885,125 @@ def toggle_settings_menu(_, is_open, style):
 
 
 @app.callback(
-    Output("overview-main-chart",  "figure"),
-    Output("overview-chart-title", "children"),
-    Output("category-bar-chart",   "figure"),
-    Output("summary-stats",        "children"),
-    Input("global-source-filter",   "value"),
-    Input("global-year-filter",     "value"),
-    Input("global-month-filter",    "value"),
+    Output("overview-main-chart",   "figure"),
+    Output("overview-chart-title",  "children"),
+    Output("category-bar-chart",    "figure"),
+    Output("net-position-chart",    "figure"),
+    Output("net-position-header",   "children"),
+    Output("performance-title",     "children"),
+    Output("performance-card",      "children"),
+    Output("chart-position-card",   "style"),
+    Output("chart-trends-card",     "style"),
+    Output("chart-categories-card", "style"),
+    Input("summary-range",          "value"),
+    Input("summary-source",         "value"),
     Input("toggle-income-expenses", "value"),
     Input("theme-store",            "data"),
     Input("refresh-trigger",        "data"),
+    Input("chart-view-toggle",      "value"),
 )
-def update_overview(source, year, month, toggles, theme, _refresh):
+def update_overview(rng, source, metric, theme, _refresh, chart_view):
     import calendar
     tmpl = chart_template(theme)
     c    = _CHART[theme]
 
-    filtered      = apply_global_filters(source, year, month)
-    show_expenses = "expenses" in toggles
-    show_income   = "income"   in toggles
+    metric = metric if metric in ("expenses", "income") else "expenses"
+    rng    = rng if rng in ("1m", "ytd", "1y", "3y") else "ytd"
+    data_df, prev_df, src_df, start, end, period_label, prior_ok = _summary_window(rng, source)
 
-    # No specific year or month selected → show one bar per year; otherwise
-    # break the selected year (or single month) down by month.
-    view_mode = "yearly" if (year == "all" and month == "all") else "monthly"
+    # ── Trends: same-calendar-month year-over-year comparison ──────────────
+    # Inherently an all-years chart — it ignores the range chips (those drive
+    # the NET and CATEGORIES views and the performance card).
+    metric_lbl = "EXPENSES" if metric == "expenses" else "INCOME"
 
-    data_df = filtered
-
-    # ── Main bar chart ─────────────────────────────────────────────────────
-    fig_main = go.Figure()
-    if view_mode == "monthly":
-        chart_title = "MONTH BY MONTH"
-        if show_expenses:
-            me = monthly_expenses(filtered)
-            xlabels = [calendar.month_abbr[int(m.split("-")[1])] if year != "all" else pd.to_datetime(m).strftime("%b '%y") for m in me["month_str"]]
-            fig_main.add_trace(go.Bar(
-                x=xlabels, y=me["total_expenses"], name="Expenses",
-                marker_color=c["accent2"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>Expenses: $%{y:,.2f}<extra></extra>",
-            ))
-            if len(me) >= 2:
-                rolling = me["total_expenses"].rolling(3, min_periods=1).mean()
-                fig_main.add_trace(go.Scatter(
-                    x=xlabels, y=rolling, name="3-mo avg",
-                    mode="lines",
-                    line=dict(color=c["accent2"], dash="dash", width=2),
-                    opacity=0.7,
-                    hovertemplate="<b>%{x}</b><br>3-mo avg: $%{y:,.2f}<extra></extra>",
-                ))
-        if show_income:
-            mi = monthly_income(filtered)
-            xlabels_i = [calendar.month_abbr[int(m.split("-")[1])] if year != "all" else pd.to_datetime(m).strftime("%b '%y") for m in mi["month_str"]]
-            fig_main.add_trace(go.Bar(
-                x=xlabels_i, y=mi["total_income"], name="Income",
-                marker_color=c["accent3"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>Income: $%{y:,.2f}<extra></extra>",
-            ))
+    if metric == "expenses":
+        series = monthly_expenses(src_df).rename(columns={"total_expenses": "val"})
     else:
-        chart_title = "YEAR TO YEAR"
-        if show_expenses:
-            ye = yearly_expenses(filtered)
-            fig_main.add_trace(go.Bar(
-                x=ye["year"].astype(str), y=ye["total_expenses"], name="Expenses",
-                marker_color=c["accent2"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>Expenses: $%{y:,.2f}<extra></extra>",
-            ))
-        if show_income:
-            yi = yearly_income(filtered)
-            fig_main.add_trace(go.Bar(
-                x=yi["year"].astype(str), y=yi["total_income"], name="Income",
-                marker_color=c["accent3"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>Income: $%{y:,.2f}<extra></extra>",
-            ))
-    fig_main.update_layout(**tmpl, barmode="group", height=320)
+        series = monthly_income(src_df).rename(columns={"total_income": "val"})
+    val_map   = {(int(m[:4]), int(m[5:7])): v for m, v in zip(series["month_str"], series["val"])}
+    years_all = sorted({yr for yr, _ in val_map})
+    cur_year  = int(end[:4])
 
-    # ── Totals and prior-period comparison ─────────────────────────────────
+    hi_yr  = cur_year if cur_year in years_all else (years_all[-1] if years_all else None)
+    x_lbls = [calendar.month_abbr[m_] for m_ in range(1, 13)]
+    fig_main = go.Figure()
+    for i, yr in enumerate(years_all):
+        ys, cds = [], []
+        for m_ in range(1, 13):
+            v  = val_map.get((yr, m_))
+            pv = val_map.get((yr - 1, m_))
+            ys.append(v)
+            if v is not None and pv:
+                d = v - pv
+                cds.append(f"{'+' if d >= 0 else '-'}${abs(d):,.0f} "
+                           f"({'+' if d >= 0 else '-'}{abs(d / pv * 100):.0f}%) "
+                           f"vs {calendar.month_abbr[m_]} {yr - 1}")
+            else:
+                cds.append("")
+        is_hi = yr == hi_yr
+        fig_main.add_trace(go.Scatter(
+            x=x_lbls, y=ys, name=str(yr),
+            mode="lines+markers",
+            line=dict(color=PIE_COLORS[i % len(PIE_COLORS)], width=3.5 if is_hi else 1.5),
+            marker=dict(size=8 if is_hi else 4),
+            opacity=1.0 if is_hi else 0.55,
+            customdata=cds,
+            hovertemplate=("<b>%{x} " + str(yr) + "</b><br>"
+                           + metric_lbl.title() + ": $%{y:,.2f}<br>%{customdata}<extra></extra>"),
+        ))
+    chart_title = f"{metric_lbl} BY CALENDAR MONTH · ONE LINE PER YEAR"
+    fig_main.update_layout(**tmpl, height=320)
+
+    # ── Totals for the window and its prior equivalent ──────────────────────
     me_s      = monthly_expenses(data_df)
     total_exp = me_s["total_expenses"].sum()
     total_inc = monthly_income(data_df)["total_income"].sum()
     net_val   = total_inc - total_exp
+    # No deltas when the prior window predates the data — a partial prior
+    # window would compare a full range against a sliver.
+    prev_exp = prev_inc = prev_net = None
+    if prior_ok:
+        prev_exp = monthly_expenses(prev_df)["total_expenses"].sum()
+        prev_inc = monthly_income(prev_df)["total_income"].sum()
+        prev_net = prev_inc - prev_exp
+    net_color = c["accent3"] if net_val >= 0 else c["accent2"]
 
-    # Previous-period totals for MoM / YoY delta
-    prev_exp = prev_inc = None
-    _prev_df = None
-    if month != "all":
-        prev_m   = (pd.Period(month, "M") - 1).strftime("%Y-%m")
-        _prev_df = apply_global_filters(source, "all", prev_m)
-        prev_exp = monthly_expenses(_prev_df)["total_expenses"].sum()
-        prev_inc = monthly_income(_prev_df)["total_income"].sum()
-    elif year != "all":
-        _prev_df = apply_global_filters(source, int(year) - 1, "all")
-        prev_exp = monthly_expenses(_prev_df)["total_expenses"].sum()
-        prev_inc = monthly_income(_prev_df)["total_income"].sum()
-    prev_net = (prev_inc - prev_exp) if prev_exp is not None else None
+    # ── Net view (per-period net bars) ──────────────────────────────────────
+    net_m = (
+        me_s.rename(columns={"total_expenses": "exp"})
+        .merge(monthly_income(data_df).rename(columns={"total_income": "inc"}),
+               on="month_str", how="outer")
+        .fillna(0).sort_values("month_str")
+    )
+    net_m["net"] = net_m["inc"] - net_m["exp"]
 
-    if view_mode == "monthly":
-        if month != "all":
-            period_label = pd.to_datetime(month).strftime("%b %Y")
-        elif year != "all":
-            period_label = str(year)
-        else:
-            period_label = "ALL YEARS"
-        avg_label    = "AVG MONTHLY SPEND"
-        avg_val      = me_s["total_expenses"].mean() if not me_s.empty else 0
-        n_periods    = len(me_s)
+    pos_xtitle = None
+    if rng == "1m":
+        # Daily resolution inside the current month
+        rows  = data_df[data_df["master_category"].isin(["Expense", "Income"])]
+        daily = rows.groupby(rows["date"].dt.day)["amount"].sum()
+        if not daily.empty:
+            daily = daily.reindex(range(1, int(daily.index.max()) + 1), fill_value=0)
+        pos_x      = [str(d) for d in daily.index]
+        net_vals   = daily.tolist()
+        pos_xtitle = period_label + " · day of month"
     else:
-        period_label = str(year) if year != "all" else "ALL YEARS"
-        avg_label    = "AVG YEARLY SPEND"
-        ye_s         = yearly_expenses(data_df)
-        avg_val      = ye_s["total_expenses"].mean() if not ye_s.empty else 0
-        n_periods    = len(ye_s)
+        pos_x    = [pd.to_datetime(m).strftime("%b '%y") for m in net_m["month_str"]]
+        net_vals = net_m["net"].tolist()
 
-    # Flat average-spend reference line: reads each bar as above/below normal
-    if show_expenses and n_periods >= 2 and avg_val:
-        fig_main.add_hline(
-            y=avg_val, line_dash="dot", line_width=1, line_color=c["text"],
-            opacity=0.55,
-            annotation_text=f"avg ${avg_val:,.0f}", annotation_position="top left",
-            annotation_font=dict(size=10, color=c["text"]),
-        )
+    fig_pos = go.Figure()
+    if net_vals:
+        fig_pos.add_trace(go.Bar(
+            x=pos_x, y=net_vals, name="Net",
+            marker_color=[c["accent3"] if v >= 0 else c["accent2"] for v in net_vals],
+            marker_line_width=0,
+            hovertemplate="<b>%{x}</b><br>Net: $%{y:,.2f}<extra></extra>",
+        ))
+        fig_pos.add_hline(y=0, line_color=c["border"], line_width=1)
+    fig_pos.update_layout(**tmpl, height=280, showlegend=False)
+    if pos_xtitle:
+        fig_pos.update_xaxes(title_text=pos_xtitle, title_font=dict(size=11))
+    pos_header = f"{'DAILY' if rng == '1m' else 'MONTHLY'} NET · {period_label}"
 
     # ── Category horizontal bar (top N + Other, with vs-prior deltas) ──────
     TOP_N = 10
@@ -874,9 +1018,10 @@ def update_overview(source, year, month, toggles, theme, _refresh):
         }])], ignore_index=True)
 
     prev_cat_map = None
-    if _prev_df is not None:
-        prev_cat     = expenses_by_category(_prev_df)
-        prev_cat_map = dict(zip(prev_cat["category"], prev_cat["total_expenses"]))
+    if prior_ok:
+        prev_cat = expenses_by_category(prev_df)
+        if not prev_cat.empty:
+            prev_cat_map = dict(zip(prev_cat["category"], prev_cat["total_expenses"]))
 
     top_names = set(cat.head(TOP_N)["category"])
     bar_texts = []
@@ -906,7 +1051,7 @@ def update_overview(source, year, month, toggles, theme, _refresh):
     fig_cat.update_layout(margin=dict(l=40, r=120, t=40, b=40))
     fig_cat.update_yaxes(autorange="reversed")
 
-    # ── Summary stat cards ─────────────────────────────────────────────────
+    # ── Performance card ─────────────────────────────────────────────────────
     def _delta(current, prev, higher_is_bad=True):
         """Return (label_str, is_green) or (None, None) when no comparison is available."""
         if prev is None or prev == 0:
@@ -917,40 +1062,55 @@ def update_overview(source, year, month, toggles, theme, _refresh):
         is_green = (delta < 0) if higher_is_bad else (delta >= 0)
         return f"{sign}${abs(delta):,.0f} ({sign}{abs(pct):.0f}%) vs prior", is_green
 
-    def stat_card(lbl, value, color, prev=None, higher_is_bad=True, sub=None):
-        delta_lbl, is_green = _delta(value, prev, higher_is_bad)
-        value_str = f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+    def perf_metric(lbl, value_str, color, delta_lbl=None, delta_green=None):
         children = [
             html.P(lbl, className="app-label", style={
-                "fontSize": "10px", "letterSpacing": "2px", "marginBottom": "8px",
+                "fontSize": "10px", "letterSpacing": "2px", "marginBottom": "6px",
             }),
             html.P(value_str, style={
                 "fontSize": "22px", "fontWeight": "600",
                 "fontFamily": "'Syne', sans-serif", "color": color,
             }),
         ]
-        if sub:
-            children.append(html.P(sub, style={
-                "fontSize": "11px", "marginTop": "4px", "fontWeight": "500",
-                "color": COLORS["subtext"],
-            }))
         if delta_lbl:
             children.append(html.P(delta_lbl, style={
                 "fontSize": "11px", "marginTop": "4px", "fontWeight": "500",
-                "color": c["accent3"] if is_green else c["accent2"],
+                "color": c["accent3"] if delta_green else c["accent2"],
             }))
-        return card(children, style={"padding": "20px 24px", "marginBottom": "0"})
+        return html.Div(children)
 
-    savings_sub = f"{net_val / total_inc * 100:.0f}% savings rate" if total_inc > 0 else None
-    net_color   = c["accent3"] if net_val >= 0 else c["accent2"]
+    def _dollar(v):
+        return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
 
-    stats = [
-        stat_card(f"TOTAL EXPENSES · {period_label}", total_exp, c["accent2"], prev=prev_exp, higher_is_bad=True),
-        stat_card(f"NET · {period_label}",            net_val,   net_color,    prev=prev_net, higher_is_bad=False, sub=savings_sub),
-        stat_card(f"TOTAL INCOME · {period_label}",   total_inc, c["accent3"], prev=prev_inc, higher_is_bad=False),
-        stat_card(avg_label,                           avg_val,   _CHART[theme]["text"]),
+    rate      = (net_val / total_inc * 100) if total_inc > 0 else None
+    prev_rate = (prev_net / prev_inc * 100) if prev_inc and prev_inc > 0 else None
+    exp_d, exp_g = _delta(total_exp, prev_exp, higher_is_bad=True)
+    inc_d, inc_g = _delta(total_inc, prev_inc, higher_is_bad=False)
+    net_d, net_g = _delta(net_val,  prev_net, higher_is_bad=False)
+    rate_d = rate_g = None
+    if rate is not None and prev_rate is not None:
+        dpp    = rate - prev_rate
+        rate_d = f"{'+' if dpp >= 0 else '-'}{abs(dpp):.0f}pp vs prior"
+        rate_g = dpp >= 0
+
+    perf_title = f"PERFORMANCE · {period_label}"
+    perf = [
+        perf_metric("TOTAL EXPENSES", _dollar(total_exp), c["accent2"], exp_d, exp_g),
+        perf_metric("TOTAL INCOME",   _dollar(total_inc), c["accent3"], inc_d, inc_g),
+        perf_metric("NET",            _dollar(net_val),   net_color,    net_d, net_g),
+        perf_metric("SAVINGS RATE",   f"{rate:.0f}%" if rate is not None else "—", c["accent"], rate_d, rate_g),
     ]
-    return fig_main, chart_title, fig_cat, stats
+
+    # One chart body visible at a time, driven by the selector. Styles are
+    # emitted from this callback so the figure redraw and the unhide land in
+    # the same render cycle (a Plotly graph drawn while display:none mis-sizes).
+    hide = {"display": "none"}
+    pos_style = {} if chart_view == "position"   else hide
+    trd_style = {} if chart_view == "trends"     else hide
+    cat_style = {} if chart_view == "categories" else hide
+
+    return (fig_main, chart_title, fig_cat, fig_pos, pos_header, perf_title, perf,
+            pos_style, trd_style, cat_style)
 
 
 @app.callback(
@@ -958,8 +1118,9 @@ def update_overview(source, year, month, toggles, theme, _refresh):
     Output("global-month-filter", "value"),
     Input("global-year-filter", "value"),
     Input("global-source-filter", "value"),
+    State("global-month-filter", "value"),
 )
-def update_month_options(year, source):
+def update_month_options(year, source, current):
     filtered = df
     if source != "all":
         filtered = filtered[filtered["source"] == source]
@@ -970,18 +1131,102 @@ def update_month_options(year, source):
         {"label": pd.to_datetime(m).strftime("%b %Y"), "value": m}
         for m in months
     ]
-    return options, "all"
+    # Preserve the month selection instead of resetting: switching year keeps
+    # the same calendar month (Feb 2025 → Feb 2024); switching source keeps
+    # the period. Falls back to All only when the candidate has no data.
+    value = "all"
+    if current and current != "all":
+        candidate = f"{year}-{current[5:7]}" if year != "all" else current
+        if candidate in months:
+            value = candidate
+    return options, value
+
+
+@app.callback(
+    Output("global-source-filter", "value", allow_duplicate=True),
+    Output("global-year-filter",   "value", allow_duplicate=True),
+    Output("global-month-filter",  "value", allow_duplicate=True),
+    Input("range-this-month", "n_clicks"),
+    Input("range-last-month", "n_clicks"),
+    Input("range-this-year",  "n_clicks"),
+    Input("range-all",        "n_clicks"),
+    Input("filters-reset",    "n_clicks"),
+    Input("period-prev",      "n_clicks"),
+    Input("period-next",      "n_clicks"),
+    State("global-year-filter",  "value"),
+    State("global-month-filter", "value"),
+    prevent_initial_call=True,
+)
+def quick_filters(_tm, _lm, _ty, _all, _reset, _prev, _next, year, month):
+    from dash import ctx, no_update
+    trig   = ctx.triggered_id
+    months = available_months(df)
+    years  = available_years(df)
+    if not months:
+        return no_update, no_update, no_update
+
+    # "This month" means the current calendar month, clamped to the newest
+    # month that actually has data (statements lag the calendar).
+    today_m = pd.Timestamp.today().strftime("%Y-%m")
+    this_m  = max((m for m in months if m <= today_m), default=months[-1])
+
+    if trig == "range-this-month":
+        return no_update, int(this_m[:4]), this_m
+    if trig == "range-last-month":
+        m = months[max(0, months.index(this_m) - 1)]
+        return no_update, int(m[:4]), m
+    if trig == "range-this-year":
+        yr = min(pd.Timestamp.today().year, years[-1])
+        if yr not in years:
+            yr = years[-1]
+        return no_update, yr, "all"
+    if trig == "range-all":
+        return no_update, "all", "all"
+    if trig == "filters-reset":
+        return "all", "all", "all"
+
+    # ‹ › steppers: walk adjacent data months (or years when no month is set)
+    step = -1 if trig == "period-prev" else 1
+    if month != "all" and month in months:
+        idx = months.index(month) + step
+        if 0 <= idx < len(months):
+            m = months[idx]
+            return no_update, int(m[:4]), m
+    elif year != "all" and int(year) in years:
+        idx = years.index(int(year)) + step
+        if 0 <= idx < len(years):
+            return no_update, years[idx], "all"
+    return no_update, no_update, no_update
+
+
+@app.callback(
+    Output("period-stepper-label", "children"),
+    Output("period-prev", "disabled"),
+    Output("period-next", "disabled"),
+    Input("global-year-filter",  "value"),
+    Input("global-month-filter", "value"),
+    Input("refresh-trigger",     "data"),
+)
+def update_stepper(year, month, _refresh):
+    months = available_months(df)
+    years  = available_years(df)
+    if month != "all" and month in months:
+        idx = months.index(month)
+        return pd.to_datetime(month).strftime("%b %Y"), idx == 0, idx == len(months) - 1
+    if year != "all" and int(year) in years:
+        idx = years.index(int(year))
+        return str(year), idx == 0, idx == len(years) - 1
+    return "ALL DATA", True, True
 
 
 @app.callback(
     Output("category-drilldown", "children"),
-    Input("category-bar-chart",      "clickData"),
-    Input("global-source-filter",    "value"),
-    Input("global-year-filter",      "value"),
-    Input("global-month-filter",     "value"),
-    State("theme-store",             "data"),
+    Input("category-bar-chart",  "clickData"),
+    Input("summary-range",       "value"),
+    Input("summary-source",      "value"),
+    State("theme-store",         "data"),
 )
-def category_drilldown(click_data, source, year, month, theme):
+def category_drilldown(click_data, rng, source, theme):
     from dash import ctx
     if ctx.triggered_id != "category-bar-chart" or not click_data:
         return []
@@ -991,7 +1236,8 @@ def category_drilldown(click_data, source, year, month, theme):
         return []
     c = _CHART[theme]
 
-    filtered = apply_global_filters(source, year, month)
+    rng = rng if rng in ("1m", "ytd", "1y", "3y") else "ytd"
+    filtered, _, _, _, _, _, _ = _summary_window(rng, source)
     match_category = filtered["category_display"].where(filtered["category_display"] != "", "Uncategorized")
     cat_txns = filtered[match_category == category].copy()
     cat_txns = cat_txns[cat_txns["master_category"] == "Expense"]

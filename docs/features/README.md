@@ -34,15 +34,16 @@ Bank CSVs (RAW/)
   │  Modules/transforms.py  ← all aggregation / filtering helpers
   │  rules.csv              ← keyword auto-categorization rules
   │
-  ├─ Filter bar  (source / year / month / view / reload)
-  │
   ├─ Summary tab
-  │    ├─ Stat cards  (expenses / net + savings rate / income / avg, with MoM/YoY delta)
-  │    ├─ Main bar chart  (monthly or yearly, rolling avg + avg reference line)
-  │    └─ Category breakdown  (top 10 + Other, deltas vs prior, click drilldown)
+  │    ├─ Graph card  (net · trends · categories selector; 1M/YTD/1Y/3Y range chips; source)
+  │    │    ├─ Net view  (per-period net bars, daily on 1M)
+  │    │    ├─ Trends  (same-month year-over-year, all years — ignores range chips)
+  │    │    └─ Category breakdown  (top 10 + Other, deltas vs prior window, click drilldown)
+  │    └─ Performance card  (expenses / income / net / savings rate + deltas)
   │
   └─ All Transactions tab
-       ├─ Transaction table  (paginate, sort — driven by global filters)
+       ├─ Filter bar  (quick ranges · period stepper · source / year / month · reset)
+       ├─ Transaction table  (paginate, sort — driven by the filter bar)
        └─ Import / export CSV
 ```
 
@@ -55,7 +56,7 @@ Bank CSVs (RAW/)
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
-| [global-filters.md](global-filters.md) | Filter bar: source / year / month, reload button, uncategorized badge |
-| [overview-charts.md](overview-charts.md) | Main bar chart, rolling average, average reference line, stat cards with MoM/YoY delta |
+| [global-filters.md](global-filters.md) | Transactions-tab filter bar: source / year / month, quick ranges, stepper |
+| [overview-charts.md](overview-charts.md) | Range chips, chart selector, net view, year-over-year trends, performance card |
 | [category-breakdown.md](category-breakdown.md) | Category horizontal bar chart, click-to-drilldown, filter-change behaviour |
 | [all-transactions.md](all-transactions.md) | All Transactions tab: transaction table, import/export CSV workflow |

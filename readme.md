@@ -113,36 +113,26 @@ The ingest step reads every CSV in the configured `RAW/` folder, normalises each
 
 ## UI tour
 
-The dashboard has two tabs selectable from the top nav bar.
+The dashboard has two tabs; the tab pills and the settings gear sit at the right end of the page header row.
 
-### Filter bar (both tabs)
-
-A persistent bar at the top of every page. All controls here apply to both the Summary charts and the All Transactions table simultaneously.
-
-| Control | What it does |
-|---------|-------------|
-| SOURCE | Filter to one bank account or all |
-| YEAR | Filter to a specific year or all |
-| MONTH | Filter to a specific month (options update based on Source + Year) |
-| SHOW ON CHARTS | Toggle expenses and/or income bars on the main chart |
-
-The Summary tab's main chart granularity follows Year/Month automatically — Year = All and Month = All shows one bar per year; any specific year or month shows a month-by-month breakdown. There's no separate view control.
-
-The gear icon (top right) opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
+The gear icon (in the header row, next to the tabs) opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
 
 ### Summary tab
 
+Two cards: the graph card, then the performance card. The graph card's header holds the chart selector (NET / TRENDS / CATEGORIES), four range chips (1M / YTD / 1Y / 3Y — calendar-anchored to today, YTD is the default), and a source dropdown.
+
 | Area | What it shows |
 |------|---------------|
-| Stat cards | Total expenses, net (with savings rate), total income, average spend — deltas show MoM or YoY change when a specific month or year is filtered |
-| Main chart | Monthly or yearly expense/income bars, depending on the Year/Month filters; monthly mode adds a 3-month rolling-average overlay on expenses, plus a dotted average-spend reference line |
-| Category breakdown | Horizontal bar chart of the top 10 spend categories (+ an "Other" bar); labels show each category's change vs the prior period when one is filtered; click any bar to expand a transaction drilldown beneath it |
+| NET chart | Green/red per-period net bars (income minus expenses); monthly for YTD/1Y/3Y, daily for 1M |
+| TRENDS chart | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always shows all years regardless of the range chips |
+| CATEGORIES chart | Horizontal bar chart of the top 10 spend categories (+ an "Other" bar) in the range; labels show each category's change vs the prior window; click any bar to expand a transaction drilldown beneath it |
+| Performance card | Total expenses, total income, net, and savings rate for the range — each with a delta vs the prior equivalent window (e.g. YTD vs last year's YTD) |
 
 > **Note:** All Summary totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the All Transactions tab shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
 ### All Transactions tab
 
-Displays every transaction in the active filter scope as a pageable, sortable table. Columns shown:
+A filter card (quick ranges, ‹ › period stepper, Source / Year / Month dropdowns, reset) drives a pageable, sortable table of every transaction in scope. The month selection is preserved when switching years (Feb 2025 → Feb 2024) or sources. Columns shown:
 
 | Column | Source |
 |--------|--------|
