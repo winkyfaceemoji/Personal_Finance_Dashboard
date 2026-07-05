@@ -34,17 +34,13 @@ Bank CSVs (RAW/)
   │  Modules/transforms.py  ← all aggregation / filtering helpers
   │  rules.csv              ← keyword auto-categorization rules
   │
-  ├─ Summary tab
-  │    ├─ Graph card  (net · trends · categories selector; 1M/YTD/1Y/3Y range chips; source)
-  │    │    ├─ Net view  (per-period net bars, daily on 1M)
-  │    │    ├─ Trends  (same-month year-over-year, all years — ignores range chips)
-  │    │    └─ Category breakdown  (top 10 + Other, deltas vs prior window, click drilldown)
-  │    └─ Performance card  (expenses / income / net / savings rate + deltas)
-  │
-  └─ All Transactions tab
-       ├─ Filter bar  (quick ranges · period stepper · source / year / month · reset)
-       ├─ Transaction table  (paginate, sort — driven by the filter bar)
-       └─ Import / export CSV
+  └─ Single-page dashboard
+       ├─ Graph card  (net · trends · categories dropdown; 1M/YTD/1Y/3Y range chips; source)
+       │    ├─ Net view  (per-period net bars, daily on 1M)
+       │    ├─ Trends  (same-month year-over-year, all years — ignores range chips)
+       │    └─ Categories  (share-of-spend lines over time; snapshot bars on 1M; drilldown)
+       ├─ Performance card  (expenses / income / net / savings rate + deltas)
+       └─ Import / export card  (CSV labeling round-trip + unlabeled-rows note)
 ```
 
 ---
@@ -56,7 +52,6 @@ Bank CSVs (RAW/)
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-categorization, aggregation helpers |
-| [global-filters.md](global-filters.md) | Transactions-tab filter bar: source / year / month, quick ranges, stepper |
 | [overview-charts.md](overview-charts.md) | Range chips, chart selector, net view, year-over-year trends, performance card |
-| [category-breakdown.md](category-breakdown.md) | Category horizontal bar chart, click-to-drilldown, filter-change behaviour |
-| [all-transactions.md](all-transactions.md) | All Transactions tab: transaction table, import/export CSV workflow |
+| [category-breakdown.md](category-breakdown.md) | Categories chart (share lines / snapshot bars), click-to-drilldown |
+| [import-export.md](import-export.md) | Import/export card: CSV labeling workflow, category system, transfers |

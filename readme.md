@@ -113,38 +113,24 @@ The ingest step reads every CSV in the configured `RAW/` folder, normalises each
 
 ## UI tour
 
-The dashboard has two tabs; the tab pills and the settings gear sit at the right end of the page header row.
+The dashboard is a single page: a graph card, a performance card, and an import/export card. The settings gear sits at the right end of the page header row and opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
 
-The gear icon (in the header row, next to the tabs) opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
+### Graph and performance cards
 
-### Summary tab
-
-Two cards: the graph card, then the performance card. The graph card's header holds the chart selector (NET / TRENDS / CATEGORIES), four range chips (1M / YTD / 1Y / 3Y — calendar-anchored to today, YTD is the default), and a source dropdown.
+The graph card's header holds a chart dropdown (Net / Trends / Categories), four range chips (1M / YTD / 1Y / 3Y — calendar-anchored to today, YTD is the default), and a source dropdown. Those three controls are the entire filtering surface.
 
 | Area | What it shows |
 |------|---------------|
 | NET chart | Green/red per-period net bars (income minus expenses); monthly for YTD/1Y/3Y, daily for 1M |
 | TRENDS chart | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always shows all years regardless of the range chips |
-| CATEGORIES chart | Horizontal bar chart of the top 10 spend categories (+ an "Other" bar) in the range; labels show each category's change vs the prior window; click any bar to expand a transaction drilldown beneath it |
+| CATEGORIES chart | Share-of-spend trend lines: each of the top 5 categories (+ "Other") as its % of monthly spending across the range, with percentage-point changes on hover — a rising line means a category is eating a growing share; 1M shows snapshot bars for the month instead; click a bar or line point to expand a transaction drilldown beneath it |
 | Performance card | Total expenses, total income, net, and savings rate for the range — each with a delta vs the prior equivalent window (e.g. YTD vs last year's YTD) |
 
-> **Note:** All Summary totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the All Transactions tab shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
+> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the import/export card shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
-### All Transactions tab
+### Import / export card
 
-A filter card (quick ranges, ‹ › period stepper, Source / Year / Month dropdowns, reset) drives a pageable, sortable table of every transaction in scope. The month selection is preserved when switching years (Feb 2025 → Feb 2024) or sources. Columns shown:
-
-| Column | Source |
-|--------|--------|
-| DATE | Transaction date |
-| DESCRIPTION | Merchant / memo text |
-| AMOUNT | Signed dollar amount |
-| SOURCE | Bank account (Chase Debit / Chase Credit / Discover Credit) |
-| CARD | Last 4 digits of the card (Chase only; extracted from filename) |
-| TYPE OF TRANSACTION | User-assigned: `Expense`, `Income`, or `Transfer` |
-| CATEGORY | Sub-category if set, otherwise the bank-provided original category |
-
-Use **EXPORT CSV** to download for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. The table and Summary charts always reflect the same filter state.
+A slim card at the bottom of the page. Use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A note on the right counts any rows with no valid label. To inspect individual transactions in the app, click a bar or line point on the Categories chart to open its drilldown.
 
 ### Theme
 
@@ -164,13 +150,13 @@ Each transaction has three category fields:
 
 The dashboard displays a single **CATEGORY** column: `sub_category` if set, otherwise `original_category`.
 
-Rows tagged `Transfer` are excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning. Unlabeled rows are also excluded (they haven't been classified yet); a note on the All Transactions tab counts how many are being ignored.
+Rows tagged `Transfer` are excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning. Unlabeled rows are also excluded (they haven't been classified yet); a note on the import/export card counts how many are being ignored.
 
 ---
 
 ## Bulk category workflow
 
-1. Click **EXPORT CSV** on the All Transactions tab
+1. Click **EXPORT CSV** on the import/export card
 2. Open in Excel — fill `master_category` (`Expense`, `Income`, or `Transfer`) and optionally `sub_category` for each row
 3. Save and click **IMPORT CSV** — the app matches rows by description + amount + source + date and writes the values back to the master file
 
@@ -198,7 +184,6 @@ If you point the app at your own data directory, that folder is entirely outside
 - [Ingest pipeline](docs/features/ingest-pipeline.md)
 - [Setup screen](docs/features/setup-screen.md)
 - [Data transforms layer](docs/features/transforms.md)
-- [Global filters](docs/features/global-filters.md)
 - [Overview charts](docs/features/overview-charts.md)
 - [Category breakdown & drilldown](docs/features/category-breakdown.md)
-- [All Transactions tab](docs/features/all-transactions.md)
+- [Import / export & labeling](docs/features/import-export.md)

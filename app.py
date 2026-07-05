@@ -14,8 +14,6 @@ from Modules.transforms import (
     monthly_income,
     expenses_by_category,
     get_uncategorized,
-    available_months,
-    available_years,
     available_categories,
     available_sources,
     PREDEFINED_CATEGORIES,
@@ -117,20 +115,10 @@ def card(children, style=None):
     return html.Div(children, className="app-card", style=base)
 
 
-def label(text):
-    return html.Label(text, className="app-label", style={
-        "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "10px",
-        "display": "block", "color": "#ffffff",
-    })
-
-
 def section_title(text):
     return html.P(text, className="app-label", style={
         "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
     })
-
-
-_CHIP_STYLE = {"fontSize": "11px", "padding": "6px 14px", "letterSpacing": "1px"}
 
 
 # ── App ────────────────────────────────────────────────────────────────────────
@@ -203,13 +191,10 @@ app.index_string = ('''
             border-bottom: 2px solid #6c8aff !important;
         }
         .dark-theme .tab-container .tab:hover { color: #ffffff !important; }
-        .dark-theme #active-tab label, .dark-theme #chart-view-toggle label,
         .dark-theme #summary-range label {
             color: #8a8fa8; background: #0a0a0f; border: 1px solid #252830;
             transition: all 0.15s;
         }
-        .dark-theme #active-tab input[type="radio"]:checked + label,
-        .dark-theme #chart-view-toggle input[type="radio"]:checked + label,
         .dark-theme #summary-range input[type="radio"]:checked + label {
             color: #ffffff !important; border-color: #6c8aff !important;
             background: rgba(108,138,255,0.18) !important; font-weight: 600 !important;
@@ -268,13 +253,10 @@ app.index_string = ('''
         .light-theme .dash-dropdown-search { color: #0a0a0f !important; background: transparent !important; }
         .light-theme .dash-dropdown-search-container { background-color: #f0f1f5 !important; border-color: #dcdee8 !important; }
         .light-theme .dash-dropdown-clear { color: #5c5f72 !important; }
-        .light-theme #active-tab label, .light-theme #chart-view-toggle label,
         .light-theme #summary-range label {
             color: #5c5f72; background: #ffffff; border: 1px solid #dcdee8;
             transition: all 0.15s;
         }
-        .light-theme #active-tab input[type="radio"]:checked + label,
-        .light-theme #chart-view-toggle input[type="radio"]:checked + label,
         .light-theme #summary-range input[type="radio"]:checked + label {
             color: #0a0a0f !important; border-color: #4a68e8 !important;
             background: rgba(74,104,232,0.12) !important; font-weight: 600 !important;
@@ -491,22 +473,6 @@ app.layout = html.Div(
                 ),
             ]),
             html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px"}, children=[
-                dcc.RadioItems(
-                    id="active-tab",
-                    options=[
-                        {"label": "SUMMARY",         "value": "summary"},
-                        {"label": "ALL TRANSACTIONS", "value": "editor"},
-                    ],
-                    value="summary",
-                    inline=True,
-                    style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
-                    inputStyle={"display": "none"},
-                    labelStyle={
-                        "padding": "7px 18px", "whiteSpace": "nowrap",
-                        "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
-                        "fontWeight": "600", "letterSpacing": "1px",
-                    },
-                ),
                 # Settings menu — gear button expands/collapses the panel
                 html.Div(id="settings-menu-wrapper", children=[
                     html.Button(html.Span(className="gear-icon"), id="settings-menu-btn", n_clicks=0),
@@ -547,22 +513,16 @@ app.layout = html.Div(
                             "alignItems": "center", "flexWrap": "wrap", "gap": "12px",
                             "marginBottom": "20px",
                         }, children=[
-                            dcc.RadioItems(
+                            dcc.Dropdown(
                                 id="chart-view-toggle",
                                 options=[
-                                    {"label": "NET",        "value": "position"},
-                                    {"label": "TRENDS",     "value": "trends"},
-                                    {"label": "CATEGORIES", "value": "categories"},
+                                    {"label": "Net",        "value": "position"},
+                                    {"label": "Trends",     "value": "trends"},
+                                    {"label": "Categories", "value": "categories"},
                                 ],
                                 value="position",
-                                inline=True,
-                                inputStyle={"display": "none"},
-                                labelStyle={
-                                    "padding": "7px 18px", "whiteSpace": "nowrap",
-                                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "13px",
-                                    "fontWeight": "600", "letterSpacing": "1px",
-                                },
-                                style={"display": "flex", "flexWrap": "wrap", "alignItems": "center", "gap": "6px"},
+                                clearable=False,
+                                style={"width": "180px"},
                             ),
                             html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap"}, children=[
                                 dcc.RadioItems(
@@ -648,82 +608,9 @@ app.layout = html.Div(
                         }),
                     ]),
 
-        ]),
-
-        # ── CATEGORY EDITOR content ───────────────────────────────────────────
-        html.Div(id="editor-content", style={"display": "none", "paddingTop": "8px"}, children=[
-
-                    # Filters — drive the transactions table only
+                    # Import / export + labeling status
                     card([
-                        # Quick ranges (set Year/Month in one click) + reset
-                        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px", "flexWrap": "wrap", "marginBottom": "16px"}, children=[
-                            html.Span("QUICK RANGE", style={"fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"], "marginRight": "4px"}),
-                            html.Button("THIS MONTH", id="range-this-month", n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
-                            html.Button("LAST MONTH", id="range-last-month", n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
-                            html.Button("THIS YEAR",  id="range-this-year",  n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
-                            html.Button("ALL",        id="range-all",        n_clicks=0, className="btn-secondary", style=_CHIP_STYLE),
-                            html.Button("RESET",      id="filters-reset",    n_clicks=0, className="btn-secondary",
-                                        style={**_CHIP_STYLE, "marginLeft": "auto"}),
-                        ]),
-                        html.Div(style={"display": "flex", "gap": "24px", "alignItems": "flex-end", "flexWrap": "wrap"}, children=[
-
-                            html.Div([
-                                label("PERIOD"),
-                                html.Div(style={"display": "flex", "alignItems": "center", "gap": "6px"}, children=[
-                                    html.Button("‹", id="period-prev", n_clicks=0, className="btn-secondary",
-                                                style={"fontSize": "14px", "padding": "5px 12px"}),
-                                    html.Span(id="period-stepper-label", style={
-                                        "fontSize": "13px", "fontWeight": "600", "minWidth": "84px",
-                                        "textAlign": "center", "color": COLORS["text"],
-                                    }),
-                                    html.Button("›", id="period-next", n_clicks=0, className="btn-secondary",
-                                                style={"fontSize": "14px", "padding": "5px 12px"}),
-                                ]),
-                            ]),
-
-                            html.Div([
-                                label("SOURCE"),
-                                dcc.Dropdown(
-                                    id="global-source-filter",
-                                    options=[{"label": "All Sources", "value": "all"}] +
-                                            [{"label": s, "value": s} for s in available_sources(df)],
-                                    value="all",
-                                    clearable=False,
-                                    style={"width": "200px"},
-                                ),
-                            ]),
-
-                            html.Div([
-                                label("YEAR"),
-                                dcc.Dropdown(
-                                    id="global-year-filter",
-                                    options=[{"label": "All Years", "value": "all"}] +
-                                            [{"label": str(y), "value": y} for y in available_years(df)],
-                                    value="all",
-                                    clearable=False,
-                                    style={"width": "140px"},
-                                ),
-                            ]),
-
-                            html.Div([
-                                label("MONTH"),
-                                dcc.Dropdown(
-                                    id="global-month-filter",
-                                    options=[{"label": "All Months", "value": "all"}],
-                                    value="all",
-                                    clearable=False,
-                                    style={"width": "160px"},
-                                ),
-                            ]),
-
-                        ]),
-                    ], style={"padding": "16px 24px", "marginBottom": "16px"}),
-
-                    card([
-                        section_title("TRANSACTIONS"),
-
-                        # Import / Export row
-                        html.Div(style={"display": "flex", "gap": "12px", "marginBottom": "20px", "alignItems": "center"}, children=[
+                        html.Div(style={"display": "flex", "gap": "12px", "alignItems": "center", "flexWrap": "wrap"}, children=[
                             html.Span("IMPORT / EXPORT", style={"fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"], "marginRight": "4px"}),
                             dcc.Upload(
                                 id="import-csv-upload",
@@ -734,56 +621,13 @@ app.layout = html.Div(
                             html.Button("EXPORT CSV", id="export-csv-btn", n_clicks=0, className="btn-secondary", style={"fontSize": "12px", "padding": "8px 16px"}),
                             dcc.Download(id="export-csv-download"),
                             html.Span(id="import-status", style={"fontSize": "12px", "color": COLORS["accent3"], "marginLeft": "4px"}),
+                            # Unlabeled rows are ignored by every Summary total — surface the count
+                            html.Span(id="unlabeled-note", style={
+                                "fontSize": "12px", "color": COLORS["subtext"], "marginLeft": "auto",
+                            }),
                         ]),
+                    ], style={"padding": "16px 24px"}),
 
-                        # Unlabeled rows are ignored by every Summary total — surface the count
-                        html.Div(id="unlabeled-note", style={
-                            "fontSize": "12px", "color": COLORS["subtext"], "marginBottom": "12px",
-                        }),
-
-                        # Transactions table
-                        dash_table.DataTable(
-                            id="editor-table",
-                            columns=[
-                                {"name": "DATE",            "id": "date"},
-                                {"name": "DESCRIPTION",     "id": "description"},
-                                {"name": "AMOUNT",          "id": "amount"},
-                                {"name": "SOURCE",          "id": "source"},
-                                {"name": "CARD",            "id": "card_last4"},
-                                {"name": "TYPE OF TRANSACTION", "id": "master_category"},
-                                {"name": "CATEGORY",        "id": "category_display"},
-                            ],
-                            data=[],
-                            page_size=25,
-                            sort_action="native",
-                            cell_selectable=False,
-                            style_table={"overflowX": "auto"},
-                            style_header={
-                                "backgroundColor": COLORS["bg"],
-                                "color": COLORS["subtext"],
-                                "border": f"1px solid {COLORS['border']}",
-                                "fontWeight": "600", "letterSpacing": "1px", "fontSize": "11px",
-                            },
-                            style_cell={
-                                "backgroundColor": COLORS["surface"],
-                                "color": COLORS["text"],
-                                "border": f"1px solid {COLORS['border']}",
-                                "padding": "10px 14px", "fontSize": "12px",
-                                "fontFamily": "IBM Plex Mono, monospace",
-                                "maxWidth": "280px", "overflow": "hidden",
-                                "textOverflow": "ellipsis",
-                            },
-                            style_cell_conditional=[
-                                {"if": {"column_id": "description"},       "maxWidth": "320px"},
-                                {"if": {"column_id": "master_category"},   "color": COLORS["accent"]},
-                                {"if": {"column_id": "category_display"},  "color": COLORS["accent"]},
-                            ],
-                            style_data_conditional=[
-                                {"if": {"state": "active"},   "backgroundColor": COLORS["surface"], "border": f"1px solid {COLORS['border']}"},
-                                {"if": {"state": "selected"}, "backgroundColor": COLORS["surface"], "border": f"1px solid {COLORS['border']}"},
-                            ],
-                        ),
-                    ]),
         ]),
     ]
 )
@@ -826,31 +670,7 @@ def _summary_window(rng: str, source: str):
     return data_df, prev_df, src_df, start, end, label, prior_ok
 
 
-def apply_global_filters(source: str, year, month: str = "all") -> pd.DataFrame:
-    filtered = df.copy()
-    if source != "all":
-        filtered = filtered[filtered["source"] == source]
-    if year != "all":
-        filtered = filtered[filtered["year"] == int(year)]
-    if month != "all":
-        filtered = filtered[filtered["month_str"] == month]
-    return filtered
-
-
 # ── Callbacks ─────────────────────────────────────────────────────────────────
-
-# ── Tab switching ─────────────────────────────────────────────────────────────
-
-@app.callback(
-    Output("summary-content", "style"),
-    Output("editor-content",  "style"),
-    Input("active-tab", "value"),
-)
-def switch_tab(active):
-    show = {"paddingTop": "8px"}
-    hide = {"display": "none"}
-    return (show, hide) if active == "summary" else (hide, show)
-
 
 # ── Theme callbacks ───────────────────────────────────────────────────────────
 
@@ -1005,51 +825,99 @@ def update_overview(rng, source, metric, theme, _refresh, chart_view):
         fig_pos.update_xaxes(title_text=pos_xtitle, title_font=dict(size=11))
     pos_header = f"{'DAILY' if rng == '1m' else 'MONTHLY'} NET · {period_label}"
 
-    # ── Category horizontal bar (top N + Other, with vs-prior deltas) ──────
-    TOP_N = 10
-    cat = expenses_by_category(data_df)
-    top = cat.head(TOP_N).copy()
-    other_label = None
-    if len(cat) > TOP_N:
-        rest        = cat.iloc[TOP_N:]
-        other_label = f"Other · {len(rest)} categories"
-        top = pd.concat([top, pd.DataFrame([{
-            "category": other_label, "total_expenses": rest["total_expenses"].sum(),
-        }])], ignore_index=True)
+    # ── Categories view ─────────────────────────────────────────────────────
+    if rng == "1m":
+        # Snapshot: horizontal bars for the month (top N + Other, vs-prior deltas)
+        TOP_N = 10
+        cat = expenses_by_category(data_df)
+        top = cat.head(TOP_N).copy()
+        other_label = None
+        if len(cat) > TOP_N:
+            rest        = cat.iloc[TOP_N:]
+            other_label = f"Other · {len(rest)} categories"
+            top = pd.concat([top, pd.DataFrame([{
+                "category": other_label, "total_expenses": rest["total_expenses"].sum(),
+            }])], ignore_index=True)
 
-    prev_cat_map = None
-    if prior_ok:
-        prev_cat = expenses_by_category(prev_df)
-        if not prev_cat.empty:
-            prev_cat_map = dict(zip(prev_cat["category"], prev_cat["total_expenses"]))
+        prev_cat_map = None
+        if prior_ok:
+            prev_cat = expenses_by_category(prev_df)
+            if not prev_cat.empty:
+                prev_cat_map = dict(zip(prev_cat["category"], prev_cat["total_expenses"]))
 
-    top_names = set(cat.head(TOP_N)["category"])
-    bar_texts = []
-    for name, val in zip(top["category"], top["total_expenses"]):
-        if prev_cat_map is None:
-            bar_texts.append(f"${val:,.0f}")
-            continue
-        if name == other_label:
-            prev_val = sum(v for k, v in prev_cat_map.items() if k not in top_names)
-        else:
-            prev_val = prev_cat_map.get(name, 0)
-        d = val - prev_val
-        bar_texts.append(f"${val:,.0f} · {'+' if d >= 0 else '-'}${abs(d):,.0f}")
+        top_names = set(cat.head(TOP_N)["category"])
+        bar_texts = []
+        for name, val in zip(top["category"], top["total_expenses"]):
+            if prev_cat_map is None:
+                bar_texts.append(f"${val:,.0f}")
+                continue
+            if name == other_label:
+                prev_val = sum(v for k, v in prev_cat_map.items() if k not in top_names)
+            else:
+                prev_val = prev_cat_map.get(name, 0)
+            d = val - prev_val
+            bar_texts.append(f"${val:,.0f} · {'+' if d >= 0 else '-'}${abs(d):,.0f}")
 
-    grand = cat["total_expenses"].sum()
-    pcts  = (top["total_expenses"] / grand * 100) if grand else top["total_expenses"] * 0
-    fig_cat = go.Figure(go.Bar(
-        x=top["total_expenses"], y=top["category"],
-        orientation="h",
-        marker_color=PIE_COLORS[:len(top)], marker_line_width=0,
-        text=bar_texts, textposition="outside", cliponaxis=False,
-        textfont=dict(size=10),
-        customdata=pcts,
-        hovertemplate="<b>%{y}</b><br>$%{x:,.2f} · %{customdata:.0f}% of total<extra></extra>",
-    ))
-    fig_cat.update_layout(**tmpl, height=max(300, len(top) * 36))
-    fig_cat.update_layout(margin=dict(l=40, r=120, t=40, b=40))
-    fig_cat.update_yaxes(autorange="reversed")
+        grand = cat["total_expenses"].sum()
+        pcts  = (top["total_expenses"] / grand * 100) if grand else top["total_expenses"] * 0
+        fig_cat = go.Figure(go.Bar(
+            x=top["total_expenses"], y=top["category"],
+            orientation="h",
+            marker_color=PIE_COLORS[:len(top)], marker_line_width=0,
+            text=bar_texts, textposition="outside", cliponaxis=False,
+            textfont=dict(size=10),
+            customdata=pcts,
+            hovertemplate="<b>%{y}</b><br>$%{x:,.2f} · %{customdata:.0f}% of total<extra></extra>",
+        ))
+        fig_cat.update_layout(**tmpl, height=max(300, len(top) * 36))
+        fig_cat.update_layout(margin=dict(l=40, r=120, t=40, b=40))
+        fig_cat.update_yaxes(autorange="reversed")
+    else:
+        # Share trend lines: each category's % of that month's spending, so a
+        # rising line = a category eating a growing share. Top 5 + Other keeps
+        # it readable; months where nothing was spent show a gap.
+        rows = data_df[data_df["master_category"] == "Expense"].copy()
+        rows["cat"] = rows["category_display"].where(rows["category_display"] != "", "Uncategorized")
+        fig_cat = go.Figure()
+        if not rows.empty:
+            pivot  = (-rows.pivot_table(index="month_str", columns="cat",
+                                        values="amount", aggfunc="sum").fillna(0)).sort_index()
+            totals = pivot.sum(axis=1)
+            top5   = pivot.sum(axis=0).sort_values(ascending=False).head(5).index.tolist()
+            others = [col for col in pivot.columns if col not in top5]
+            names  = list(top5)
+            if others:
+                other_label = f"Other · {len(others)} categories"
+                pivot[other_label] = pivot[others].sum(axis=1)
+                names.append(other_label)
+
+            x_lbls_c = [pd.to_datetime(m).strftime("%b '%y") for m in pivot.index]
+            for i, name in enumerate(names):
+                shares, cds = [], []
+                prev_share = None
+                for m, amt, tot in zip(pivot.index, pivot[name], totals):
+                    share = (amt / tot * 100) if tot > 0 else None
+                    shares.append(share)
+                    if share is not None and prev_share is not None:
+                        dpp = share - prev_share
+                        pp_txt = f"{'+' if dpp >= 0 else '-'}{abs(dpp):.0f}pp vs prior month"
+                    else:
+                        pp_txt = ""
+                    cds.append((f"${amt:,.0f}", pp_txt, name))
+                    prev_share = share
+                fig_cat.add_trace(go.Scatter(
+                    x=x_lbls_c, y=shares, name=name,
+                    mode="lines+markers",
+                    line=dict(color=PIE_COLORS[i % len(PIE_COLORS)], width=2),
+                    marker=dict(size=5),
+                    customdata=cds,
+                    hovertemplate=("<b>" + name + " · %{x}</b><br>"
+                                   "%{y:.0f}% of spend · %{customdata[0]}<br>"
+                                   "%{customdata[1]}<extra></extra>"),
+                ))
+        fig_cat.update_layout(**tmpl, height=340)
+        fig_cat.update_yaxes(ticksuffix="%", rangemode="tozero",
+                             title_text="% of monthly spend", title_font=dict(size=11))
 
     # ── Performance card ─────────────────────────────────────────────────────
     def _delta(current, prev, higher_is_bad=True):
@@ -1114,112 +982,6 @@ def update_overview(rng, source, metric, theme, _refresh, chart_view):
 
 
 @app.callback(
-    Output("global-month-filter", "options"),
-    Output("global-month-filter", "value"),
-    Input("global-year-filter", "value"),
-    Input("global-source-filter", "value"),
-    State("global-month-filter", "value"),
-)
-def update_month_options(year, source, current):
-    filtered = df
-    if source != "all":
-        filtered = filtered[filtered["source"] == source]
-    if year != "all":
-        filtered = filtered[filtered["year"] == int(year)]
-    months = sorted(filtered["month_str"].dropna().unique().tolist())
-    options = [{"label": "All Months", "value": "all"}] + [
-        {"label": pd.to_datetime(m).strftime("%b %Y"), "value": m}
-        for m in months
-    ]
-    # Preserve the month selection instead of resetting: switching year keeps
-    # the same calendar month (Feb 2025 → Feb 2024); switching source keeps
-    # the period. Falls back to All only when the candidate has no data.
-    value = "all"
-    if current and current != "all":
-        candidate = f"{year}-{current[5:7]}" if year != "all" else current
-        if candidate in months:
-            value = candidate
-    return options, value
-
-
-@app.callback(
-    Output("global-source-filter", "value", allow_duplicate=True),
-    Output("global-year-filter",   "value", allow_duplicate=True),
-    Output("global-month-filter",  "value", allow_duplicate=True),
-    Input("range-this-month", "n_clicks"),
-    Input("range-last-month", "n_clicks"),
-    Input("range-this-year",  "n_clicks"),
-    Input("range-all",        "n_clicks"),
-    Input("filters-reset",    "n_clicks"),
-    Input("period-prev",      "n_clicks"),
-    Input("period-next",      "n_clicks"),
-    State("global-year-filter",  "value"),
-    State("global-month-filter", "value"),
-    prevent_initial_call=True,
-)
-def quick_filters(_tm, _lm, _ty, _all, _reset, _prev, _next, year, month):
-    from dash import ctx, no_update
-    trig   = ctx.triggered_id
-    months = available_months(df)
-    years  = available_years(df)
-    if not months:
-        return no_update, no_update, no_update
-
-    # "This month" means the current calendar month, clamped to the newest
-    # month that actually has data (statements lag the calendar).
-    today_m = pd.Timestamp.today().strftime("%Y-%m")
-    this_m  = max((m for m in months if m <= today_m), default=months[-1])
-
-    if trig == "range-this-month":
-        return no_update, int(this_m[:4]), this_m
-    if trig == "range-last-month":
-        m = months[max(0, months.index(this_m) - 1)]
-        return no_update, int(m[:4]), m
-    if trig == "range-this-year":
-        yr = min(pd.Timestamp.today().year, years[-1])
-        if yr not in years:
-            yr = years[-1]
-        return no_update, yr, "all"
-    if trig == "range-all":
-        return no_update, "all", "all"
-    if trig == "filters-reset":
-        return "all", "all", "all"
-
-    # ‹ › steppers: walk adjacent data months (or years when no month is set)
-    step = -1 if trig == "period-prev" else 1
-    if month != "all" and month in months:
-        idx = months.index(month) + step
-        if 0 <= idx < len(months):
-            m = months[idx]
-            return no_update, int(m[:4]), m
-    elif year != "all" and int(year) in years:
-        idx = years.index(int(year)) + step
-        if 0 <= idx < len(years):
-            return no_update, years[idx], "all"
-    return no_update, no_update, no_update
-
-
-@app.callback(
-    Output("period-stepper-label", "children"),
-    Output("period-prev", "disabled"),
-    Output("period-next", "disabled"),
-    Input("global-year-filter",  "value"),
-    Input("global-month-filter", "value"),
-    Input("refresh-trigger",     "data"),
-)
-def update_stepper(year, month, _refresh):
-    months = available_months(df)
-    years  = available_years(df)
-    if month != "all" and month in months:
-        idx = months.index(month)
-        return pd.to_datetime(month).strftime("%b %Y"), idx == 0, idx == len(months) - 1
-    if year != "all" and int(year) in years:
-        idx = years.index(int(year))
-        return str(year), idx == 0, idx == len(years) - 1
-    return "ALL DATA", True, True
-
-
-@app.callback(
     Output("category-drilldown", "children"),
     Input("category-bar-chart",  "clickData"),
     Input("summary-range",       "value"),
@@ -1231,13 +993,25 @@ def category_drilldown(click_data, rng, source, theme):
     if ctx.triggered_id != "category-bar-chart" or not click_data:
         return []
 
-    category = click_data["points"][0]["y"]
-    if category.startswith("Other · "):  # aggregated tail of the top-N chart, not a real category
+    # 1M snapshot bars carry the category on the y axis; the share-trend lines
+    # carry it (plus the month) in customdata so a point click scopes to both.
+    point = click_data["points"][0]
+    cd    = point.get("customdata")
+    month_scope = scope_lbl = None
+    if isinstance(cd, (list, tuple)) and len(cd) == 3:
+        category    = cd[2]
+        month_scope = pd.to_datetime(point["x"], format="%b '%y").strftime("%Y-%m")
+        scope_lbl   = str(point["x"]).upper()
+    else:
+        category = point["y"]
+    if category.startswith("Other · "):  # aggregated tail, not a real category
         return []
     c = _CHART[theme]
 
     rng = rng if rng in ("1m", "ytd", "1y", "3y") else "ytd"
     filtered, _, _, _, _, _, _ = _summary_window(rng, source)
+    if month_scope:
+        filtered = filtered[filtered["month_str"] == month_scope]
     match_category = filtered["category_display"].where(filtered["category_display"] != "", "Uncategorized")
     cat_txns = filtered[match_category == category].copy()
     cat_txns = cat_txns[cat_txns["master_category"] == "Expense"]
@@ -1253,7 +1027,7 @@ def category_drilldown(click_data, rng, source, theme):
         "paddingTop": "20px",
     }, children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "12px"}, children=[
-            html.Span(f"TRANSACTIONS — {category.upper()}", style={
+            html.Span(f"TRANSACTIONS — {category.upper()}" + (f" · {scope_lbl}" if scope_lbl else ""), style={
                 "fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"],
             }),
             html.Span(f"${total:,.2f} total · {len(cat_txns)} transactions", style={
@@ -1290,32 +1064,17 @@ def category_drilldown(click_data, rng, source, theme):
 
 
 @app.callback(
-    Output("editor-table", "data"),
-    Input("global-source-filter", "value"),
-    Input("global-year-filter",   "value"),
-    Input("global-month-filter",  "value"),
-    Input("refresh-trigger",      "data"),
-)
-def update_editor_table(source, year, month, _refresh):
-    return _build_table_data(source, year, month)
-
-
-@app.callback(
     Output("unlabeled-note", "children"),
-    Input("global-source-filter", "value"),
-    Input("global-year-filter",   "value"),
-    Input("global-month-filter",  "value"),
-    Input("refresh-trigger",      "data"),
+    Input("refresh-trigger", "data"),
 )
-def update_unlabeled_note(source, year, month, _refresh):
-    filtered = apply_global_filters(source, year, month)
+def update_unlabeled_note(_refresh):
     # Anything outside Expense / Income / Transfer (including blank) never
     # reaches a Summary total — Transfer is deliberate, the rest deserve a flag.
-    n = int((~filtered["master_category"].isin(PREDEFINED_CATEGORIES)).sum())
+    n = int((~df["master_category"].isin(PREDEFINED_CATEGORIES)).sum())
     if n == 0:
         return ""
-    return (f"⚠ {n} of {len(filtered)} transactions in view have no valid TYPE OF TRANSACTION label "
-            f"(Expense / Income / Transfer) and are ignored in all Summary totals.")
+    return (f"⚠ {n} of {len(df)} transactions have no valid label "
+            f"(Expense / Income / Transfer) and are ignored in all totals.")
 
 
 @app.callback(
@@ -1333,35 +1092,31 @@ def export_csv(_):
 
 
 @app.callback(
-    Output("editor-table",    "data",     allow_duplicate=True),
     Output("import-status",   "children"),
     Output("refresh-trigger", "data",     allow_duplicate=True),
     Input("import-csv-upload", "contents"),
     State("import-csv-upload", "filename"),
-    State("global-source-filter", "value"),
-    State("global-year-filter",   "value"),
-    State("global-month-filter",  "value"),
-    State("refresh-trigger",      "data"),
+    State("refresh-trigger",   "data"),
     prevent_initial_call=True,
 )
-def import_csv(contents, filename, source, year, month, trigger):
+def import_csv(contents, filename, trigger):
     if not contents:
-        return dash.no_update, "", dash.no_update
+        return "", dash.no_update
 
     import base64, io
     _, content_string = contents.split(",", 1)
     try:
         import_df = pd.read_csv(io.StringIO(base64.b64decode(content_string).decode("utf-8")))
     except Exception as e:
-        return dash.no_update, f"⚠ Could not parse CSV: {e}", dash.no_update
+        return f"⚠ Could not parse CSV: {e}", dash.no_update
 
     required = {"description", "amount", "source", "master_category"}
     missing = required - set(import_df.columns)
     if missing:
-        return dash.no_update, f"⚠ Missing columns: {', '.join(sorted(missing))}", dash.no_update
+        return f"⚠ Missing columns: {', '.join(sorted(missing))}", dash.no_update
 
     if not MASTER_PATH or not MASTER_PATH.exists():
-        return dash.no_update, "⚠ No data directory configured — use the setup screen first.", dash.no_update
+        return "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
         has_date    = "date"         in import_df.columns
         has_sub_cat = "sub_category" in import_df.columns
@@ -1399,21 +1154,9 @@ def import_csv(contents, filename, source, year, month, trigger):
         global df
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
 
-        new_data = _build_table_data(source, year, month)
-        return new_data, f"Updated {updated} row(s) from {filename}", (trigger or 0) + 1
+        return f"Updated {updated} row(s) from {filename}", (trigger or 0) + 1
     except Exception as e:
-        return dash.no_update, f"Import error: {e}", dash.no_update
-
-
-def _build_table_data(source: str, year, month: str) -> list[dict]:
-    filtered = apply_global_filters(source, year, month)
-    filtered = filtered.copy()
-    filtered["date"]            = filtered["date"].astype(str)
-    filtered["master_category"] = filtered["master_category"].fillna("")
-    if "card_last4" in filtered.columns:
-        filtered["card_last4"] = filtered["card_last4"].fillna("")
-    cols = ["date", "description", "amount", "source", "card_last4", "master_category", "category_display"]
-    return filtered[[c for c in cols if c in filtered.columns]].to_dict("records")
+        return f"Import error: {e}", dash.no_update
 
 
 @app.callback(
