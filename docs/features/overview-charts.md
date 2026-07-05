@@ -1,11 +1,11 @@
 # Overview charts
 
-The Summary tab is two cards, both produced by the `update_overview` callback:
+The dashboard is a single page of three cards; the first two are produced by the `update_overview` callback:
 
-1. **Graph card** — a chart-view selector (NET / TRENDS / CATEGORIES), four range chips (1M / YTD / 1Y / 3Y), and a compact source dropdown in the header; one chart body visible at a time.
+1. **Graph card** — a chart-view dropdown (Net / Trends / Categories), four range chips (1M / YTD / 1Y / 3Y), and a compact source dropdown in the header; one chart body visible at a time.
 2. **Performance card** — the range's metrics (expenses, income, net, savings rate) with deltas vs the prior equivalent window.
 
-The page header row above holds the title, the tab pills, and the settings gear. The Source/Year/Month filter card lives on the All Transactions tab only and does not affect the Summary tab.
+The third card is the import/export card (see [import-export.md](import-export.md)). The page header row above holds the title and the settings gear. There are no other filters — the range chips and the source dropdown are the entire filtering surface.
 
 ## Range chips (`summary-range`)
 
@@ -18,11 +18,11 @@ Calendar-anchored windows computed by `_range_window` in `app.py`:
 | 1Y | Trailing 12 calendar months | The 12 months before those |
 | 3Y | Trailing 36 calendar months | The 36 months before those |
 
-Windows are anchored to *today*, not to the newest data — if statements lag the calendar, 1M can legitimately show an empty chart. The `summary-source` dropdown scopes everything on the tab to one account.
+Windows are anchored to *today*, not to the newest data — if statements lag the calendar, 1M can legitimately show an empty chart. The `summary-source` dropdown scopes everything on the page to one account.
 
 ## Chart selector (`chart-view-toggle`)
 
-The selector pills swap which chart body is visible — NET (per-period net bars), TRENDS (same-month YoY lines), or CATEGORIES (the category breakdown + drilldown). The pills are styled like the tab nav. Visibility styles are emitted by `update_overview` itself (the selector is one of its Inputs) so the figure redraw and the unhide land in the same render cycle — a Plotly graph drawn while `display:none` mis-sizes.
+A single dropdown swaps which chart body is visible — Net (per-period net bars), Trends (same-month YoY lines), or Categories (share-of-spend trend lines, or snapshot bars on 1M, plus the drilldown). Visibility styles are emitted by `update_overview` itself (the selector is one of its Inputs) so the figure redraw and the unhide land in the same render cycle — a Plotly graph drawn while `display:none` mis-sizes.
 
 ---
 
@@ -49,7 +49,7 @@ Same-calendar-month year-over-year comparison of one metric at a time — expens
 
 A cumulative "pace" variant of this chart was tried and reverted — the ahead/behind-last-year aggregate it visualised is already stated numerically by the performance card, while the monthly shape (spike months, seasonality) is information only this chart carries.
 
-All numbers on this tab are **label-based**: expenses are rows with `master_category == "Expense"`, income is rows with `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total — the All Transactions tab shows how many non-Transfer rows are being ignored.
+All numbers are **label-based**: expenses are rows with `master_category == "Expense"`, income is rows with `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total — the import/export card's note shows how many non-Transfer rows are being ignored.
 
 ---
 

@@ -56,7 +56,7 @@ Bucketing is **label-based**: only the `master_category` label decides whether a
 | `get_expenses(df)` | Copy of rows where `master_category == "Expense"` |
 | `get_income(df)` | Copy of rows where `master_category == "Income"` |
 
-Everything else is ignored by every income and expense calculation: `Transfer` rows deliberately, and unlabeled rows (or rows with any other label) because they haven't been classified yet. The All Transactions tab shows a count of ignored rows that aren't Transfers.
+Everything else is ignored by every income and expense calculation: `Transfer` rows deliberately, and unlabeled rows (or rows with any other label) because they haven't been classified yet. The import/export card shows a count of ignored rows that aren't Transfers.
 
 ---
 
