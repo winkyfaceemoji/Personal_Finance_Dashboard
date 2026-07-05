@@ -162,11 +162,20 @@ Rows tagged `Transfer` are excluded from all income and expense totals — they 
 
 ---
 
-## Auto-categorization
+## Auto-labeling rules
 
-`rules.csv` maps keyword substrings to categories. On each data load, any transaction with no `master_category` whose description contains a matching keyword is automatically assigned the corresponding `effective_category`. The first matching rule wins; `master_category` always takes priority over rules.
+`rules.csv` maps keyword substrings to labels:
 
-Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed.
+```csv
+keyword,master_category,sub_category
+payroll,Income,Paycheck
+netflix,Expense,Entertainment
+fidelity,Transfer,
+```
+
+On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
+
+Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note on the import/export card tells you how many rows your rules don't yet cover.
 
 ---
 

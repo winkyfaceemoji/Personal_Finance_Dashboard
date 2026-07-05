@@ -12,27 +12,47 @@ PREDEFINED_CATEGORIES = [
 
 def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd.DataFrame:
     """
-    Apply keyword-based auto-categorization to rows that have no master_category.
-    Rules are loaded from a CSV with 'keyword' and 'category' columns.
-    First matching rule wins. master_category always takes precedence over rules.
+    Keyword-based auto-labeling for rows that have no master_category.
+
+    rules.csv columns: keyword, master_category, sub_category (optional).
+    Legacy files with a single 'category' column are read as master_category.
+
+    - Only rows with a blank master_category are touched — a hand-assigned
+      label always wins.
+    - First matching rule wins for a given row.
+    - Rules whose master_category isn't one of PREDEFINED_CATEGORIES are
+      skipped (a typo would otherwise create rows that every total ignores).
+    - Labels are applied in-memory on every load and never written to the
+      master file, so editing rules.csv retroactively re-labels all history.
     """
     if not rules_path or not Path(rules_path).exists():
         return df
     try:
-        rules = pd.read_csv(rules_path)
+        rules = pd.read_csv(rules_path).fillna("")
     except Exception:
         return df
-    if rules.empty or not {"keyword", "category"}.issubset(rules.columns):
+    if rules.empty or "keyword" not in rules.columns:
         return df
+    if "master_category" not in rules.columns:
+        rules["master_category"] = rules["category"] if "category" in rules.columns else ""
+    if "sub_category" not in rules.columns:
+        rules["sub_category"] = ""
 
-    no_override = df["master_category"] == ""
+    desc      = df["description"].str.lower()
+    unlabeled = df["master_category"] == ""
     for _, rule in rules.iterrows():
-        keyword  = str(rule["keyword"]).strip().lower()
-        category = str(rule["category"]).strip()
-        if not keyword or not category:
+        keyword = str(rule["keyword"]).strip().lower()
+        mc      = str(rule["master_category"]).strip()
+        sc      = str(rule["sub_category"]).strip()
+        if not keyword or mc not in PREDEFINED_CATEGORIES:
             continue
-        matches = no_override & df["description"].str.lower().str.contains(keyword, regex=False, na=False)
-        df.loc[matches, "effective_category"] = category
+        hits = unlabeled & desc.str.contains(keyword, regex=False, na=False)
+        if not hits.any():
+            continue
+        df.loc[hits, "master_category"] = mc
+        if sc:
+            df.loc[hits & (df["sub_category"] == ""), "sub_category"] = sc
+        unlabeled = unlabeled & ~hits
     return df
 
 
@@ -41,6 +61,8 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     Load edited_combined_transactions.csv and return a cleaned dataframe.
 
     - Parses dates
+    - Applies keyword auto-labeling rules to rows with no master_category
+      (in-memory only; the master file keeps its blanks)
     - Computes effective_category: master_category if set, else bank category,
       else 'Uncategorized'
     - Ensures amount is numeric
@@ -72,6 +94,10 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     df["sub_category"]      = df["sub_category"].fillna("").str.strip()
     df["card_last4"]        = df["card_last4"].fillna("")
 
+    # Auto-labeling rules run before the derived columns below so that
+    # effective_category and category_display pick up rule-assigned labels
+    apply_auto_categories(df, rules_path)
+
     # effective_category: master overrides bank, fallback to Uncategorized
     df["effective_category"] = df.apply(
         lambda r: r["master_category"] if r["master_category"] != ""
@@ -91,8 +117,6 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     df["month"]     = df["date"].dt.to_period("M")
     df["month_str"] = df["date"].dt.strftime("%Y-%m")
     df["year"]      = df["date"].dt.year
-
-    apply_auto_categories(df, rules_path)
     return df
 
 

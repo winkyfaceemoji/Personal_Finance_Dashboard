@@ -16,6 +16,10 @@ All totals are label-based: a row only counts as an expense or income if its `ma
 
 ## Import / export workflow
 
+Before reaching for Excel: recurring merchants (paychecks, subscriptions, transfers) are better handled by [auto-labeling rules](../../readme.md#auto-labeling-rules) in `rules.csv`, which label new statements automatically on every load. The Excel round-trip is for everything the rules don't catch.
+
+Note that **exports include rule-applied labels** (the export reads the loaded frame, not the raw master file), so importing an export back writes those labels into the master permanently.
+
 This is the recommended workflow for bulk category assignment:
 
 1. Click **EXPORT CSV** — downloads all transactions with columns: `date`, `description`, `amount`, `source`, `card_last4`, `original_category`, `master_category`, `sub_category`.
