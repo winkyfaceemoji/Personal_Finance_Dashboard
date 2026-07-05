@@ -121,7 +121,7 @@ Each graph carries only its own controls — there is no global filter.
 
 | Card | What it shows |
 |------|---------------|
-| PERFORMANCE | Total expenses, total income, net, and savings rate across **all years** — a fixed at-a-glance baseline, unaffected by any control |
+| SUMMARY | Total expenses, total income, net, and savings rate across **all years** — a fixed at-a-glance baseline, unaffected by any control; a ▾ YEARLY BREAKDOWN toggle reveals year-by-year rows in the same aligned table (current year marked · YTD) |
 | CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); a dropdown switches the metric between Net (green/red by sign), Expenses, and Income |
 | TRENDS | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always all data, no range control |
 | CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to expand a transaction drilldown beneath it |
@@ -134,7 +134,7 @@ A slim card at the bottom of the page. Use **EXPORT CSV** to download all transa
 
 ### Theme
 
-A floating button in the bottom-right corner toggles between dark and light themes. The choice persists in your browser's local storage.
+The LIGHT / DARK buttons in the settings menu (gear icon) switch themes. The choice persists in your browser's local storage.
 
 ---
 
@@ -173,7 +173,7 @@ netflix,Expense,Entertainment
 fidelity,Transfer,
 ```
 
-On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
+On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the spend pie. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
 
 Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note on the import/export card tells you how many rows your rules don't yet cover.
 
