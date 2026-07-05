@@ -2,7 +2,7 @@
 
 The dashboard is a single page of five cards, top to bottom:
 
-1. **Performance card** — all-years totals, independent of every filter
+1. **Summary card** — all-years totals with an expandable yearly breakdown, independent of every filter
 2. **Cash Flow card** — monthly bars with YTD/1Y/3Y range chips and a Net/Expenses/Income dropdown
 3. **Trends card** — same-month year-over-year lines (always all data)
 4. **Categories card** — spend pie per year, with click drilldown (see [category-breakdown.md](category-breakdown.md))
@@ -12,18 +12,20 @@ Cards 1–4 are produced by the single `update_overview` callback. The page head
 
 ---
 
-## Performance card (`performance-card` / `performance-title`)
+## Summary card (`performance-card` / `performance-title`)
 
-Titled `PERFORMANCE · ALL YEARS`, first thing on the page. Four metrics over the entire dataset — deliberately unaffected by any control, so it always answers "where do I stand overall":
+Titled `SUMMARY`, first thing on the page. One table over the entire dataset — deliberately unaffected by any control, so it always answers "where do I stand overall". The column headers (EXPENSES / INCOME / NET / SAVINGS RATE) double as the metric labels; the always-visible `ALL YEARS` row shows the big totals:
 
-| Metric | Value |
+| Column | Value |
 |--------|-------|
-| Total Expenses | Sum of `monthly_expenses(df)` |
-| Total Income | Sum of `monthly_income(df)` |
+| Expenses | Sum of `monthly_expenses(df)` |
+| Income | Sum of `monthly_income(df)` |
 | Net | Income − expenses; green when ≥ 0, red when negative |
 | Savings rate | `net / income` (— when there is no income) |
 
 Negative values render as `-$1,372.65` (sign before the dollar sign). No deltas — all-years has no prior window to compare against.
+
+**Yearly breakdown (expandable):** a `▾ YEARLY BREAKDOWN` button at the card's right edge reveals one row per year *in the same table* (`performance-yearly` is a second `Tbody`, toggled by `toggle_perf_breakdown`, collapsed by default) — so the yearly figures line up column-for-column under the all-years totals. The current year's row is bold and labeled `2026 · YTD` so its lower totals aren't misread as a spending drop. The yearly rows sum exactly to the all-years figures above them.
 
 ---
 

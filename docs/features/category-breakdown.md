@@ -2,8 +2,10 @@
 
 The Categories card (`category-bar-chart` — the id predates the pie) shows a **pie of spending by category for one calendar year**, titled `SPEND BY CATEGORY · {year}`.
 
-- **Year chips** (`category-year`): one pill per year in the data, defaulting to the latest year. This is the card's only control.
-- **Top 9 + Other:** the nine largest categories get their own slice; the rest collapse into `Other · {n} categories` so the pie stays readable. Slice colours come from `PIE_COLORS` in spend-rank order (slices are unsorted so colours match rank).
+- **Year chips** (`category-year`): one pill per year in the data, defaulting to the latest year. This is the card's only control. The chip options regenerate after reloads/imports (`update_year_options`), so a new year's data gets a chip without restarting the app.
+- **Top 9 + Other:** the nine largest categories get their own slice; the rest collapse into `Other · {n} categories` so the pie stays readable.
+- **Stable colours:** a category's colour follows its *all-time* spend rank, not its rank within the selected year — so Food & Drink keeps one colour while you flip between year chips. The Other slice is always grey.
+- A muted "click a slice to see its transactions" hint under the title advertises the drilldown, which is the app's only transaction-level view.
 - Slices show their percent; hover adds the dollar total (`$4,005.15 · 32%`).
 - Only rows labeled `Expense` in `master_category` are counted, matching every other total in the app.
 

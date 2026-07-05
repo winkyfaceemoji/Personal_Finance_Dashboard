@@ -12,6 +12,8 @@ from Modules.transforms import (
     load_transactions,
     monthly_expenses,
     monthly_income,
+    yearly_expenses,
+    yearly_income,
     expenses_by_category,
     get_uncategorized,
     available_categories,
@@ -507,14 +509,25 @@ app.layout = html.Div(
 
                     # Performance — all-years totals, independent of any filter
                     card([
-                        html.Div(id="performance-title", className="app-label", style={
-                            "fontSize": "11px", "letterSpacing": "2px", "marginBottom": "16px",
-                        }),
-                        html.Div(id="performance-card", style={
-                            "display": "grid",
-                            "gridTemplateColumns": "repeat(auto-fit, minmax(170px, 1fr))",
-                            "gap": "20px",
-                        }),
+                        html.Div(style={
+                            "display": "flex", "justifyContent": "space-between",
+                            "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
+                            "marginBottom": "16px",
+                        }, children=[
+                            html.Div(id="performance-title", className="app-label", style={
+                                "fontSize": "11px", "letterSpacing": "2px",
+                            }),
+                            html.Button("▾ YEARLY BREAKDOWN", id="perf-expand-btn", n_clicks=0,
+                                        className="btn-secondary",
+                                        style={"fontSize": "10px", "padding": "5px 12px", "letterSpacing": "1px"}),
+                        ]),
+                        # One table: header row + ALL YEARS row always visible,
+                        # year rows revealed by the toggle — shared columns keep
+                        # the totals and the breakdown aligned
+                        html.Table([
+                            html.Tbody(id="performance-card"),
+                            html.Tbody(id="performance-yearly", style={"display": "none"}),
+                        ], style={"width": "100%", "borderCollapse": "collapse", "tableLayout": "fixed"}),
                     ]),
 
                     # Cash flow — monthly bars; range chips + metric dropdown
@@ -594,9 +607,14 @@ app.layout = html.Div(
                             "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
                             "marginBottom": "16px",
                         }, children=[
-                            html.Div(id="category-title", className="app-label", style={
-                                "fontSize": "11px", "letterSpacing": "2px",
-                            }),
+                            html.Div([
+                                html.Div(id="category-title", className="app-label", style={
+                                    "fontSize": "11px", "letterSpacing": "2px",
+                                }),
+                                html.Div("click a slice to see its transactions", style={
+                                    "fontSize": "10px", "color": COLORS["subtext"], "marginTop": "3px",
+                                }),
+                            ]),
                             dcc.RadioItems(
                                 id="category-year",
                                 options=[{"label": str(y), "value": int(y)} for y in available_years(df)],
@@ -697,6 +715,7 @@ def toggle_settings_menu(_, is_open, style):
     Output("net-position-header",   "children"),
     Output("performance-title",     "children"),
     Output("performance-card",      "children"),
+    Output("performance-yearly",    "children"),
     Input("summary-range",          "value"),
     Input("cashflow-metric",        "value"),
     Input("toggle-income-expenses", "value"),
@@ -805,9 +824,16 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
 
     fig_cat = go.Figure()
     if not top.empty:
+        # Colours follow the category's all-time spend rank, not its rank
+        # within the selected year, so a category keeps its colour when
+        # flipping between year chips ("Other" is always grey)
+        cat_rank = {name: i for i, name in enumerate(expenses_by_category(df)["category"])}
+        slice_colors = ["#8a8fa8" if name.startswith("Other · ")
+                        else PIE_COLORS[cat_rank.get(name, 0) % len(PIE_COLORS)]
+                        for name in top["category"]]
         fig_cat.add_trace(go.Pie(
             labels=top["category"], values=top["total_expenses"],
-            marker=dict(colors=PIE_COLORS[:len(top)]),
+            marker=dict(colors=slice_colors),
             sort=False,
             textinfo="percent",
             hovertemplate="<b>%{label}</b><br>$%{value:,.2f} · %{percent}<extra></extra>",
@@ -815,18 +841,9 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
     fig_cat.update_layout(**tmpl, height=380)
     cat_title = f"SPEND BY CATEGORY · {cat_year}" if cat_year else "SPEND BY CATEGORY"
 
-    # ── Performance: all-years totals, independent of every filter ──────────
-    def perf_metric(lbl, value_str, color):
-        return html.Div([
-            html.P(lbl, className="app-label", style={
-                "fontSize": "10px", "letterSpacing": "2px", "marginBottom": "6px",
-            }),
-            html.P(value_str, style={
-                "fontSize": "22px", "fontWeight": "600",
-                "fontFamily": "'Syne', sans-serif", "color": color,
-            }),
-        ])
-
+    # ── Summary card: all-years totals + expandable yearly breakdown ────────
+    # Rendered as one table so the headline row and the year rows share the
+    # same five columns instead of reading as two separate blocks.
     def _dollar(v):
         return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
 
@@ -836,16 +853,63 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
     net_color = c["accent3"] if net_val >= 0 else c["accent2"]
     rate      = (net_val / total_inc * 100) if total_inc > 0 else None
 
-    perf_title = "PERFORMANCE · ALL YEARS"
+    th  = {"fontSize": "10px", "letterSpacing": "1px", "color": COLORS["subtext"],
+           "textAlign": "right", "padding": "6px 0", "fontWeight": "600"}
+    big = {"fontSize": "22px", "fontWeight": "600", "textAlign": "right",
+           "fontFamily": "'Syne', sans-serif", "padding": "8px 0 10px"}
+
+    perf_title = "SUMMARY"
     perf = [
-        perf_metric("TOTAL EXPENSES", _dollar(total_exp), c["accent2"]),
-        perf_metric("TOTAL INCOME",   _dollar(total_inc), c["accent3"]),
-        perf_metric("NET",            _dollar(net_val),   net_color),
-        perf_metric("SAVINGS RATE",   f"{rate:.0f}%" if rate is not None else "—", c["accent"]),
+        html.Tr([
+            html.Th("",             style={**th, "textAlign": "left"}),
+            html.Th("EXPENSES",     style=th),
+            html.Th("INCOME",       style=th),
+            html.Th("NET",          style=th),
+            html.Th("SAVINGS RATE", style=th),
+        ]),
+        html.Tr([
+            html.Td("ALL YEARS", style={
+                "fontSize": "11px", "letterSpacing": "2px", "fontWeight": "600",
+                "color": COLORS["text"], "textAlign": "left", "padding": "8px 0 10px",
+            }),
+            html.Td(_dollar(total_exp), style={**big, "color": c["accent2"]}),
+            html.Td(_dollar(total_inc), style={**big, "color": c["accent3"]}),
+            html.Td(_dollar(net_val),   style={**big, "color": net_color}),
+            html.Td(f"{rate:.0f}%" if rate is not None else "—", style={**big, "color": c["accent"]}),
+        ]),
     ]
 
+    # Yearly rows (revealed by the ▾ toggle), same columns as above
+    yb = (
+        yearly_expenses(df).rename(columns={"total_expenses": "exp"})
+        .merge(yearly_income(df).rename(columns={"total_income": "inc"}),
+               on="year", how="outer")
+        .fillna(0).sort_values("year")
+    )
+    yb["net"] = yb["inc"] - yb["exp"]
+    this_year = pd.Timestamp.today().year
+
+    td = {"fontSize": "12px", "textAlign": "right", "padding": "7px 0",
+          "borderTop": f"1px solid {COLORS['border']}",
+          "fontFamily": "IBM Plex Mono, monospace"}
+    perf_yearly = []
+    for r in yb.itertuples():
+        yr      = int(r.year)
+        partial = yr == this_year
+        bold    = {"fontWeight": "700"} if partial else {}
+        rate_y  = f"{r.net / r.inc * 100:.0f}%" if r.inc > 0 else "—"
+        perf_yearly.append(html.Tr([
+            html.Td(f"{yr} · YTD" if partial else str(yr),
+                    style={**td, "textAlign": "left", "color": COLORS["text"], **bold}),
+            html.Td(f"${r.exp:,.0f}", style={**td, "color": c["accent2"], **bold}),
+            html.Td(f"${r.inc:,.0f}", style={**td, "color": c["accent3"], **bold}),
+            html.Td(f"{'+' if r.net >= 0 else '-'}${abs(r.net):,.0f}",
+                    style={**td, "color": c["accent3"] if r.net >= 0 else c["accent2"], **bold}),
+            html.Td(rate_y, style={**td, "color": COLORS["subtext"], **bold}),
+        ]))
+
     return (fig_main, chart_title, fig_cat, cat_title, fig_pos, pos_header,
-            perf_title, perf)
+            perf_title, perf, perf_yearly)
 
 
 @app.callback(
@@ -1041,6 +1105,32 @@ def update_uncategorized_count(_):
     if n == 0:
         return ""
     return f"⚠ {n:,} uncategorized"
+
+
+@app.callback(
+    Output("performance-yearly", "style"),
+    Output("perf-expand-btn",    "children"),
+    Input("perf-expand-btn",     "n_clicks"),
+)
+def toggle_perf_breakdown(n_clicks):
+    if n_clicks % 2:
+        return {"display": "table-row-group"}, "▴ HIDE YEARLY BREAKDOWN"
+    return {"display": "none"}, "▾ YEARLY BREAKDOWN"
+
+
+@app.callback(
+    Output("category-year", "options"),
+    Output("category-year", "value"),
+    Input("refresh-trigger", "data"),
+    State("category-year", "value"),
+)
+def update_year_options(_refresh, current):
+    """Regenerate the year chips after reloads/imports so a new year's data
+    gets a chip without restarting the app; the selection is preserved."""
+    years = [int(y) for y in available_years(df)]
+    opts  = [{"label": str(y), "value": y} for y in years]
+    value = current if current in years else (years[-1] if years else None)
+    return opts, value
 
 
 @app.callback(

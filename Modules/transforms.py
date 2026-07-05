@@ -12,18 +12,27 @@ PREDEFINED_CATEGORIES = [
 
 def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd.DataFrame:
     """
-    Keyword-based auto-labeling for rows that have no master_category.
+    Keyword-based auto-labeling driven by rules.csv
+    (columns: keyword, master_category, sub_category — both labels optional,
+    but a rule needs at least one; legacy files with a single 'category'
+    column are read as master_category).
 
-    rules.csv columns: keyword, master_category, sub_category (optional).
-    Legacy files with a single 'category' column are read as master_category.
-
-    - Only rows with a blank master_category are touched — a hand-assigned
-      label always wins.
-    - First matching rule wins for a given row.
+    Master labels:
+    - Only rows with a blank master_category are labeled — a hand-assigned
+      label always wins, and the first matching rule wins for a given row.
     - Rules whose master_category isn't one of PREDEFINED_CATEGORIES are
       skipped (a typo would otherwise create rows that every total ignores).
-    - Labels are applied in-memory on every load and never written to the
-      master file, so editing rules.csv retroactively re-labels all history.
+
+    Sub-categories:
+    - A rule's sub_category fills any matching row whose own sub_category is
+      blank, provided the rule's master_category (when it has one) agrees
+      with the row's label — so a rule never puts its sub on a row the user
+      labeled as something else. Sub-only rules (blank master) apply to any
+      matching row; they exist for descriptions like "venmo payment" that are
+      too ambiguous to master-label but still deserve a display category.
+
+    Everything is applied in-memory on every load and never written to the
+    master file, so editing rules.csv retroactively re-labels all history.
     """
     if not rules_path or not Path(rules_path).exists():
         return df
@@ -44,15 +53,18 @@ def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd
         keyword = str(rule["keyword"]).strip().lower()
         mc      = str(rule["master_category"]).strip()
         sc      = str(rule["sub_category"]).strip()
-        if not keyword or mc not in PREDEFINED_CATEGORIES:
+        if not keyword or (mc and mc not in PREDEFINED_CATEGORIES) or (not mc and not sc):
             continue
-        hits = unlabeled & desc.str.contains(keyword, regex=False, na=False)
-        if not hits.any():
-            continue
-        df.loc[hits, "master_category"] = mc
+        hits = desc.str.contains(keyword, regex=False, na=False)
+        if mc:
+            take = unlabeled & hits
+            df.loc[take, "master_category"] = mc
+            unlabeled = unlabeled & ~take
         if sc:
-            df.loc[hits & (df["sub_category"] == ""), "sub_category"] = sc
-        unlabeled = unlabeled & ~hits
+            fill = hits & (df["sub_category"] == "")
+            if mc:
+                fill = fill & (df["master_category"] == mc)
+            df.loc[fill, "sub_category"] = sc
     return df
 
 

@@ -18,10 +18,10 @@ These are the three valid values for `master_category`. `available_categories(df
 
 Keyword-based **auto-labeling**: rules assign `master_category` (and optionally `sub_category`) to rows that arrive from the ingest with no label — so new statements count in the totals without waiting for the Excel round-trip.
 
-- Loads `rules.csv` (columns: `keyword`, `master_category`, `sub_category` — the last is optional; legacy files with a single `category` column are read as `master_category`)
-- A rule matches rows whose description contains the keyword (case-insensitive, substring match, not regex) **and** whose `master_category` is blank — a hand-assigned label always wins
-- First matching rule wins for a given row; a rule's `sub_category` only fills rows whose own `sub_category` is blank
-- Rules whose `master_category` isn't one of `Expense` / `Income` / `Transfer` are skipped (a typo would otherwise create rows that every total ignores)
+- Loads `rules.csv` (columns: `keyword`, `master_category`, `sub_category` — both labels optional but a rule needs at least one; legacy files with a single `category` column are read as `master_category`)
+- Keyword matching is a case-insensitive raw substring match (not regex) against the description — note that bank descriptions can be column-padded (`venmo            payment`), so a multi-word keyword may not match where a single word does
+- **Master labels** apply only to rows whose `master_category` is blank — a hand-assigned label always wins, and the first matching rule wins per row. Rules whose `master_category` isn't one of `Expense` / `Income` / `Transfer` are skipped (a typo would otherwise create rows that every total ignores)
+- **Sub-categories** fill any matching row whose own `sub_category` is blank, provided the rule's master (when it has one) agrees with the row's label — so a rule never puts its sub on a row the user labeled as something else. **Sub-only rules** (blank master) apply to any matching row; they exist for descriptions like `venmo` that are too ambiguous to master-label but still deserve a display category in the pie
 - Labels are applied **in-memory on every load and never written to the master file** — editing `rules.csv` retroactively re-labels all history, and deleting a rule un-labels those rows on the next load
 - If `rules_path` is None or the file does not exist, returns `df` unchanged
 

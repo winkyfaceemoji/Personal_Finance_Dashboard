@@ -17,12 +17,17 @@ internet payment,Transfer,
 moneyline,Transfer,
 payment to chase card,Transfer,
 misc pay,Transfer,
+zelle payment to,Expense,Zelle
+usataxpymt,Expense,Taxes
+nys dtf,Expense,Taxes
+atm withdrawal,Expense,Cash
+venmo,,Venmo
+fd sptsbk,,Gambling
 mta*nyct paygo,Expense,
 mta*metrocard machine,Expense,
 mta*mnr etix,Expense,
 blink moto,Expense,
 key food,Expense,
-atm withdrawal,Expense,
 h mart,Expense,
 wl *steam,Expense,
 trader joe,Expense,
