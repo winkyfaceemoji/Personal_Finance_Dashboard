@@ -59,7 +59,7 @@ The **CATEGORY** column in the table shows `sub_category` when set, and falls ba
 
 ## Handling transfers
 
-Rows tagged `Transfer` in `master_category` are excluded from all income and expense calculations — charts, stat cards, and MoM/YoY deltas. (So are unlabeled rows — see the note above — but Transfers are excluded deliberately and don't appear in the ignored count.) They still appear in this table so you can see them.
+Rows tagged `Transfer` in `master_category` are excluded from all income and expense calculations — charts, headline numbers, and MoM/YoY deltas. (So are unlabeled rows — see the note above — but Transfers are excluded deliberately and don't appear in the ignored count.) They still appear in this table so you can see them.
 
 **Recommended workflow:**
 1. Export CSV
