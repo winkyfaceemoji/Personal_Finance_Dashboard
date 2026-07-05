@@ -113,24 +113,24 @@ The ingest step reads every CSV in the configured `RAW/` folder, normalises each
 
 ## UI tour
 
-The dashboard is a single page: a graph card, a performance card, and an import/export card. The settings gear sits at the right end of the page header row and opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
+The dashboard is a single page of five cards. The header subtitle lists the data sources and when the data was last updated (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · updated Jul 05, 2026`); the settings gear at its right end opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
 
-### Graph and performance cards
+### The cards
 
-The graph card's header holds a chart dropdown (Net / Trends / Categories), four range chips (1M / YTD / 1Y / 3Y — calendar-anchored to today, YTD is the default), and a source dropdown. Those three controls are the entire filtering surface.
+Each graph carries only its own controls — there is no global filter.
 
-| Area | What it shows |
+| Card | What it shows |
 |------|---------------|
-| NET chart | Green/red per-period net bars (income minus expenses); monthly for YTD/1Y/3Y, daily for 1M |
-| TRENDS chart | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always shows all years regardless of the range chips |
-| CATEGORIES chart | Share-of-spend trend lines: each of the top 5 categories (+ "Other") as its % of monthly spending across the range, with percentage-point changes on hover — a rising line means a category is eating a growing share; 1M shows snapshot bars for the month instead; click a bar or line point to expand a transaction drilldown beneath it |
-| Performance card | Total expenses, total income, net, and savings rate for the range — each with a delta vs the prior equivalent window (e.g. YTD vs last year's YTD) |
+| PERFORMANCE | Total expenses, total income, net, and savings rate across **all years** — a fixed at-a-glance baseline, unaffected by any control |
+| CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); a dropdown switches the metric between Net (green/red by sign), Expenses, and Income |
+| TRENDS | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always all data, no range control |
+| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to expand a transaction drilldown beneath it |
 
 > **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the import/export card shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
 ### Import / export card
 
-A slim card at the bottom of the page. Use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A note on the right counts any rows with no valid label. To inspect individual transactions in the app, click a bar or line point on the Categories chart to open its drilldown.
+A slim card at the bottom of the page. Use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A note on the right counts any rows with no valid label. To inspect individual transactions in the app, click a slice on the Categories pie to open its drilldown.
 
 ### Theme
 
