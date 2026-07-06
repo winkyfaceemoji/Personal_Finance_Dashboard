@@ -35,11 +35,11 @@ Bank CSVs (RAW/)
   │  rules.csv              ← keyword auto-categorization rules
   │
   └─ Single-page dashboard
-       ├─ Performance card  (all-years expenses / income / net / savings rate)
+       ├─ Summary card  (YTD income / expenses / net / savings rate, each vs last year)
        ├─ Cash Flow card  (monthly bars; YTD/1Y/3Y chips; net/expenses/income dropdown)
        ├─ Trends card  (same-month year-over-year lines, always all data)
-       ├─ Categories card  (spend pie per year + click drilldown)
-       └─ Import / export card  (CSV labeling round-trip + unlabeled-rows note)
+       ├─ Categories card  (spend pie per year + click-to-merchants drilldown)
+       └─ Settings gear  (import/export CSV, reload, change data folder, theme)
 ```
 
 ---
@@ -51,6 +51,6 @@ Bank CSVs (RAW/)
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-labeling rules, aggregation helpers |
-| [overview-charts.md](overview-charts.md) | Performance card, cash flow card, year-over-year trends, data-updated note |
-| [category-breakdown.md](category-breakdown.md) | Category pie per year, click-to-drilldown |
-| [import-export.md](import-export.md) | Import/export card: CSV labeling workflow, category system, transfers |
+| [overview-charts.md](overview-charts.md) | Summary (YTD) cards, cash flow card, year-over-year trends, header note |
+| [category-breakdown.md](category-breakdown.md) | Category pie per year, click-to-merchants drilldown |
+| [import-export.md](import-export.md) | Import/export in the settings menu: CSV labeling workflow, category system, transfers |

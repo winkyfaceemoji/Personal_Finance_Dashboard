@@ -1,16 +1,16 @@
 # Import / export & labeling
 
-The app is a single page — there is no transactions tab or table. The import/export card at the bottom of the page is where labeling happens, via a CSV round-trip through Excel. To inspect individual transactions in the app, use the Categories chart's click drilldown.
+The app is a single page — there is no transactions tab or table. Labeling happens via a CSV round-trip through Excel, driven by **IMPORT CSV** / **EXPORT CSV** in the settings menu (gear icon). To inspect individual transactions in the app, use the Categories chart's click drilldown.
 
 ---
 
-## Import / export card
+## Import / export (settings menu)
 
-A slim card below the performance card: **IMPORT CSV**, **EXPORT CSV**, an import status message, and the unlabeled-rows note on the right.
+**IMPORT CSV** and **EXPORT CSV** live in the settings menu (gear icon), under the **DATA** section alongside **RELOAD DATA**. An import status message appears at the bottom of the menu after an upload.
 
 ### Unlabeled-rows note (`unlabeled-note`)
 
-All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. The note shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app — e.g. `⚠ 40 of 2100 transactions have no valid label…`. Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything is labeled, and refreshes after imports/reloads.
+All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. A red note on its own line in the page header shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app — e.g. `⚠ 40 of 2100 transactions have no valid label…`. Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything is labeled, and refreshes after imports/reloads.
 
 ---
 
@@ -29,7 +29,7 @@ This is the recommended workflow for bulk category assignment:
    - Writes `master_category` and `sub_category` to every matched row in the master CSV
    - Skips rows where both fields are blank in the import file
    - Reloads `df` so all charts reflect the new categories immediately
-   - Increments `refresh-trigger` to update the uncategorized badge and the unlabeled-rows note
+   - Increments `refresh-trigger` to update the unlabeled-rows note
 
 The import file must contain at minimum: `description`, `amount`, `source`, `master_category`. Extra columns are ignored.
 

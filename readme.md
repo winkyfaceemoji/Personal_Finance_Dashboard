@@ -113,7 +113,7 @@ The ingest step reads every CSV in the configured `RAW/` folder, normalises each
 
 ## UI tour
 
-The dashboard is a single page of five cards. The header subtitle lists the data sources and when the data was last updated (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · updated Jul 05, 2026`); the settings gear at its right end opens a Settings menu with the uncategorized-transactions count, **RELOAD DATA** (re-runs the ingest pipeline without leaving the browser), **CHANGE DATA FOLDER** (reopens the setup overlay), and the light/dark theme toggle.
+The dashboard is a single page of four cards. The header subtitle lists the data sources and the latest transaction date (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · latest transaction Jun 27, 2026`), with a red note beneath it counting any unlabeled rows. The settings gear at the header's top-right corner opens a Settings menu grouped into **DATA** (**IMPORT CSV** / **EXPORT CSV** for the labeling round-trip, and **RELOAD DATA** to re-run the ingest pipeline without leaving the browser), **SOURCE** (**CHANGE DATA FOLDER**, reopens the setup overlay), and **THEME** (light/dark toggle, active theme highlighted).
 
 ### The cards
 
@@ -121,16 +121,16 @@ Each graph carries only its own controls — there is no global filter.
 
 | Card | What it shows |
 |------|---------------|
-| SUMMARY | Total expenses, total income, net, and savings rate across **all years** — a fixed at-a-glance baseline, unaffected by any control; a ▾ YEARLY BREAKDOWN toggle reveals year-by-year rows in the same aligned table (current year marked · YTD) |
+| SUMMARY | Four year-to-date stat cards — income, expenses, net, savings rate — each with a delta vs the same period last year (green/red by good-or-bad for that metric, savings rate in percentage points) |
 | CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); a dropdown switches the metric between Net (green/red by sign), Expenses, and Income |
 | TRENDS | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always all data, no range control |
-| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to expand a transaction drilldown beneath it |
+| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to expand a top-merchants breakdown beneath it |
 
-> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the import/export card shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
+> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; a note in the header shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
-### Import / export card
+### Import / export
 
-A slim card at the bottom of the page. Use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A note on the right counts any rows with no valid label. To inspect individual transactions in the app, click a slice on the Categories pie to open its drilldown.
+Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A red note in the header counts any rows with no valid label. To inspect individual transactions in the app, click a slice on the Categories pie to open its drilldown.
 
 ### Theme
 
@@ -150,13 +150,13 @@ Each transaction has three category fields:
 
 The dashboard displays a single **CATEGORY** column: `sub_category` if set, otherwise `original_category`.
 
-Rows tagged `Transfer` are excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning. Unlabeled rows are also excluded (they haven't been classified yet); a note on the import/export card counts how many are being ignored.
+Rows tagged `Transfer` are excluded from all income and expense totals — they represent money moving between accounts, not actual spending or earning. Unlabeled rows are also excluded (they haven't been classified yet); a note in the header counts how many are being ignored.
 
 ---
 
 ## Bulk category workflow
 
-1. Click **EXPORT CSV** on the import/export card
+1. Click **EXPORT CSV** in the settings menu
 2. Open in Excel — fill `master_category` (`Expense`, `Income`, or `Transfer`) and optionally `sub_category` for each row
 3. Save and click **IMPORT CSV** — the app matches rows by description + amount + source + date and writes the values back to the master file
 
@@ -175,7 +175,7 @@ fidelity,Transfer,
 
 On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the spend pie. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
 
-Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note on the import/export card tells you how many rows your rules don't yet cover.
+Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
 
 ---
 

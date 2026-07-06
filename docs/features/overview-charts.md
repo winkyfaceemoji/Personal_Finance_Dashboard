@@ -1,31 +1,30 @@
 # Overview charts
 
-The dashboard is a single page of five cards, top to bottom:
+The dashboard is a single page of four cards, top to bottom:
 
-1. **Summary card** — all-years totals with an expandable yearly breakdown, independent of every filter
+1. **Summary card** — four YTD stat cards (income, expenses, net, savings rate), each with a same-period-last-year delta
 2. **Cash Flow card** — monthly bars with YTD/1Y/3Y range chips and a Net/Expenses/Income dropdown
 3. **Trends card** — same-month year-over-year lines (always all data)
 4. **Categories card** — spend pie per year, with click drilldown (see [category-breakdown.md](category-breakdown.md))
-5. **Import/export card** (see [import-export.md](import-export.md))
 
-Cards 1–4 are produced by the single `update_overview` callback. The page header holds the title, a subtitle listing the sources and when the data was last updated (`3 sources: Chase Credit, Chase Debit, Discover Credit · updated Jul 05, 2026` — the master file's mtime, refreshed after imports/reloads via the `data-updated` callback), and the settings gear. There is no source filter and no chart selector — each graph carries only its own controls.
+Cards 1–4 are produced by the single `update_overview` callback. The page header holds the title, a subtitle listing the sources and the latest transaction date (`3 sources: Chase Credit, Chase Debit, Discover Credit · latest transaction Jun 27, 2026` — the newest `date` in the data, refreshed after imports/reloads via the `data-updated` callback), a red note on its own line counting unlabeled rows, and the settings gear (which holds import/export, reload, change-folder, and theme — see [import-export.md](import-export.md)). There is no source filter and no chart selector — each graph carries only its own controls.
 
 ---
 
-## Summary card (`performance-card` / `performance-title`)
+## Summary card (`performance-card`)
 
-Titled `SUMMARY`, first thing on the page. One table over the entire dataset — deliberately unaffected by any control, so it always answers "where do I stand overall". The column headers (EXPENSES / INCOME / NET / SAVINGS RATE) double as the metric labels; the always-visible `ALL YEARS` row shows the big totals:
+First thing on the page: four stat cards in a responsive grid (`repeat(auto-fit, minmax(190px, 1fr))`), one per metric. Every card is **year-to-date** — January 1 through the current month of this year — with a delta against the same months last year (apples-to-apples, so a partial current year isn't compared against a full prior year):
 
-| Column | Value |
-|--------|-------|
-| Expenses | Sum of `monthly_expenses(df)` |
-| Income | Sum of `monthly_income(df)` |
-| Net | Income − expenses; green when ≥ 0, red when negative |
-| Savings rate | `net / income` (— when there is no income) |
+| Card | Value | Higher is… |
+|------|-------|-----------|
+| YTD Income | Sum of `monthly_income` over Jan → current month | good |
+| YTD Expenses | Sum of `monthly_expenses` over Jan → current month | bad |
+| YTD Net | Income − expenses | good |
+| YTD Savings rate | `net / income` (— when there is no income) | good |
 
-Negative values render as `-$1,372.65` (sign before the dollar sign). No deltas — all-years has no prior window to compare against.
+The big number is neutral (white/black per theme). Beneath it sits the delta: a coloured, bold change figure followed by a muted `vs last year`.
 
-**Yearly breakdown (expandable):** a `▾ YEARLY BREAKDOWN` button at the card's right edge reveals one row per year *in the same table* (`performance-yearly` is a second `Tbody`, toggled by `toggle_perf_breakdown`, collapsed by default) — so the yearly figures line up column-for-column under the all-years totals. The current year's row is bold and labeled `2026 · YTD` so its lower totals aren't misread as a spending drop. The yearly rows sum exactly to the all-years figures above them.
+**Delta direction & colour.** Income/expenses/net compare as a percentage change; savings rate compares in **percentage points** (`▲26pt`), since it is already a percentage. The arrow and colour signal *good vs bad for that metric*, not merely up/down — an increase in income is green, an increase in expenses is red, and so on (`higher_is_good` per card). The percentage is `(cur − prior) / |prior|`, dividing by the *absolute* prior so the arrow stays correct even when last year's figure was negative (e.g. a negative net). A delta is blank when there is no prior-year figure to compare against.
 
 ---
 
@@ -55,7 +54,7 @@ A cumulative "pace" variant of this chart was tried and reverted — the monthly
 
 ---
 
-All numbers everywhere are **label-based**: expenses are rows with `master_category == "Expense"`, income is rows with `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total — the import/export card's note shows how many non-Transfer rows are being ignored.
+All numbers everywhere are **label-based**: expenses are rows with `master_category == "Expense"`, income is rows with `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total — a red note in the page header shows how many non-Transfer rows are being ignored.
 
 ---
 

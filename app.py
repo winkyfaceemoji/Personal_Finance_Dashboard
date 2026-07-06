@@ -1,10 +1,11 @@
 import base64
+import re
 
 import pandas as pd
 from pathlib import Path
 
 import dash
-from dash import dcc, html, dash_table, Input, Output, State
+from dash import dcc, html, Input, Output, State
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
@@ -12,8 +13,6 @@ from Modules.transforms import (
     load_transactions,
     monthly_expenses,
     monthly_income,
-    yearly_expenses,
-    yearly_income,
     expenses_by_category,
     get_uncategorized,
     available_categories,
@@ -81,11 +80,11 @@ COLORS = {
 # Plotly figures need real hex values — two sets, one per theme.
 _CHART = {
     "dark": {
-        "text":   "#ffffff", "border": "#252830",
+        "text":   "#ffffff", "border": "#252830", "surface": "#111318", "subtext": "#8a8fa8",
         "accent": "#6c8aff", "accent2": "#ff6c8a", "accent3": "#6cffd4",
     },
     "light": {
-        "text":   "#0a0a0f", "border": "#dcdee8",
+        "text":   "#0a0a0f", "border": "#dcdee8", "surface": "#f0f1f5", "subtext": "#5c5f72",
         "accent": "#4a68e8", "accent2": "#d63157", "accent3": "#0a9e72",
     },
 }
@@ -107,6 +106,10 @@ PIE_COLORS = [
     "#c46cff", "#ff9f6c", "#6cd4ff", "#ff6ccc",
     "#a8ff6c", "#6c6cff", "#ff6c6c", "#6cffb4",
 ]
+
+# Categories beyond this rank collapse into the pie's grey "Other" slice;
+# the drilldown reuses it to reconstruct what that slice aggregates.
+CAT_PIE_TOP_N = 9
 
 
 # ── Helper: card wrapper ───────────────────────────────────────────────────────
@@ -333,7 +336,24 @@ app.index_string = ('''
         }
         .btn-secondary:hover { opacity: 0.85; }
         .btn-secondary:disabled { opacity: 0.35; cursor: default; }
-        #settings-menu-wrapper { position: relative; z-index: 9999; }
+        /* Settings panel: section labels, muted button, active-theme highlight,
+           status line. Declared after the .app-card * rules so the !important
+           colors here win the source-order tie. */
+        .dark-theme .settings-label { color: #8a8fa8 !important; }
+        .light-theme .settings-label { color: #5c5f72 !important; }
+        .dark-theme .btn-muted { color: #8a8fa8 !important; border-color: #8a8fa8; }
+        .light-theme .btn-muted { color: #5c5f72 !important; border-color: #5c5f72; }
+        .dark-theme .theme-btn-active { color: #6c8aff !important; background: rgba(108,138,255,0.15); border-color: #6c8aff; }
+        .light-theme .theme-btn-active { color: #4a68e8 !important; background: rgba(74,104,232,0.1); border-color: #4a68e8; }
+        .dark-theme .theme-btn-inactive { color: #8a8fa8 !important; border-color: #252830; }
+        .light-theme .theme-btn-inactive { color: #5c5f72 !important; border-color: #dcdee8; }
+        .dark-theme .settings-status { color: #6cffd4 !important; }
+        .light-theme .settings-status { color: #0a9e72 !important; }
+        .dark-theme .warn-text { color: #ff6c8a !important; }
+        .light-theme .warn-text { color: #d63157 !important; }
+        .dark-theme .muted-text { color: #8a8fa8 !important; }
+        .light-theme .muted-text { color: #5c5f72 !important; }
+        #settings-menu-wrapper { position: absolute; top: 0; right: 0; z-index: 9999; }
         #settings-menu-btn {
             width: 44px; height: 44px; border-radius: 50%;
             cursor: pointer; z-index: 9999;
@@ -454,13 +474,10 @@ app.layout = html.Div(
         # ────────────────────────────────────────────────────────────────────
 
 
-        # Header: title left; tab pills + settings gear docked right
-        html.Div(style={
-            "display": "flex", "justifyContent": "space-between",
-            "alignItems": "center", "flexWrap": "wrap", "gap": "16px",
-            "marginBottom": "24px",
-        }, children=[
-            html.Div([
+        # Header: title left; settings gear pinned absolutely to the top-right
+        html.Div(style={"position": "relative", "marginBottom": "24px"}, children=[
+            # Right padding reserves the gear's corner on narrow windows
+            html.Div(style={"paddingRight": "56px"}, children=[
                 html.H1("FINANCE", style={
                     "fontFamily": "'Syne', sans-serif", "fontSize": "48px",
                     "fontWeight": "800", "letterSpacing": "-2px",
@@ -471,64 +488,71 @@ app.layout = html.Div(
                     "fontWeight": "800", "letterSpacing": "-2px", "color": COLORS["accent"],
                 }),
                 html.P(html.Span(id="data-updated"),
-                       style={"color": COLORS["subtext"], "marginTop": "8px", "fontSize": "13px"}),
+                       style={"color": COLORS["subtext"], "margin": "8px 0 0", "fontSize": "13px"}),
+                # Unlabeled rows are ignored by every Summary total — surface
+                # the count on its own line, in red
+                html.P(html.Span(id="unlabeled-note", className="warn-text"),
+                       style={"margin": "4px 0 0", "fontSize": "13px"}),
             ]),
-            html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px"}, children=[
-                # Settings menu — gear button expands/collapses the panel
-                html.Div(id="settings-menu-wrapper", children=[
+            # Settings menu — gear button expands/collapses the panel
+            html.Div(id="settings-menu-wrapper", children=[
                     html.Button(html.Span(className="gear-icon"), id="settings-menu-btn", n_clicks=0),
                     html.Div(id="settings-menu-panel", className="app-card", style={
-                        "display": "none", "flexDirection": "column", "gap": "10px", "padding": "16px",
+                        "display": "none", "flexDirection": "column", "gap": "8px", "padding": "16px",
                     }, children=[
-                        html.Div(id="uncategorized-count", style={
-                            "fontSize": "11px", "color": COLORS["subtext"], "letterSpacing": "1px",
-                        }),
-                        html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
-                                    className="btn-secondary",
-                                    style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
-                        html.Div(style={"display": "flex", "alignItems": "center", "gap": "8px"}, children=[
-                            html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
+                        html.Div("DATA", className="settings-label",
+                                 style={"fontSize": "9px", "letterSpacing": "2px", "fontWeight": "600"}),
+                        html.Div(style={"display": "flex", "gap": "8px"}, children=[
+                            dcc.Upload(
+                                id="import-csv-upload",
+                                children=html.Button("IMPORT CSV", className="btn-secondary",
+                                                     style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px", "width": "100%"}),
+                                accept=".csv",
+                                multiple=False,
+                                style={"flex": "1"},
+                            ),
+                            html.Button("EXPORT CSV", id="export-csv-btn", n_clicks=0,
                                         className="btn-secondary",
                                         style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px", "flex": "1"}),
                         ]),
-                        html.Span(id="reload-status", style={"fontSize": "11px", "color": COLORS["accent3"]}),
+                        dcc.Download(id="export-csv-download"),
+                        html.Button("RELOAD DATA", id="reload-data-btn", n_clicks=0,
+                                    className="btn-secondary",
+                                    style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
                         html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
+                        html.Div("SOURCE", className="settings-label",
+                                 style={"fontSize": "9px", "letterSpacing": "2px", "fontWeight": "600"}),
+                        html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
+                                    className="btn-secondary btn-muted",
+                                    style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
+                        html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
+                        html.Div("THEME", className="settings-label",
+                                 style={"fontSize": "9px", "letterSpacing": "2px", "fontWeight": "600"}),
                         html.Div(style={"display": "flex", "gap": "8px"}, children=[
                             html.Button("LIGHT", id="theme-light-btn", n_clicks=0,
-                                        className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                                        className="btn-secondary theme-btn-inactive",
+                                        style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
                             html.Button("DARK", id="theme-dark-btn", n_clicks=0,
-                                        className="btn-secondary", style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
+                                        className="btn-secondary theme-btn-active",
+                                        style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
                         ]),
+                        # Single status slot at the bottom — reload + import messages land here
+                        html.Span(id="reload-status", className="settings-status", style={"fontSize": "11px"}),
+                        html.Span(id="import-status", className="settings-status", style={"fontSize": "11px"}),
                     ]),
-                ]),
             ]),
         ]),
 
         # ── SUMMARY content ───────────────────────────────────────────────────
         html.Div(id="summary-content", style={"paddingTop": "8px"}, children=[
 
-                    # Performance — all-years totals, independent of any filter
-                    card([
-                        html.Div(style={
-                            "display": "flex", "justifyContent": "space-between",
-                            "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
-                            "marginBottom": "16px",
-                        }, children=[
-                            html.Div(id="performance-title", className="app-label", style={
-                                "fontSize": "11px", "letterSpacing": "2px",
-                            }),
-                            html.Button("▾ YEARLY BREAKDOWN", id="perf-expand-btn", n_clicks=0,
-                                        className="btn-secondary",
-                                        style={"fontSize": "10px", "padding": "5px 12px", "letterSpacing": "1px"}),
-                        ]),
-                        # One table: header row + ALL YEARS row always visible,
-                        # year rows revealed by the toggle — shared columns keep
-                        # the totals and the breakdown aligned
-                        html.Table([
-                            html.Tbody(id="performance-card"),
-                            html.Tbody(id="performance-yearly", style={"display": "none"}),
-                        ], style={"width": "100%", "borderCollapse": "collapse", "tableLayout": "fixed"}),
-                    ]),
+                    # Summary — one YTD stat card per metric, each vs the same
+                    # period last year. Cards wrap on narrow widths.
+                    html.Div(id="performance-card", style={
+                        "display": "grid",
+                        "gridTemplateColumns": "repeat(auto-fit, minmax(190px, 1fr))",
+                        "gap": "16px", "marginBottom": "24px",
+                    }),
 
                     # Cash flow — monthly bars; range chips + metric dropdown
                     card([
@@ -611,7 +635,7 @@ app.layout = html.Div(
                                 html.Div(id="category-title", className="app-label", style={
                                     "fontSize": "11px", "letterSpacing": "2px",
                                 }),
-                                html.Div("click a slice to see its transactions", style={
+                                html.Div("click a slice to see its top merchants", style={
                                     "fontSize": "10px", "color": COLORS["subtext"], "marginTop": "3px",
                                 }),
                             ]),
@@ -632,26 +656,6 @@ app.layout = html.Div(
                         dcc.Graph(id="category-bar-chart", config={"displayModeBar": False}),
                         html.Div(id="category-drilldown"),
                     ]),
-
-                    # Import / export + labeling status
-                    card([
-                        html.Div(style={"display": "flex", "gap": "12px", "alignItems": "center", "flexWrap": "wrap"}, children=[
-                            html.Span("IMPORT / EXPORT", style={"fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"], "marginRight": "4px"}),
-                            dcc.Upload(
-                                id="import-csv-upload",
-                                children=html.Button("IMPORT CSV", className="btn-secondary", style={"fontSize": "12px", "padding": "8px 16px"}),
-                                accept=".csv",
-                                multiple=False,
-                            ),
-                            html.Button("EXPORT CSV", id="export-csv-btn", n_clicks=0, className="btn-secondary", style={"fontSize": "12px", "padding": "8px 16px"}),
-                            dcc.Download(id="export-csv-download"),
-                            html.Span(id="import-status", style={"fontSize": "12px", "color": COLORS["accent3"], "marginLeft": "4px"}),
-                            # Unlabeled rows are ignored by every Summary total — surface the count
-                            html.Span(id="unlabeled-note", style={
-                                "fontSize": "12px", "color": COLORS["subtext"], "marginLeft": "auto",
-                            }),
-                        ]),
-                    ], style={"padding": "16px 24px"}),
 
         ]),
     ]
@@ -679,6 +683,8 @@ def _range_window(rng: str):
 @app.callback(
     Output("theme-store", "data"),
     Output("app-root",    "className"),
+    Output("theme-light-btn", "className"),
+    Output("theme-dark-btn",  "className"),
     Input("theme-light-btn", "n_clicks"),
     Input("theme-dark-btn",  "n_clicks"),
     prevent_initial_call=True,
@@ -686,7 +692,8 @@ def _range_window(rng: str):
 def set_theme(_, __):
     from dash import ctx
     new = "light" if ctx.triggered_id == "theme-light-btn" else "dark"
-    return new, f"{new}-theme"
+    cls = lambda active: f"btn-secondary theme-btn-{'active' if active else 'inactive'}"
+    return new, f"{new}-theme", cls(new == "light"), cls(new == "dark")
 
 
 # ── Settings menu callback ────────────────────────────────────────────────────
@@ -713,9 +720,7 @@ def toggle_settings_menu(_, is_open, style):
     Output("category-title",        "children"),
     Output("net-position-chart",    "figure"),
     Output("net-position-header",   "children"),
-    Output("performance-title",     "children"),
     Output("performance-card",      "children"),
-    Output("performance-yearly",    "children"),
     Input("summary-range",          "value"),
     Input("cashflow-metric",        "value"),
     Input("toggle-income-expenses", "value"),
@@ -811,12 +816,11 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
     pos_header = f"CASH FLOW · {period_label}"
 
     # ── Categories: pie of spend for the selected year ───────────────────────
-    TOP_N = 9
     ydf = df[df["year"] == int(cat_year)] if cat_year else df.iloc[0:0]
     cat = expenses_by_category(ydf)
-    top = cat.head(TOP_N).copy()
-    if len(cat) > TOP_N:
-        rest = cat.iloc[TOP_N:]
+    top = cat.head(CAT_PIE_TOP_N).copy()
+    if len(cat) > CAT_PIE_TOP_N:
+        rest = cat.iloc[CAT_PIE_TOP_N:]
         top = pd.concat([top, pd.DataFrame([{
             "category": f"Other · {len(rest)} categories",
             "total_expenses": rest["total_expenses"].sum(),
@@ -841,75 +845,95 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
     fig_cat.update_layout(**tmpl, height=380)
     cat_title = f"SPEND BY CATEGORY · {cat_year}" if cat_year else "SPEND BY CATEGORY"
 
-    # ── Summary card: all-years totals + expandable yearly breakdown ────────
-    # Rendered as one table so the headline row and the year rows share the
-    # same five columns instead of reading as two separate blocks.
+    # ── Summary card: YTD totals with a same-period-last-year delta ─────────
+    # Compares Jan→current month of this year against the same months last
+    # year (apples-to-apples), with the change shown beneath each figure.
     def _dollar(v):
         return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
 
-    total_exp = monthly_expenses(df)["total_expenses"].sum()
-    total_inc = monthly_income(df)["total_income"].sum()
-    net_val   = total_inc - total_exp
-    net_color = c["accent3"] if net_val >= 0 else c["accent2"]
-    rate      = (net_val / total_inc * 100) if total_inc > 0 else None
+    now_p     = pd.Timestamp.today()
+    cur_year  = now_p.year
+    ytd_start = f"{cur_year}-01"
+    ytd_end   = f"{cur_year}-{now_p.month:02d}"
+    ly_start  = f"{cur_year - 1}-01"
+    ly_end    = f"{cur_year - 1}-{now_p.month:02d}"
 
-    th  = {"fontSize": "10px", "letterSpacing": "1px", "color": COLORS["subtext"],
-           "textAlign": "right", "padding": "6px 0", "fontWeight": "600"}
-    big = {"fontSize": "22px", "fontWeight": "600", "textAlign": "right",
-           "fontFamily": "'Syne', sans-serif", "padding": "8px 0 10px"}
+    mexp = monthly_expenses(df)
+    minc = monthly_income(df)
 
-    perf_title = "SUMMARY"
-    perf = [
-        html.Tr([
-            html.Th("",             style={**th, "textAlign": "left"}),
-            html.Th("EXPENSES",     style=th),
-            html.Th("INCOME",       style=th),
-            html.Th("NET",          style=th),
-            html.Th("SAVINGS RATE", style=th),
-        ]),
-        html.Tr([
-            html.Td("ALL YEARS", style={
-                "fontSize": "11px", "letterSpacing": "2px", "fontWeight": "600",
-                "color": COLORS["text"], "textAlign": "left", "padding": "8px 0 10px",
+    def _window_sum(series, col, s, e):
+        w = series[(series["month_str"] >= s) & (series["month_str"] <= e)]
+        return w[col].sum()
+
+    ytd_exp = _window_sum(mexp, "total_expenses", ytd_start, ytd_end)
+    ytd_inc = _window_sum(minc, "total_income",   ytd_start, ytd_end)
+    ly_exp  = _window_sum(mexp, "total_expenses", ly_start,  ly_end)
+    ly_inc  = _window_sum(minc, "total_income",   ly_start,  ly_end)
+
+    ytd_net   = ytd_inc - ytd_exp
+    ly_net    = ly_inc - ly_exp
+    rate      = (ytd_net / ytd_inc * 100) if ytd_inc > 0 else None
+    ly_rate   = (ly_net / ly_inc * 100) if ly_inc > 0 else None
+
+    def _delta(cur, prior):
+        if not prior:
+            return ""
+        # Divide by |prior| so the arrow tracks the real direction of change:
+        # a negative prior (e.g. last year's net was negative) must not flip
+        # the sign of an improvement.
+        p = (cur - prior) / abs(prior) * 100
+        return f"{'▲' if p >= 0 else '▼'}{abs(p):.0f}%"
+
+    def _delta_pt(cur, prior):
+        # Savings rate is already a percentage — compare in points, not
+        # relative % change, so the delta reads unambiguously.
+        if cur is None or prior is None:
+            return ""
+        d = cur - prior
+        return f"{'▲' if d >= 0 else '▼'}{abs(d):.0f}pt"
+
+    def _stat_card(title, value, delta, higher_is_good):
+        # Delta colour signals good/bad for THIS metric: an increase is green
+        # when higher is better (income, net, savings) and red when higher is
+        # worse (expenses); a decrease flips it.
+        delta_color = c["subtext"]
+        if delta.startswith("▲"):
+            delta_color = c["accent3"] if higher_is_good else c["accent2"]
+        elif delta.startswith("▼"):
+            delta_color = c["accent2"] if higher_is_good else c["accent3"]
+        return html.Div(style={
+            "background": c["surface"], "border": f"1px solid {c['border']}",
+            "borderRadius": "12px", "padding": "18px 20px",
+            "display": "flex", "flexDirection": "column", "gap": "8px",
+        }, children=[
+            html.Div(title, style={
+                "fontSize": "10px", "letterSpacing": "1.5px", "fontWeight": "600",
+                "color": c["subtext"],
             }),
-            html.Td(_dollar(total_exp), style={**big, "color": c["accent2"]}),
-            html.Td(_dollar(total_inc), style={**big, "color": c["accent3"]}),
-            html.Td(_dollar(net_val),   style={**big, "color": net_color}),
-            html.Td(f"{rate:.0f}%" if rate is not None else "—", style={**big, "color": c["accent"]}),
-        ]),
+            html.Div(value, style={
+                "fontSize": "26px", "fontWeight": "600", "color": c["text"],
+                "fontFamily": "'Syne', sans-serif", "lineHeight": "1.1",
+            }),
+            # Coloured delta + a neutral "vs last year" so the number pops;
+            # the non-breaking space keeps card heights aligned when it's blank.
+            html.Div(
+                [html.Span(delta, style={"color": delta_color, "fontWeight": "600"}),
+                 html.Span(" vs last year", style={"color": c["subtext"]})]
+                if delta else " ",
+                style={"fontSize": "11px", "fontFamily": "IBM Plex Mono, monospace"},
+            ),
+        ])
+
+    perf = [
+        _stat_card("YTD INCOME",       _dollar(ytd_inc), _delta(ytd_inc, ly_inc), True),
+        _stat_card("YTD EXPENSES",     _dollar(ytd_exp), _delta(ytd_exp, ly_exp), False),
+        _stat_card("YTD NET",          _dollar(ytd_net), _delta(ytd_net, ly_net), True),
+        _stat_card("YTD SAVINGS RATE",
+                   f"{rate:.0f}%" if rate is not None else "—",
+                   _delta_pt(rate, ly_rate), True),
     ]
 
-    # Yearly rows (revealed by the ▾ toggle), same columns as above
-    yb = (
-        yearly_expenses(df).rename(columns={"total_expenses": "exp"})
-        .merge(yearly_income(df).rename(columns={"total_income": "inc"}),
-               on="year", how="outer")
-        .fillna(0).sort_values("year")
-    )
-    yb["net"] = yb["inc"] - yb["exp"]
-    this_year = pd.Timestamp.today().year
-
-    td = {"fontSize": "12px", "textAlign": "right", "padding": "7px 0",
-          "borderTop": f"1px solid {COLORS['border']}",
-          "fontFamily": "IBM Plex Mono, monospace"}
-    perf_yearly = []
-    for r in yb.itertuples():
-        yr      = int(r.year)
-        partial = yr == this_year
-        bold    = {"fontWeight": "700"} if partial else {}
-        rate_y  = f"{r.net / r.inc * 100:.0f}%" if r.inc > 0 else "—"
-        perf_yearly.append(html.Tr([
-            html.Td(f"{yr} · YTD" if partial else str(yr),
-                    style={**td, "textAlign": "left", "color": COLORS["text"], **bold}),
-            html.Td(f"${r.exp:,.0f}", style={**td, "color": c["accent2"], **bold}),
-            html.Td(f"${r.inc:,.0f}", style={**td, "color": c["accent3"], **bold}),
-            html.Td(f"{'+' if r.net >= 0 else '-'}${abs(r.net):,.0f}",
-                    style={**td, "color": c["accent3"] if r.net >= 0 else c["accent2"], **bold}),
-            html.Td(rate_y, style={**td, "color": COLORS["subtext"], **bold}),
-        ]))
-
-    return (fig_main, chart_title, fig_cat, cat_title, fig_pos, pos_header,
-            perf_title, perf, perf_yearly)
+    return (fig_main, chart_title, fig_cat, cat_title, fig_pos, pos_header, perf)
 
 
 @app.callback(
@@ -923,62 +947,100 @@ def category_drilldown(click_data, cat_year, theme):
     if ctx.triggered_id != "category-bar-chart" or not click_data:
         return []
 
-    category = click_data["points"][0].get("label")
-    if not category or str(category).startswith("Other · "):  # aggregate slice, not a real category
+    label = click_data["points"][0].get("label")
+    if not label:
         return []
     c = _CHART[theme]
+    scope_lbl = f" · {cat_year}" if cat_year else ""
 
     filtered = df[df["year"] == int(cat_year)] if cat_year else df.iloc[0:0]
-    scope_lbl = str(cat_year) if cat_year else None
-    match_category = filtered["category_display"].where(filtered["category_display"] != "", "Uncategorized")
-    cat_txns = filtered[match_category == category].copy()
-    cat_txns = cat_txns[cat_txns["master_category"] == "Expense"]
-    cat_txns["amount"] = -cat_txns["amount"]
-    cat_txns = cat_txns.sort_values("date", ascending=False)
-    cat_txns["date"] = cat_txns["date"].astype(str)
-    display = cat_txns[["date", "description", "amount", "source"]].head(100)
-    total = cat_txns["amount"].sum()
+    expenses = filtered[filtered["master_category"] == "Expense"].copy()
+    if expenses.empty:
+        return []
+    expenses["cat"] = expenses["category_display"].where(
+        expenses["category_display"] != "", "Uncategorized")
+    expenses["amount"] = -expenses["amount"]
 
-    return html.Div(style={
-        "marginTop": "20px",
-        "borderTop": f"1px solid {COLORS['border']}",
-        "paddingTop": "20px",
-    }, children=[
-        html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "12px"}, children=[
-            html.Span(f"TRANSACTIONS — {category.upper()}" + (f" · {scope_lbl}" if scope_lbl else ""), style={
-                "fontSize": "11px", "letterSpacing": "2px", "color": COLORS["subtext"],
-            }),
-            html.Span(f"${total:,.2f} total · {len(cat_txns)} transactions", style={
-                "fontSize": "12px", "color": c["accent2"], "fontWeight": "600",
-            }),
-        ]),
-        dash_table.DataTable(
-            data=display.to_dict("records"),
-            columns=[
-                {"name": "DATE",        "id": "date"},
-                {"name": "DESCRIPTION", "id": "description"},
-                {"name": "AMOUNT",      "id": "amount",  "type": "numeric", "format": {"specifier": ",.2f"}},
-                {"name": "SOURCE",      "id": "source"},
-            ],
-            page_size=15,
-            sort_action="native",
-            style_table={"overflowX": "auto"},
-            style_header={
-                "backgroundColor": COLORS["bg"],
-                "color": COLORS["subtext"],
-                "border": f"1px solid {COLORS['border']}",
-                "fontWeight": "600", "letterSpacing": "1px", "fontSize": "11px",
-            },
-            style_cell={
-                "backgroundColor": COLORS["surface"],
-                "color": COLORS["text"],
-                "border": f"1px solid {COLORS['border']}",
-                "padding": "8px 12px", "fontSize": "12px",
-                "fontFamily": "IBM Plex Mono, monospace",
-                "maxWidth": "300px", "overflow": "hidden", "textOverflow": "ellipsis",
-            },
-        ),
-    ])
+    divider = {"height": "1px", "background": c["border"], "margin": "12px 0"}
+
+    def _prop_row(name, amt, cnt, total, muted=False):
+        frac = amt / total if total > 0 else 0
+        return html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px",
+                               "marginBottom": "8px"}, children=[
+            html.Span(name, className="muted-text" if muted else None,
+                      style={"flex": "0 0 150px", "fontSize": "12px", "overflow": "hidden",
+                             "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Div(style={"flex": "1", "height": "8px", "background": c["border"],
+                            "borderRadius": "4px"},
+                     children=html.Div(style={
+                         # clamp: a refund-heavy group can net negative, which
+                         # would otherwise emit an invalid negative CSS width
+                         "width": f"{max(frac, 0) * 100:.0f}%", "height": "8px", "borderRadius": "4px",
+                         "background": c["subtext"] if muted else c["accent"],
+                     })),
+            html.Span(f"${amt:,.2f} · {frac * 100:.0f}% · {int(cnt)} txn{'s' if cnt != 1 else ''}",
+                      className="muted-text",
+                      style={"flex": "0 0 170px", "fontSize": "11px", "textAlign": "right"}),
+        ])
+
+    def _panel(title, right, section_label, rows, footer_txns):
+        big = footer_txns.loc[footer_txns["amount"].idxmax()]
+        return html.Div(style={"marginTop": "20px",
+                               "borderTop": f"1px solid {c['border']}",
+                               "paddingTop": "20px"}, children=[
+            html.Div(style={"display": "flex", "justifyContent": "space-between",
+                            "alignItems": "center"}, children=[
+                html.Span(title, className="muted-text",
+                          style={"fontSize": "11px", "letterSpacing": "2px"}),
+                html.Span(right, style={"fontSize": "12px", "fontWeight": "600"}),
+            ]),
+            html.Div(style=divider),
+            html.Div(section_label, className="muted-text",
+                     style={"fontSize": "10px", "letterSpacing": "2px", "marginBottom": "10px"}),
+            *rows,
+            html.Div(style=divider),
+            html.Div([
+                "Largest: ",
+                html.Span(f"${big['amount']:,.2f}", className="warn-text", style={"fontWeight": "600"}),
+                f" · {big['description']} · {pd.to_datetime(big['date']).strftime('%b %d')}",
+            ], className="muted-text", style={"fontSize": "11px"}),
+        ])
+
+    # Merchant rollup: bank descriptions embed store numbers and ids, so strip
+    # digits/punctuation to group "STARBUCKS #1234" with "STARBUCKS #98"
+    def _merchant(desc):
+        m = re.sub(r"[\d#*]+", "", str(desc).upper())
+        m = re.sub(r"\s{2,}", " ", m).strip(" -.,/")
+        return m or "UNKNOWN"
+
+    def _top_merchants_panel(txns, title):
+        total = txns["amount"].sum()
+        count = len(txns)
+        avg   = total / count
+        g = (txns.assign(merchant=txns["description"].map(_merchant))
+             .groupby("merchant")["amount"].agg(["sum", "count"])
+             .sort_values("sum", ascending=False))
+        rest = g.iloc[5:]
+        rows = [_prop_row(name, r["sum"], r["count"], total) for name, r in g.head(5).iterrows()]
+        if not rest.empty:
+            rows.append(_prop_row(f"OTHER · {len(rest)} merchants",
+                                  rest["sum"].sum(), rest["count"].sum(), total, muted=True))
+        return _panel(title, f"${total:,.2f} · {count} txns · ${avg:,.2f} avg",
+                      "TOP MERCHANTS", rows, txns)
+
+    # ── "Other" slice: top merchants across the small categories it aggregates ─
+    if str(label).startswith("Other · "):
+        by_cat = expenses.groupby("cat")["amount"].sum().sort_values(ascending=False)
+        other_txns = expenses[expenses["cat"].isin(by_cat.iloc[CAT_PIE_TOP_N:].index)]
+        if other_txns.empty:
+            return []
+        return _top_merchants_panel(other_txns, f"OTHER CATEGORIES{scope_lbl}")
+
+    # ── Real category: its top merchants ─────────────────────────────────────
+    cat_txns = expenses[expenses["cat"] == label]
+    if cat_txns.empty:
+        return []
+    return _top_merchants_panel(cat_txns, f"{label.upper()}{scope_lbl}")
 
 
 @app.callback(
@@ -1097,28 +1159,6 @@ def reload_data(_, trigger):
 
 
 @app.callback(
-    Output("uncategorized-count", "children"),
-    Input("refresh-trigger", "data"),
-)
-def update_uncategorized_count(_):
-    n = int((df["master_category"] == "").sum())
-    if n == 0:
-        return ""
-    return f"⚠ {n:,} uncategorized"
-
-
-@app.callback(
-    Output("performance-yearly", "style"),
-    Output("perf-expand-btn",    "children"),
-    Input("perf-expand-btn",     "n_clicks"),
-)
-def toggle_perf_breakdown(n_clicks):
-    if n_clicks % 2:
-        return {"display": "table-row-group"}, "▴ HIDE YEARLY BREAKDOWN"
-    return {"display": "none"}, "▾ YEARLY BREAKDOWN"
-
-
-@app.callback(
     Output("category-year", "options"),
     Output("category-year", "value"),
     Input("refresh-trigger", "data"),
@@ -1140,9 +1180,9 @@ def update_year_options(_refresh, current):
 def update_data_note(_refresh):
     srcs  = sorted(df["source"].dropna().unique().tolist())
     parts = [f"{len(srcs)} sources: {', '.join(srcs)}"] if srcs else ["no data loaded"]
-    if MASTER_PATH and MASTER_PATH.exists():
-        mtime = pd.Timestamp(MASTER_PATH.stat().st_mtime, unit="s")
-        parts.append(f"updated {mtime.strftime('%b %d, %Y')}")
+    last_txn = df["date"].dropna().max()
+    if pd.notna(last_txn):
+        parts.append(f"latest transaction {last_txn.strftime('%b %d, %Y')}")
     return " · ".join(parts)
 
 
