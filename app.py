@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
@@ -196,12 +196,14 @@ app.index_string = ('''
             border-bottom: 2px solid #6c8aff !important;
         }
         .dark-theme .tab-container .tab:hover { color: #ffffff !important; }
-        .dark-theme #summary-range label, .dark-theme #category-year label {
+        .dark-theme #summary-range label, .dark-theme #category-year label,
+        .dark-theme #toggle-income-expenses label {
             color: #8a8fa8; background: #0a0a0f; border: 1px solid #252830;
             transition: all 0.15s;
         }
-        .dark-theme #summary-range input[type="radio"]:checked + label,
-        .dark-theme #category-year input[type="radio"]:checked + label {
+        .dark-theme #summary-range .dash-options-list-option.selected,
+        .dark-theme #category-year .dash-options-list-option.selected,
+        .dark-theme #toggle-income-expenses .dash-options-list-option.selected {
             color: #ffffff !important; border-color: #6c8aff !important;
             background: rgba(108,138,255,0.18) !important; font-weight: 600 !important;
         }
@@ -238,8 +240,6 @@ app.index_string = ('''
         }
         .light-theme .app-card * { color: #0a0a0f !important; }
         .light-theme .app-label { color: #5c5f72 !important; }
-        .dark-theme #toggle-income-expenses label { color: #c8cadb !important; }
-        .light-theme #toggle-income-expenses label { color: #5c5f72 !important; }
         .light-theme .tab-container .tab {
             background: #f0f1f5 !important; border: 1px solid #dcdee8 !important;
             border-bottom: none !important; color: #5c5f72 !important;
@@ -259,12 +259,14 @@ app.index_string = ('''
         .light-theme .dash-dropdown-search { color: #0a0a0f !important; background: transparent !important; }
         .light-theme .dash-dropdown-search-container { background-color: #f0f1f5 !important; border-color: #dcdee8 !important; }
         .light-theme .dash-dropdown-clear { color: #5c5f72 !important; }
-        .light-theme #summary-range label, .light-theme #category-year label {
+        .light-theme #summary-range label, .light-theme #category-year label,
+        .light-theme #toggle-income-expenses label {
             color: #5c5f72; background: #ffffff; border: 1px solid #dcdee8;
             transition: all 0.15s;
         }
-        .light-theme #summary-range input[type="radio"]:checked + label,
-        .light-theme #category-year input[type="radio"]:checked + label {
+        .light-theme #summary-range .dash-options-list-option.selected,
+        .light-theme #category-year .dash-options-list-option.selected,
+        .light-theme #toggle-income-expenses .dash-options-list-option.selected {
             color: #0a0a0f !important; border-color: #4a68e8 !important;
             background: rgba(74,104,232,0.12) !important; font-weight: 600 !important;
         }
@@ -341,12 +343,6 @@ app.index_string = ('''
            colors here win the source-order tie. */
         .dark-theme .settings-label { color: #8a8fa8 !important; }
         .light-theme .settings-label { color: #5c5f72 !important; }
-        .dark-theme .btn-muted { color: #8a8fa8 !important; border-color: #8a8fa8; }
-        .light-theme .btn-muted { color: #5c5f72 !important; border-color: #5c5f72; }
-        .dark-theme .theme-btn-active { color: #6c8aff !important; background: rgba(108,138,255,0.15); border-color: #6c8aff; }
-        .light-theme .theme-btn-active { color: #4a68e8 !important; background: rgba(74,104,232,0.1); border-color: #4a68e8; }
-        .dark-theme .theme-btn-inactive { color: #8a8fa8 !important; border-color: #252830; }
-        .light-theme .theme-btn-inactive { color: #5c5f72 !important; border-color: #dcdee8; }
         .dark-theme .settings-status { color: #6cffd4 !important; }
         .light-theme .settings-status { color: #0a9e72 !important; }
         .dark-theme .warn-text { color: #ff6c8a !important; }
@@ -403,6 +399,11 @@ app.layout = html.Div(
         dcc.Store(id="refresh-trigger", data=0),
 
         dcc.Store(id="settings-menu-open", data=False),
+
+        # Clicked pie slice — drives both the pop-out and the drilldown. A Store
+        # (not clickData directly) so rebuilding the pie to pop a slice doesn't
+        # clear the selection.
+        dcc.Store(id="selected-category"),
 
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
@@ -523,17 +524,17 @@ app.layout = html.Div(
                         html.Div("SOURCE", className="settings-label",
                                  style={"fontSize": "9px", "letterSpacing": "2px", "fontWeight": "600"}),
                         html.Button("CHANGE DATA FOLDER", id="open-setup-btn", n_clicks=0,
-                                    className="btn-secondary btn-muted",
+                                    className="btn-secondary",
                                     style={"fontSize": "11px", "padding": "8px 14px", "letterSpacing": "1px"}),
                         html.Div(style={"height": "1px", "background": "var(--Dash-Stroke-Strong)", "margin": "4px 0"}),
                         html.Div("THEME", className="settings-label",
                                  style={"fontSize": "9px", "letterSpacing": "2px", "fontWeight": "600"}),
                         html.Div(style={"display": "flex", "gap": "8px"}, children=[
                             html.Button("LIGHT", id="theme-light-btn", n_clicks=0,
-                                        className="btn-secondary theme-btn-inactive",
+                                        className="btn-secondary",
                                         style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
                             html.Button("DARK", id="theme-dark-btn", n_clicks=0,
-                                        className="btn-secondary theme-btn-active",
+                                        className="btn-secondary",
                                         style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
                         ]),
                         # Single status slot at the bottom — reload + import messages land here
@@ -554,46 +555,45 @@ app.layout = html.Div(
                         "gap": "16px", "marginBottom": "24px",
                     }),
 
-                    # Cash flow — monthly bars; range chips + metric dropdown
+                    # Cash flow — monthly bars; metric selector by the title, range chips right
                     card([
                         html.Div(style={
                             "display": "flex", "justifyContent": "space-between",
                             "alignItems": "center", "flexWrap": "wrap", "gap": "12px",
                             "marginBottom": "16px",
                         }, children=[
-                            html.Div(id="net-position-header", className="app-label", style={
-                                "fontSize": "11px", "letterSpacing": "2px",
-                            }),
-                            html.Div(style={"display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap"}, children=[
-                                dcc.RadioItems(
-                                    id="summary-range",
-                                    options=[
-                                        {"label": "YTD", "value": "ytd"},
-                                        {"label": "1Y",  "value": "1y"},
-                                        {"label": "3Y",  "value": "3y"},
-                                    ],
-                                    value="ytd",
-                                    inline=True,
-                                    inputStyle={"display": "none"},
-                                    labelStyle={
-                                        "padding": "6px 14px", "whiteSpace": "nowrap",
-                                        "borderRadius": "6px", "cursor": "pointer", "fontSize": "12px",
-                                        "fontWeight": "600", "letterSpacing": "1px",
-                                    },
-                                    style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
-                                ),
-                                dcc.Dropdown(
-                                    id="cashflow-metric",
-                                    options=[
-                                        {"label": "Net",      "value": "net"},
-                                        {"label": "Expenses", "value": "expenses"},
-                                        {"label": "Income",   "value": "income"},
-                                    ],
-                                    value="net",
-                                    clearable=False,
-                                    style={"width": "140px"},
-                                ),
-                            ]),
+                            # Metric selector doubles as the card title (left)
+                            dcc.Dropdown(
+                                id="cashflow-metric",
+                                className="title-dropdown",
+                                options=[
+                                    {"label": "Net Cash Flow", "value": "net"},
+                                    {"label": "Expenses",      "value": "expenses"},
+                                    {"label": "Income",        "value": "income"},
+                                ],
+                                value="net",
+                                clearable=False,
+                                searchable=False,
+                                style={"width": "190px"},
+                            ),
+                            # Right: time-range chips
+                            dcc.RadioItems(
+                                id="summary-range",
+                                options=[
+                                    {"label": "YTD", "value": "ytd"},
+                                    {"label": "1Y",  "value": "1y"},
+                                    {"label": "3Y",  "value": "3y"},
+                                ],
+                                value="ytd",
+                                inline=True,
+                                inputStyle={"display": "none"},
+                                labelStyle={
+                                    "padding": "6px 14px", "whiteSpace": "nowrap",
+                                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "12px",
+                                    "fontWeight": "600", "letterSpacing": "1px",
+                                },
+                                style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
+                            ),
                         ]),
                         dcc.Graph(id="net-position-chart", config={"displayModeBar": False}),
                     ]),
@@ -611,14 +611,18 @@ app.layout = html.Div(
                             dcc.RadioItems(
                                 id="toggle-income-expenses",
                                 options=[
-                                    {"label": "  Expenses", "value": "expenses"},
-                                    {"label": "  Income",   "value": "income"},
+                                    {"label": "Expenses", "value": "expenses"},
+                                    {"label": "Income",   "value": "income"},
                                 ],
                                 value="expenses",
                                 inline=True,
-                                style={"fontSize": "12px"},
-                                inputStyle={"marginRight": "6px"},
-                                labelStyle={"marginRight": "16px"},
+                                inputStyle={"display": "none"},
+                                labelStyle={
+                                    "padding": "6px 14px", "whiteSpace": "nowrap",
+                                    "borderRadius": "6px", "cursor": "pointer", "fontSize": "12px",
+                                    "fontWeight": "600", "letterSpacing": "1px",
+                                },
+                                style={"display": "flex", "flexWrap": "nowrap", "alignItems": "center", "gap": "6px"},
                             ),
                         ]),
                         dcc.Graph(id="overview-main-chart", config={"displayModeBar": False}),
@@ -670,7 +674,7 @@ def _range_window(rng: str):
     now = pd.Timestamp.today().to_period("M")
     end = now.strftime("%Y-%m")
     if rng == "ytd":
-        return f"{now.year}-01", end, f"YTD {now.year}"
+        return f"{now.year}-01", end, "YTD"
     if rng == "1y":
         return (now - 11).strftime("%Y-%m"), end, "TRAILING 1Y"
     return (now - 35).strftime("%Y-%m"), end, "TRAILING 3Y"
@@ -683,8 +687,6 @@ def _range_window(rng: str):
 @app.callback(
     Output("theme-store", "data"),
     Output("app-root",    "className"),
-    Output("theme-light-btn", "className"),
-    Output("theme-dark-btn",  "className"),
     Input("theme-light-btn", "n_clicks"),
     Input("theme-dark-btn",  "n_clicks"),
     prevent_initial_call=True,
@@ -692,8 +694,7 @@ def _range_window(rng: str):
 def set_theme(_, __):
     from dash import ctx
     new = "light" if ctx.triggered_id == "theme-light-btn" else "dark"
-    cls = lambda active: f"btn-secondary theme-btn-{'active' if active else 'inactive'}"
-    return new, f"{new}-theme", cls(new == "light"), cls(new == "dark")
+    return new, f"{new}-theme"
 
 
 # ── Settings menu callback ────────────────────────────────────────────────────
@@ -719,7 +720,6 @@ def toggle_settings_menu(_, is_open, style):
     Output("category-bar-chart",    "figure"),
     Output("category-title",        "children"),
     Output("net-position-chart",    "figure"),
-    Output("net-position-header",   "children"),
     Output("performance-card",      "children"),
     Input("summary-range",          "value"),
     Input("cashflow-metric",        "value"),
@@ -727,8 +727,9 @@ def toggle_settings_menu(_, is_open, style):
     Input("category-year",          "value"),
     Input("theme-store",            "data"),
     Input("refresh-trigger",        "data"),
+    State("selected-category",      "data"),
 )
-def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
+def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh, sel_cat):
     import calendar
     tmpl = chart_template(theme)
     c    = _CHART[theme]
@@ -736,7 +737,7 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
     metric    = metric if metric in ("expenses", "income") else "expenses"
     cf_metric = cf_metric if cf_metric in ("net", "expenses", "income") else "net"
     rng       = rng if rng in ("ytd", "1y", "3y") else "ytd"
-    start, end, period_label = _range_window(rng)
+    start, end, _ = _range_window(rng)
     data_df = df[(df["month_str"] >= start) & (df["month_str"] <= end)]
 
     # ── Trends: same-calendar-month year-over-year comparison (all data) ────
@@ -777,7 +778,7 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
             hovertemplate=("<b>%{x} " + str(yr) + "</b><br>"
                            + metric_lbl.title() + ": $%{y:,.2f}<br>%{customdata}<extra></extra>"),
         ))
-    chart_title = f"TRENDS · {metric_lbl} BY CALENDAR MONTH"
+    chart_title = f"{metric_lbl} BY CALENDAR MONTH"
     fig_main.update_layout(**tmpl, height=320)
 
     # ── Cash flow: monthly bars of the selected metric within the range ─────
@@ -813,8 +814,6 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
         if cf_metric == "net":
             fig_pos.add_hline(y=0, line_color=c["border"], line_width=1)
     fig_pos.update_layout(**tmpl, height=280, showlegend=False)
-    pos_header = f"CASH FLOW · {period_label}"
-
     # ── Categories: pie of spend for the selected year ───────────────────────
     ydf = df[df["year"] == int(cat_year)] if cat_year else df.iloc[0:0]
     cat = expenses_by_category(ydf)
@@ -835,15 +834,24 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
         slice_colors = ["#8a8fa8" if name.startswith("Other · ")
                         else PIE_COLORS[cat_rank.get(name, 0) % len(PIE_COLORS)]
                         for name in top["category"]]
+        # Pop the selected slice out so it stands apart from the ring
+        pulls = [0.08 if name == sel_cat else 0 for name in top["category"]]
         fig_cat.add_trace(go.Pie(
             labels=top["category"], values=top["total_expenses"],
             marker=dict(colors=slice_colors),
+            pull=pulls,
             sort=False,
             textinfo="percent",
+            # Fixed dark text on every slice — the fills are all bright, so
+            # this reads on all of them and avoids Plotly's per-slice
+            # black/white auto-contrast looking inconsistent
+            insidetextfont=dict(color="#0a0a0f"),
             hovertemplate="<b>%{label}</b><br>$%{value:,.2f} · %{percent}<extra></extra>",
         ))
-    fig_cat.update_layout(**tmpl, height=380)
-    cat_title = f"SPEND BY CATEGORY · {cat_year}" if cat_year else "SPEND BY CATEGORY"
+    # Ease the slice pop-out (pull change) instead of snapping
+    fig_cat.update_layout(**tmpl, height=380,
+                          transition={"duration": 450, "easing": "cubic-in-out"})
+    cat_title = "SPEND BY CATEGORY"
 
     # ── Summary card: YTD totals with a same-period-last-year delta ─────────
     # Compares Jan→current month of this year against the same months last
@@ -933,21 +941,55 @@ def update_overview(rng, cf_metric, metric, cat_year, theme, _refresh):
                    _delta_pt(rate, ly_rate), True),
     ]
 
-    return (fig_main, chart_title, fig_cat, cat_title, fig_pos, pos_header, perf)
+    return (fig_main, chart_title, fig_cat, cat_title, fig_pos, perf)
+
+
+@app.callback(
+    Output("selected-category",  "data"),
+    Output("category-bar-chart", "clickData"),
+    Input("category-bar-chart",  "clickData"),
+    Input("category-year",       "value"),
+    State("selected-category",   "data"),
+    prevent_initial_call=True,
+)
+def select_category(click_data, _cat_year, current):
+    # Store the clicked slice's label. Always reset clickData to None afterwards
+    # so re-clicking the SAME slice registers as a change (Dash only fires on a
+    # changed input) — otherwise repeat clicks look unresponsive. A year change
+    # clears the selection; clicking the current slice toggles it back off.
+    from dash import ctx
+    if ctx.triggered_id == "category-year":
+        return None, None
+    if not click_data:
+        return dash.no_update, dash.no_update
+    label = click_data["points"][0].get("label")
+    new = None if label == current else label
+    return new, None
+
+
+@app.callback(
+    Output("category-bar-chart", "figure", allow_duplicate=True),
+    Input("selected-category",   "data"),
+    State("category-bar-chart",  "figure"),
+    prevent_initial_call=True,
+)
+def pop_slice(sel_cat, fig):
+    # Patch only the pie's pull — a click shouldn't rebuild the whole dashboard.
+    if not fig or not fig.get("data"):
+        return dash.no_update
+    labels = fig["data"][0].get("labels") or []
+    patched = Patch()
+    patched["data"][0]["pull"] = [0.08 if l == sel_cat else 0 for l in labels]
+    return patched
 
 
 @app.callback(
     Output("category-drilldown", "children"),
-    Input("category-bar-chart",  "clickData"),
-    Input("category-year",       "value"),
+    Input("selected-category",   "data"),
+    State("category-year",       "value"),
     State("theme-store",         "data"),
 )
-def category_drilldown(click_data, cat_year, theme):
-    from dash import ctx
-    if ctx.triggered_id != "category-bar-chart" or not click_data:
-        return []
-
-    label = click_data["points"][0].get("label")
+def category_drilldown(label, cat_year, theme):
     if not label:
         return []
     c = _CHART[theme]

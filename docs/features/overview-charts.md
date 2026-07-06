@@ -41,7 +41,7 @@ There is deliberately no cumulative/net-worth line — the app monitors period c
 
 ## Trends chart (`overview-main-chart`)
 
-Titled `TRENDS · {metric} BY CALENDAR MONTH`. Same-calendar-month year-over-year comparison of one metric at a time — expenses or income, picked by the Expenses/Income radio (`toggle-income-expenses`) in the card header.
+Titled `{metric} BY CALENDAR MONTH`. Same-calendar-month year-over-year comparison of one metric at a time — expenses or income, picked by the Expenses/Income radio (`toggle-income-expenses`) in the card header.
 
 **This chart has no range control** — it is inherently an all-years chart: one `Scatter` line per calendar year over a fixed Jan–Dec axis, so every February shares a column and Feb '25 vs Feb '26 is a straight vertical read.
 
