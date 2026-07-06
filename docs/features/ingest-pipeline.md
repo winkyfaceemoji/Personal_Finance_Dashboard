@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Ingest pipeline
+description: Converts raw bank CSVs into a normalized, deduplicated master file, rebuilt from RAW each run.
+resource: main.py, config.py
+updated: 2026-07-06
+---
+
 # Ingest pipeline (`main.py`)
 
 The pipeline converts raw bank CSVs into a single, schema-normalised master file, rebuilt fresh from `RAW/` on every run. Run it once per batch of new exports before starting the dashboard — or click **RELOAD DATA** in the browser (Settings menu, top right) to run it without leaving the app. Both paths call the exact same `main()` function, so there's only one code path to reason about.

@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Data transforms layer
+description: Loads the master file and provides auto-labeling rules and aggregation helpers.
+resource: Modules/transforms.py
+updated: 2026-07-06
+---
+
 # Data transforms layer (`Modules/transforms.py`)
 
 All data loading and aggregation logic lives here. `app.py` imports from this module and never builds aggregations inline, keeping the dashboard callbacks free of raw pandas work.

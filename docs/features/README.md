@@ -46,11 +46,13 @@ Bank CSVs (RAW/)
 
 ## Feature docs
 
-| Document | What it covers |
-|----------|---------------|
-| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`: data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
-| [setup-screen.md](setup-screen.md) | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
-| [transforms.md](transforms.md) | `Modules/transforms.py`: load_transactions, auto-labeling rules, aggregation helpers |
-| [overview-charts.md](overview-charts.md) | Summary (YTD) cards, cash flow card, year-over-year trends, header note |
-| [category-breakdown.md](category-breakdown.md) | Category pie per year, click-to-merchants drilldown |
-| [import-export.md](import-export.md) | Import/export in the settings menu: CSV labeling workflow, category system, transfers |
+Each doc declares the source file(s) it documents in its `resource:` frontmatter — the `Resource` column mirrors it, so a code change points straight to the docs that cover it.
+
+| Document | Resource | What it covers |
+|----------|----------|---------------|
+| [ingest-pipeline.md](ingest-pipeline.md) | `main.py`, `config.py` | Data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
+| [setup-screen.md](setup-screen.md) | `app.py`, `config.py` | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
+| [transforms.md](transforms.md) | `Modules/transforms.py` | load_transactions, auto-labeling rules, aggregation helpers |
+| [overview-charts.md](overview-charts.md) | `app.py` | Summary (YTD) cards, cash flow card, year-over-year trends, header note |
+| [category-breakdown.md](category-breakdown.md) | `app.py` | Category pie per year, click-to-merchants drilldown |
+| [import-export.md](import-export.md) | `app.py`, `Modules/transforms.py` | Import/export in the settings menu: CSV labeling workflow, category system, transfers |

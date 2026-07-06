@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Setup screen
+description: First-launch data-directory setup overlay and automatic ingest.
+resource: app.py, config.py
+updated: 2026-07-06
+---
+
 # Setup screen
 
 A full-screen overlay in `app.py` for choosing which folder the dashboard reads its data from. It auto-fills with the built-in `Test Data/` on first launch, and can be reopened at any time to point the app at a different folder.

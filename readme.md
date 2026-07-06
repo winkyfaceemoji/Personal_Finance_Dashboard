@@ -189,10 +189,14 @@ If you point the app at your own data directory, that folder is entirely outside
 
 ## Further reading
 
+Start at the [docs index](docs/README.md), or jump in:
+
+- [UI design system](docs/design.md) — colours, themes, component patterns, CSS gotchas
+- [Architecture decisions](docs/decisions.md) — the load-bearing choices and why
 - [Feature overview](docs/features/README.md)
-- [Ingest pipeline](docs/features/ingest-pipeline.md)
-- [Setup screen](docs/features/setup-screen.md)
-- [Data transforms layer](docs/features/transforms.md)
-- [Overview charts](docs/features/overview-charts.md)
-- [Category breakdown & drilldown](docs/features/category-breakdown.md)
-- [Import / export & labeling](docs/features/import-export.md)
+  - [Ingest pipeline](docs/features/ingest-pipeline.md)
+  - [Setup screen](docs/features/setup-screen.md)
+  - [Data transforms layer](docs/features/transforms.md)
+  - [Overview charts](docs/features/overview-charts.md)
+  - [Category breakdown & drilldown](docs/features/category-breakdown.md)
+  - [Import / export & labeling](docs/features/import-export.md)
