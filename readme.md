@@ -113,7 +113,7 @@ The ingest step reads every CSV in the configured `RAW/` folder, normalises each
 
 ## UI tour
 
-The dashboard is a single page of four cards. The header subtitle lists the data sources and the latest transaction date (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · latest transaction Jun 27, 2026`), with a red note beneath it counting any unlabeled rows. The settings gear at the header's top-right corner opens a Settings menu grouped into **DATA** (**IMPORT CSV** / **EXPORT CSV** for the labeling round-trip, and **RELOAD DATA** to re-run the ingest pipeline without leaving the browser), **SOURCE** (**CHANGE DATA FOLDER**, reopens the setup overlay), and **THEME** (light/dark toggle, active theme highlighted).
+The dashboard is a single page of four cards. The header subtitle lists the data sources and the latest transaction date (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · latest transaction Jun 27, 2026`), with a red note beneath it counting any unlabeled rows. The settings gear at the header's top-right corner opens a Settings menu grouped into **DATA** (**IMPORT CSV** / **EXPORT CSV** for the labeling round-trip, and **RELOAD DATA** to re-run the ingest pipeline without leaving the browser), **SOURCE** (**CHANGE DATA FOLDER**, reopens the setup overlay), and **THEME** (light/dark toggle). All menu buttons share one consistent style.
 
 ### The cards
 
@@ -122,9 +122,9 @@ Each graph carries only its own controls — there is no global filter.
 | Card | What it shows |
 |------|---------------|
 | SUMMARY | Four year-to-date stat cards — income, expenses, net, savings rate — each with a delta vs the same period last year (green/red by good-or-bad for that metric, savings rate in percentage points) |
-| CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); a dropdown switches the metric between Net (green/red by sign), Expenses, and Income |
+| CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); the metric selector on the left (Net Cash Flow / Expenses / Income) doubles as the card title |
 | TRENDS | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always all data, no range control |
-| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to expand a top-merchants breakdown beneath it |
+| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to pop it out and expand a top-merchants breakdown beneath it (click again to deselect) |
 
 > **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; a note in the header shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
 
