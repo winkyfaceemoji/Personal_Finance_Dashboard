@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Overview charts
+description: The summary YTD cards, cash-flow and trends charts, and the page header.
+resource: app.py
+updated: 2026-07-06
+---
+
 # Overview charts
 
 The dashboard is a single page of four cards, top to bottom:

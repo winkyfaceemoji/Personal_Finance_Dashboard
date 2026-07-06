@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Import / export & labeling
+description: CSV labeling round-trip, the category system, and transfer handling.
+resource: app.py, Modules/transforms.py
+updated: 2026-07-06
+---
+
 # Import / export & labeling
 
 The app is a single page — there is no transactions tab or table. Labeling happens via a CSV round-trip through Excel, driven by **IMPORT CSV** / **EXPORT CSV** in the settings menu (gear icon). To inspect individual transactions in the app, use the Categories chart's click drilldown.

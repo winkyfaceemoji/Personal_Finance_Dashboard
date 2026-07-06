@@ -1,3 +1,11 @@
+---
+type: Feature Doc
+title: Category breakdown & drilldown
+description: Spend-by-category pie with click-to-merchants drilldown.
+resource: app.py
+updated: 2026-07-06
+---
+
 # Category breakdown & drilldown
 
 The Categories card (`category-bar-chart` — the id predates the pie) shows a **pie of spending by category for one calendar year**, titled `SPEND BY CATEGORY` (the year lives in the chips, not the title).
