@@ -99,6 +99,10 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
         df["sub_category"] = None
     if "card_last4" not in df.columns:
         df["card_last4"] = ""
+    # institution predates older master files — backfill blank so callers can
+    # rely on the column existing regardless of when the master was built
+    if "institution" not in df.columns:
+        df["institution"] = ""
 
     # Clean original_category and master_category
     df["original_category"] = df["original_category"].fillna("").str.strip()
