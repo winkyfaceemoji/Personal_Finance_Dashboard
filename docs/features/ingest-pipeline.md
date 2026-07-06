@@ -34,7 +34,16 @@ The explicit-argument form matters for `save_setup` (see [setup-screen.md](setup
 
 ## Inputs
 
-Drop CSV files into the configured `RAW/` folder (default: `Test Data/RAW/`). The pipeline auto-detects the bank format from the column headers. Three formats are supported:
+Organise `RAW/` by institution — one folder per data source — and drop that institution's exports inside it:
+
+```
+RAW/
+  Chase/      Chase{last4}_Activity...csv
+  Discover/   Discover-Statement-...csv
+  <institution>/ ...
+```
+
+`RAW/` is walked recursively (`rglob`), so files can sit at any depth. The **top-level folder under `RAW/` is the institution** and is recorded on every row as the `institution` column (folder-authoritative identity; files dropped directly in `RAW/` get a blank institution). The CSV **format** is still auto-detected from the column headers — independent of the folder — so a single institution folder can hold multiple formats (e.g. Chase debit and Chase credit together). Three formats are supported:
 
 | Format constant | Source | Key columns used |
 |----------------|--------|-----------------|
@@ -42,9 +51,9 @@ Drop CSV files into the configured `RAW/` folder (default: `Test Data/RAW/`). Th
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
 
-Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same source — including overlapping re-exports of the same account's history — can coexist in the configured `RAW/` folder; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below).
+Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same account — including overlapping re-exports of its history — can coexist; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below). Each account is keyed by `(institution, source, card_last4)`, so two institutions that happen to export the same CSV format never collapse into one account.
 
-**Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column.
+**Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column. (No per-card subfolder is needed — the last-4 comes from the filename.)
 
 **Discover amount signs:** Discover CSVs record purchases as positive and credits as negative — the opposite of Chase. The pipeline negates all Discover amounts on normalisation so the sign convention is consistent (`amount < 0` = expense, `amount > 0` = income/credit).
 
@@ -65,7 +74,8 @@ Every normalised row has these columns:
 | `balance` | float | Running balance (debit only; credit = `None`) |
 | `memo` | str | Additional memo (Chase Credit only) |
 | `check_or_slip` | str | Chase Debit only |
-| `source` | str | `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` |
+| `institution` | str | Top-level `RAW/` folder the file came from (e.g. `Chase`, `Discover`); blank if the file sat directly in `RAW/` |
+| `source` | str | Account type / format: `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` |
 | `card_last4` | str | Last 4 digits of card number (Chase only; blank for Discover) |
 
 ---
@@ -79,8 +89,9 @@ Every normalised row has these columns:
    a. Read with pandas, strip column-header whitespace
    b. detect_format() → match header set against known signatures
    c. Call the matching normaliser → unified-schema DataFrame
-   d. Extract card_last4 from filename (Chase files only)
-4. Group normalised frames by physical account: (source, card_last4)
+   d. Set institution = top-level RAW/ subfolder; extract card_last4 from
+      filename (Chase files only)
+4. Group normalised frames by physical account: (institution, source, card_last4)
 5. Within each account, merge overlapping files by date coverage
    (see "Merging overlapping exports" below) — never by comparing row values
 6. Concatenate every account's merged result, sort by date ascending
@@ -99,7 +110,7 @@ Earlier versions of this pipeline deduplicated by comparing row values (date, de
 `_merge_by_coverage` instead decides *which file owns a given date*, and never compares rows to each other at all:
 
 ```
-For each (source, card_last4) account:
+For each (institution, source, card_last4) account:
   Sort that account's files by (date span, row count) descending
     — i.e. the file with the widest verified date range goes first;
     file modification time is deliberately NOT used, since bulk copies,
@@ -121,8 +132,9 @@ Whichever file owns a date contributes *all* of its rows for that date — dupli
 The master file `edited_combined_transactions.csv` adds user-assigned columns: `master_category` and `sub_category`. Every other column is **regenerated from RAW on every run** — the master file is fully rebuilt, not appended to. Only the categorization is carried forward, by matching each rebuilt row's key against the prior master file:
 
 ```
-Build a match key (MATCH_COLUMNS = all unified columns except card_last4)
-  for every row in both the prior master file and the freshly rebuilt data.
+Build a match key (MATCH_COLUMNS = all unified columns except card_last4
+  and institution) for every row in both the prior master file and the
+  freshly rebuilt data.
 
 For each match key, collect the prior master's (master_category, sub_category)
   values for that key, in the order they appeared (a queue per key — a key

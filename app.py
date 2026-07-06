@@ -349,6 +349,10 @@ app.index_string = ('''
         .light-theme .warn-text { color: #d63157 !important; }
         .dark-theme .muted-text { color: #8a8fa8 !important; }
         .light-theme .muted-text { color: #5c5f72 !important; }
+        /* Fullscreen reload/import overlay — dcc.Loading hardcodes a white
+           backdrop; theme it so it matches the page instead of flashing white */
+        .dark-theme .dash-spinner-container { background-color: rgba(10,10,15,0.9) !important; }
+        .light-theme .dash-spinner-container { background-color: rgba(255,255,255,0.9) !important; }
         #settings-menu-wrapper { position: absolute; top: 0; right: 0; z-index: 9999; }
         #settings-menu-btn {
             width: 44px; height: 44px; border-radius: 50%;
@@ -537,9 +541,18 @@ app.layout = html.Div(
                                         className="btn-secondary",
                                         style={"fontSize": "11px", "padding": "8px 14px", "flex": "1"}),
                         ]),
-                        # Single status slot at the bottom — reload + import messages land here
-                        html.Span(id="reload-status", className="settings-status", style={"fontSize": "11px"}),
-                        html.Span(id="import-status", className="settings-status", style={"fontSize": "11px"}),
+                        # Single status slot at the bottom — reload + import messages
+                        # land here. dcc.Loading tracks these spans (the slow
+                        # callbacks output to them) and shows a fullscreen spinner
+                        # while they run, so it never overlaps the menu buttons.
+                        dcc.Loading(
+                            id="data-op-loading", type="circle", color="#6c8aff",
+                            fullscreen=True,
+                            children=[
+                                html.Span(id="reload-status", className="settings-status", style={"fontSize": "11px"}),
+                                html.Span(id="import-status", className="settings-status", style={"fontSize": "11px"}),
+                            ],
+                        ),
                     ]),
             ]),
         ]),
@@ -1105,7 +1118,7 @@ def update_unlabeled_note(_refresh):
     prevent_initial_call=True,
 )
 def export_csv(_):
-    cols = ["date", "description", "amount", "source", "card_last4", "original_category", "master_category", "sub_category"]
+    cols = ["date", "description", "amount", "institution", "source", "card_last4", "original_category", "master_category", "sub_category"]
     export = df[cols].copy()
     export["date"] = export["date"].astype(str)
     export["master_category"] = export["master_category"].fillna("")

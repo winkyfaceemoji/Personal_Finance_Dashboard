@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Unified output schema
 UNIFIED_COLUMNS = [
     "date", "post_date", "description", "amount", "original_category",
-    "type", "balance", "memo", "check_or_slip", "source", "card_last4"
+    "type", "balance", "memo", "check_or_slip", "institution", "source", "card_last4"
 ]
 
 # Master file schema — unified + user-assigned columns
@@ -18,8 +18,11 @@ MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category", "sub_category"]
 
 # Columns used to match a rebuilt row back to its prior categorization.
 # card_last4 excluded: old rows lack it and would never match otherwise.
+# institution excluded: it's folder-derived identity (redundant with source
+# for matching) and predates existing master files, so keying on it would
+# drop every prior label on the first rebuild.
 # User-assigned columns (master_category, sub_category) also excluded.
-MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c != "card_last4"]
+MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c not in ("card_last4", "institution")]
 
 # ── Header signatures used to detect which bank format a file is ─────────────
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
@@ -103,7 +106,7 @@ NORMALIZERS = {
 }
 
 
-def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
+def load_and_normalize(filepath: Path, input_folder: Path) -> pd.DataFrame | None:
     """Load a CSV, detect its format, and normalize it to the unified schema."""
     try:
         df = pd.read_csv(filepath, index_col=False)
@@ -119,6 +122,12 @@ def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
 
     result = NORMALIZERS[fmt](df)
 
+    # Institution = the top-level folder under RAW (folder-authoritative
+    # identity). Files dropped directly in RAW get a blank institution.
+    rel = filepath.relative_to(input_folder).parts
+    institution = rel[0] if len(rel) > 1 else ""
+    result["institution"] = institution
+
     # Extract card last-4 from Chase filenames: Chase_XXXX_Activity...
     last4 = None
     m = re.search(r"Chase(\d{4})_", filepath.name, re.IGNORECASE)
@@ -126,7 +135,8 @@ def load_and_normalize(filepath: Path) -> pd.DataFrame | None:
         last4 = m.group(1)
     result["card_last4"] = last4 if last4 else ""
 
-    print(f"  [OK]   {filepath.name} -> {fmt}" + (f" (card ...{last4})" if last4 else ""))
+    tag = f" [{institution}]" if institution else ""
+    print(f"  [OK]   {filepath.name} -> {fmt}{tag}" + (f" (card ...{last4})" if last4 else ""))
     return result
 
 
@@ -250,11 +260,16 @@ def main(data_dir: Path | None = None):
 
     groups: dict[tuple, list[pd.DataFrame]] = defaultdict(list)
     for f in csv_files:
-        normalized = load_and_normalize(f)
+        normalized = load_and_normalize(f, input_folder)
         if normalized is None or normalized.empty:
             continue
         normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
-        key = (normalized["source"].iat[0], normalized["card_last4"].iat[0])
+        # Account key includes institution so two institutions that export the
+        # same CSV format (same source, blank card_last4) don't collapse into
+        # one account and get merged as if they were re-exports of each other.
+        key = (normalized["institution"].iat[0],
+               normalized["source"].iat[0],
+               normalized["card_last4"].iat[0])
         groups[key].append(normalized)
 
     if not groups:

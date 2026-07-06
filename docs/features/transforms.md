@@ -35,7 +35,7 @@ Called once at `app.py` startup and again after any data-modifying operation (im
 
 Steps:
 1. Read `edited_combined_transactions.csv` with `parse_dates=["date", "post_date"]` and `dtype={"card_last4": str}`
-2. Ensure `master_category`, `sub_category`, and `card_last4` columns exist
+2. Ensure `master_category`, `sub_category`, `card_last4`, and `institution` columns exist (blank-backfilled for masters built before a column was added)
 3. Coerce `amount` to numeric; drop rows where it could not be parsed
 4. Backward-compat rename: `category` → `original_category` if the old column name is present
 5. Normalise string columns: strip whitespace, fill NaN with `""`

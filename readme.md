@@ -16,7 +16,7 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ├── Modules/
 │   └── transforms.py        # Data helpers (load, filter, aggregate)
 ├── Test Data/               # Anonymized demo data — works out of the box
-│   ├── RAW/                 # Demo bank CSVs (tracked in git)
+│   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
 │   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
 ├── assets/
 │   ├── dropdown_theme.css   # Dash 4 dropdown theme overrides
