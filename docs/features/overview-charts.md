@@ -28,12 +28,12 @@ The big number is neutral (white/black per theme). Beneath it sits the delta: a 
 
 ---
 
-## Cash Flow card (`net-position-chart` / `net-position-header`)
+## Cash Flow card (`net-position-chart`)
 
-Titled `CASH FLOW · {range label}`. Monthly bars of one metric within a calendar-anchored window:
+Monthly bars of one metric within a calendar-anchored window. The card has no separate title — the metric dropdown on the left doubles as the title (styled like the other card headers), with the range chips on the right:
 
-- **Range chips** (`summary-range`): YTD (default, Jan 1 → now), 1Y (trailing 12 calendar months), 3Y (trailing 36). Computed by `_range_window`; anchored to *today*, not the newest data. These chips affect only this chart.
-- **Metric dropdown** (`cashflow-metric`): Net (green/red bars by sign, with a zero line), Expenses (red bars), or Income (green bars).
+- **Metric dropdown** (`cashflow-metric`, left): Net Cash Flow (green/red bars by sign, with a zero line), Expenses (red bars), or Income (green bars). Not searchable — it reads as a heading.
+- **Range chips** (`summary-range`, right): YTD (default, Jan 1 → now), 1Y (trailing 12 calendar months), 3Y (trailing 36). Computed by `_range_window`; anchored to *today*, not the newest data. These chips affect only this chart. The selected chip is highlighted (accent tint + border).
 
 There is deliberately no cumulative/net-worth line — the app monitors period cash flow, not account balances.
 
@@ -41,7 +41,7 @@ There is deliberately no cumulative/net-worth line — the app monitors period c
 
 ## Trends chart (`overview-main-chart`)
 
-Titled `{metric} BY CALENDAR MONTH`. Same-calendar-month year-over-year comparison of one metric at a time — expenses or income, picked by the Expenses/Income radio (`toggle-income-expenses`) in the card header.
+Titled `{metric} BY CALENDAR MONTH`. Same-calendar-month year-over-year comparison of one metric at a time — expenses or income, picked by the Expenses/Income pill toggle (`toggle-income-expenses`, selected pill highlighted) in the card header.
 
 **This chart has no range control** — it is inherently an all-years chart: one `Scatter` line per calendar year over a fixed Jan–Dec axis, so every February shares a column and Feb '25 vs Feb '26 is a straight vertical read.
 
