@@ -59,7 +59,7 @@ A description with **no recognizable name** (nothing with a letter is left, e.g.
 
 Each group carries: `key` (a short hash), `merchant`, `count`, `total`, `abs_total`, `first` / `last` date, one `example` description, `mixed`, `fallback`, `sig`, `suggest_transfer` and `rows`. Rows are one entry per distinct `row_id` (a hash of date, description, amount, source and card), with identical twin rows merged into one entry with a `count`, the same way the import matcher treats them. `sig` is a hash of the group's row ids and counts, used to detect a stale list (see Writes).
 
-**Card layout (`_group_card`).** Merchant name, a `MIXED` badge (`.lg-badge`) when the group has money both in and out, `N txns · total · date span`, the example description, then the three buttons, an optional **Subcategory** box (suggestions from subcategories already in use), the **Remember for future statements** checkbox with its note, and a `Label rows one at a time (N)` expander listing each row (date · description · amount) with its own three buttons.
+**Card layout (`_group_card`).** Merchant name, a `MIXED` badge (`.lg-badge`) when the group has money both in and out, `N txns · total · date span`, the example description, then the three buttons, an optional **Subcategory** box (suggestions from subcategories already in use), the **Remember for future statements** checkbox with its note, and a `Label rows one at a time (N)` expander listing each row (date · description · amount, with `×N` when identical twin rows share it) with its own three buttons.
 
 **Suggested Transfer.** A group whose descriptions match card-payment or own-account-transfer wording (`payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay`, `internet payment`; `looks_like_transfer`) gets its TRANSFER button highlighted (`.suggested`). It is only ever a suggestion; nothing is applied for you.
 
@@ -69,7 +69,7 @@ Each group carries: `key` (a short hash), `merchant`, `count`, `total`, `abs_tot
 
 A group gets the EXPENSE / INCOME / TRANSFER group buttons only when it is **neither fallback nor mixed-direction**. Otherwise the card shows `Label these one at a time below` and its row list is already expanded.
 
-**Why:** one click labels every row in the group, so the group has to be one thing. A fallback group has no merchant name to vouch for it. A mixed group (Coinbase buys and sells, Zelle both ways, a refund among purchases) has rows that legitimately need different labels. Both are labeled row by row; a row click labels exactly that row and never creates a rule.
+**Why:** one click labels every row in the group, so the group has to be one thing. A fallback group has no merchant name to vouch for it. A mixed group (Coinbase buys and sells, Zelle both ways, a refund among purchases) has rows that legitimately need different labels. Both are labeled row by row; a row click labels that row and its identical twins (shown `×N`: same date, description, amount, source and card, so no click could tell them apart) and never creates a rule.
 
 ---
 
@@ -82,9 +82,16 @@ A rule in `rules.csv` applies to every unlabeled row whose description contains 
 3. **Not overridden** — no existing rule's keyword equals, contains, or is contained by the new keyword, or matches any description in the group (it would win first match). The reason is `existing rule "x" would override it`.
 4. **One direction of money** — all rows money out, or all money in.
 
-A fallback group fails up front (`no recognizable merchant name`). Failing 1, 2 or 3 is **blocking**: the checkbox is disabled and unticked, with the reason shown. Failing 4 (mixed sign) is the only **non-blocking** reason: the checkbox stays enabled but starts unticked. When all four pass, the checkbox starts ticked and the note reads `rule "starbucks" (money out) · labels 14 rows ($87) now`.
+A fallback group fails up front (`no recognizable merchant name`). Failing 1, 2 or 3 is **blocking**: the checkbox is disabled and unticked, with the reason shown. Failing 4 (mixed sign) is the only **non-blocking** reason, shown as a note. When all four pass, the note reads `rule "starbucks" (money out) · labels 14 rows ($87) now`.
 
-Because mixed groups only offer row buttons and row clicks never create rules, ticking *remember* on a mixed group has no effect in practice.
+The checkbox's starting state (`_group_card`):
+
+| Card | Checkbox |
+|------|----------|
+| All four checks pass, **2 or more** transactions | enabled, ticked |
+| All four checks pass, **one** transaction | enabled, unticked; the note adds `only one transaction — tick to remember anyway`. One row is thin evidence for a rule that labels every future match, so it is the user's call |
+| A blocking reason | disabled, unticked |
+| No group buttons (fallback or mixed — labeled row by row) | disabled, unticked. Remember only acts on a group click, and row clicks never create rules, so a ticked box there could never do anything |
 
 ---
 
@@ -92,24 +99,25 @@ Because mixed groups only offer row buttons and row clicks never create rules, t
 
 A click on a group or row button runs `_do_label`:
 
-1. **Resolve.** For a group click, find the group by key and compare its `sig` with the one on the button; for a row click, find the row by id anywhere in the list. If the group is gone or its `sig` differs, nothing is written and the status reads `The list changed — it has been refreshed.` Rows the user didn't see are never labeled.
+1. **Resolve.** A button whose category isn't Expense / Income / Transfer is refused with a plain status and nothing is written. For a group click, find the group by key and compare its `sig` with the one on the button; for a row click, find the row by id anywhere in the list. If the group is gone or its `sig` differs, nothing is written and the status reads `The list changed — it has been refreshed.` Rows the user didn't see are never labeled.
 2. **Under `MASTER_LOCK`**, re-read the master from disk and run `label_rows`, which goes through the same matcher an Excel import uses (date + description + amount + source + card) and touches **only rows with no valid label yet**: a hand-labeled twin of an unlabeled row keeps its label.
 3. **Count check.** If the number of rows labeled differs from what the list showed, nothing is written; the frame is reloaded and the status reads as above.
 4. `backup_master` (the rotating backup), then `atomic_write_csv` for the master.
-5. **Then** the rule: only for a group click with *remember* ticked and a non-blocking `rule_check`. The rule is written strictly after the master write succeeded, so a failure can never leave a rule without its labels. If `rules.csv` is locked (Excel), the labels still stand and the status says the rule was not remembered.
-6. Reload the frame, set the status (`Labeled 14 STARBUCKS rows as Expense · rule "starbucks" added`), store the undo record and show **UNDO**.
+5. The undo record is built right after the master write, so nothing that follows can lose it.
+6. **Then** the rule: only for a group click with *remember* ticked and a non-blocking `rule_check`. The rule is written strictly after the master write succeeded, so a failure can never leave a rule without its labels.
+7. Reload the frame, set the status (`Labeled 14 STARBUCKS rows as Expense · rule "starbucks" added`), store the undo record and show **UNDO**.
 
-If the master (or `rules.csv`) is open in another program, the status reads `⚠ The data file is open in another program (Excel?) — close it and try again.` and nothing is half-written. Re-rendering the list adds buttons with `n_clicks` 0, which fires the pattern-matching callbacks too; `_is_real_click` ignores those.
+If the **master** is open in another program, the status reads `⚠ The data file is open in another program (Excel?) — close it and try again.` and nothing is written. Once the master is written, the labels and **UNDO** always stand: a **`rules.csv` problem** (open in Excel, unreadable, can't be written) keeps the labels and the status ends `· not remembered: rules.csv is open in another program` (or `… couldn't be read or written`), and a failed reload ends `· couldn't reload the data — use RELOAD DATA`. Re-rendering the list adds buttons with `n_clicks` 0, which fires the pattern-matching callbacks too; `_is_real_click` ignores those.
 
-Writes to `rules.csv` (`add_rule`, `delete_rule`) are atomic and BOM-tolerant. `add_rule` appends `keyword, master_category, sub_category, added` (an ISO date; the loader ignores the extra column) and refuses a keyword under 4 characters, a duplicate, or a category that isn't Expense / Income / Transfer.
+Writes to `rules.csv` (`add_rule`, `delete_rule`) are atomic and run under `MASTER_LOCK`. Reads (`read_rules`, and the loader's `apply_auto_categories`, through the shared `read_rules_csv` in `Modules/transforms.py`) tolerate what Excel saves — UTF-8 with a BOM, or Windows-1252 from a plain "CSV" save — and treat a zero-byte file as no rules. `add_rule` appends `keyword, master_category, sub_category, added` (an ISO date; the loader ignores the extra column) and refuses a keyword under 4 characters, a duplicate, or a category that isn't Expense / Income / Transfer.
 
 ---
 
-## The `before-labeling.csv` snapshot
+## The `before-labeling-YYYY-MM-DD.csv` snapshot
 
-Labeling takes a rotating backup per click, and the rotation keeps ten, so a long session would prune away the state from before it started. Each time the panel opens, `snapshot_master` copies the master to **`SORTED/backups/before-labeling.csv`**, a name outside the backup rotation (it is not matched by the rotation's glob, so it is never pruned). Opening the panel again replaces it, so it is the state before the latest labeling session.
+Labeling takes a rotating backup per click, and the rotation keeps ten, so a long session would prune away the state from before it started. When the panel opens, `snapshot_master` copies the master to **`SORTED/backups/before-labeling-YYYY-MM-DD.csv`** (today's local date), a name outside the backup rotation: the rotation's glob doesn't match it, so it is never pruned, and the automatic restore of a missing master never picks it. It is written **once per day** — opening the panel again the same day (open → DONE → reopen) keeps the first copy, so it is always the state from before that day's first labeling. One file accumulates per day you label; delete old ones by hand. If the copy fails (disk full, read-only folder), the panel opens anyway and the console prints a warning; each click still takes its rotating backup.
 
-To go back to it: stop the app, copy `SORTED/backups/before-labeling.csv` over `SORTED/edited_combined_transactions.csv`, and start it again (or use **RELOAD DATA**). Restoring does not touch `rules.csv`; delete any rules the session added on the Rules tab.
+To go back to it: stop the app, copy `SORTED/backups/before-labeling-YYYY-MM-DD.csv` (the day you want) over `SORTED/edited_combined_transactions.csv`, and start it again (or use **RELOAD DATA**). Restoring does not touch `rules.csv`; delete any rules the session added on the Rules tab.
 
 ---
 
@@ -130,7 +138,7 @@ The **RULES** pill swaps the list for two sections:
 - **Added from this panel** — rules with an `added` date, each with a **DELETE** button.
 - **In rules.csv (edit the file to change)** — hand-written rules, read-only.
 
-Each row shows the keyword, its label (and subcategory), `matches N rows` (every row containing the keyword, labeled or not) and the date added. Deleting a rule removes only the rule: rows already labeled in the master keep their labels, because panel clicks write labels into the master. Rows that were being labeled only by that rule, in memory, go back to unlabeled on the next load. See [transforms.md](transforms.md#apply_auto_categoriesdf-rules_path).
+Each row shows the keyword, its label (and subcategory), `matches N rows` (every row containing the keyword, labeled or not) and the date added. **DELETE** (`_do_delete_rule`) removes the rule under `MASTER_LOCK`, then reloads. Deleting a rule removes only the rule: rows already labeled in the master keep their labels, because panel clicks write labels into the master. Rows that were being labeled only by that rule, in memory, go back to unlabeled on the next load. See [transforms.md](transforms.md#apply_auto_categoriesdf-rules_path).
 
 ---
 

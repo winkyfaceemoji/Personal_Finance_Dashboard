@@ -24,7 +24,7 @@ Only labeled rows are counted. In the demo data, 562 of 1,343 rows ($152,346) ar
 | Question | Decision |
 |---|---|
 | Unit of labeling | **By merchant group**, one click for the whole group. A group expands to label single rows, which is the only safe way to split mixed groups such as Zelle or Venmo. |
-| Remember for future statements | A checkbox per group. **It is ticked by default only when the rule is provably safe** (see *Rule safety*); otherwise it starts unticked, with the reason shown. |
+| Remember for future statements | A checkbox per group. **It is ticked by default only when the rule is provably safe and the group has at least two transactions** (see *Rule safety*); otherwise it starts unticked, with the reason shown. It is disabled on cards without group buttons. |
 | Placement | A full-screen panel opened from the header's unlabeled warning, and from the new post-import line. |
 | Labels that are already set | Not editable here. Export and Import still cover that. |
 | Unlabeled money in the totals | Still **not** counted, because counting it by sign would double-count card payments. Instead each stat card shows how much is unreviewed. |
@@ -77,19 +77,19 @@ A collapsible **"How to choose"** box at the top of the panel:
 7. **UNDO** reverts the last action only, and only while neither the master nor `rules.csv` has changed since.
 8. **Rules tab:** the rules this panel added (keyword, label, subcategory, `matches N rows`, date added), each with **DELETE**. Hand-written rules are listed read-only.
 9. **DONE** closes the panel and refreshes the whole dashboard.
-10. **Snapshot.** Each time the panel opens, the master is copied to `SORTED/backups/before-labeling.csv`, outside the ten-file backup rotation, so the state from before a long session can't be pruned away.
+10. **Snapshot.** The first time the panel opens each day, the master is copied to `SORTED/backups/before-labeling-YYYY-MM-DD.csv` (local date), outside the ten-file backup rotation, so the state from before a long session can't be pruned away. Reopening the same day keeps that first copy.
 
 ## Rule safety
 
 A rule in `rules.csv` applies to every unlabeled row whose description contains the keyword (case-insensitive), past and future, on every load. The first matching rule wins. Labels saved in the master always win over rules.
 
-"Remember" is **ticked by default only if all of the following hold**, checked in this order (a fallback group fails first, with `no recognizable merchant name`). Otherwise it starts unticked and shows the reason. The user can still tick it when only the *mixed sign* condition fails; the others hard-block it (the checkbox is disabled).
+"Remember" is **ticked by default only if all of the following hold AND the group has at least two transactions**, checked in this order (a fallback group fails first, with `no recognizable merchant name`). Otherwise it starts unticked and shows the reason; a one-transaction group that passes stays enabled with the note `only one transaction — tick to remember anyway`. The first three conditions hard-block it (the checkbox is disabled).
 1. **Long enough:** the keyword is at least 4 characters.
 2. **This merchant only:** across **all** rows, labeled or not, every row the keyword matches belongs to this merchant group. Otherwise the reason names the other merchants (up to 3).
 3. **Not overridden:** no existing rule's keyword matches any description in the group (it would win first match), and no existing rule's keyword contains the new keyword or is contained by it.
 4. **One direction:** every row in the group is money out, or every row is money in.
 
-Mixed groups only offer row buttons, and a row click never creates a rule, so ticking *remember* on a mixed group has no effect in practice.
+Mixed groups only offer row buttons, and a row click never creates a rule, so the checkbox is disabled and unticked on every card without group buttons (fallback or mixed).
 
 The keyword is not editable. It is derived; see `rule_keyword` below.
 
@@ -107,7 +107,7 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
 | `looks_like_transfer(description) -> bool` | Matches `payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay` and `internet payment`. Used only to highlight the suggestion. |
 | `label_rows(master, rows, category, sub) -> tuple[DataFrame, int]` | Builds an import frame from `rows` and runs `apply_label_import`. It sends each twin once so the count isn't doubled, and only rows with no valid label are candidates, so a hand-labeled twin of an unlabeled row keeps its label. This is the single matching path for Excel and in-app labeling. |
 | `last_import_ids(master_path) -> list[str] \| None` | The row ids in `SORTED/last_import.csv`, or `None` when the file is missing or unreadable. |
-| `read_rules(path) -> DataFrame` / `add_rule(path, keyword, category, sub) -> bool` / `delete_rule(path, keyword) -> bool` | `rules.csv` I/O. Reads tolerate a BOM. Writes are atomic and correctly quoted. `add_rule` appends the columns `keyword, master_category, sub_category, added`, where `added` is an ISO date; `apply_auto_categories` ignores extra columns. It refuses, returning `False`, when the keyword already exists or the category isn't predefined. `delete_rule` removes exactly the matching keyword row. |
+| `read_rules(path) -> DataFrame` / `add_rule(path, keyword, category, sub) -> bool` / `delete_rule(path, keyword) -> bool` | `rules.csv` I/O. Reads tolerate a BOM, Windows-1252 and a zero-byte file (through `transforms.read_rules_csv`, shared with the loader). Writes are atomic and correctly quoted. `add_rule` appends the columns `keyword, master_category, sub_category, added`, where `added` is an ISO date; `apply_auto_categories` ignores extra columns. It refuses, returning `False`, when the keyword already exists or the category isn't predefined. `delete_rule` removes exactly the matching keyword row. |
 
 ### `Modules/transforms.py`
 
@@ -117,7 +117,7 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
 
 - `rebuild_master` records the last import in `SORTED/last_import.csv` (one `row_id` column, written atomically; its file time is the import time). The new rows are those not carried or rescued from the old master. Nothing is written on the very first import, when every row is new. The header line computes "labeled by rules" and "need you" from the loaded frame.
 - `safety.restore_backup(backup, master)`: public atomic restore, used by Undo.
-- `safety.snapshot_master(master, name="before-labeling")`: copies the master to `SORTED/backups/before-labeling.csv`, a name outside the rotation's glob so it is never pruned. The panel calls it each time it opens, under `MASTER_LOCK`.
+- `safety.snapshot_master(master, name="before-labeling")`: copies the master to `SORTED/backups/before-labeling-YYYY-MM-DD.csv` (local date) unless that file already exists, a name outside the rotation's glob so it is never pruned or auto-restored. The panel calls it each time it opens, under `MASTER_LOCK`; an `OSError` is logged and the panel opens anyway.
 - `last_import.csv` is rewritten only when the run added rows, so a Reload that finds nothing new keeps the record of the last real import.
 
 ### `app.py`
@@ -133,11 +133,12 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
   1. Ignore re-render triggers whose `n_clicks` is falsy.
   2. Resolve the rows from the current `df`. A group click compares the group's `sig` with the one on the button; a missing group or a different `sig` writes nothing (`The list changed — it has been refreshed.`). Fallback and mixed groups refuse a group click.
   3. Under `MASTER_LOCK`: read the master, run `label_rows`, and compare the count with what the list showed. A mismatch writes nothing and reloads `df`. Otherwise `backup_master` (keep the path), then `atomic_write_csv`.
-  4. Only for a group click with remember ticked and a non-blocking `rule_check`, run `add_rule`. The rule is written only after the master succeeds. A row click never adds a rule.
-  5. Reload `df` and set the status and `label-undo`.
+  4. Build the undo record. Only for a group click with remember ticked and a non-blocking `rule_check`, run `add_rule`. The rule is written only after the master succeeds; any failure in this step keeps the labels and the undo, and the status says the rule wasn't remembered. A row click never adds a rule.
+  5. Reload `df` (a failure is noted in the status, the undo still offered) and set the status and `label-undo`.
+  A category outside `PREDEFINED_CATEGORIES` is refused before step 2.
 - **`undo_label`:** only when both mtimes are unchanged. Restore the backup, delete the added rule, then reload.
-- **`delete_rule_click`:** delete the rule, reload, re-render. Rows saved into the master by a group click keep their labels; rows that only the rule was labeling in memory go back to unlabeled.
-- A `PermissionError` on the master or on `rules.csv` gets the same plain message as Import, and nothing is half-written.
+- **`delete_rule_click`:** delete the rule under `MASTER_LOCK`, reload, re-render. Rows saved into the master by a group click keep their labels; rows that only the rule was labeling in memory go back to unlabeled.
+- A `PermissionError` on the master before its write gets the same plain message as Import, and nothing is written. After the master write, a `rules.csv` problem only drops the rule.
 
 ### `assets/app.css`
 
@@ -147,7 +148,7 @@ The panel uses theme tokens only and reuses `.app-card`, `.btn-secondary`, `.btn
 
 | Condition | Behaviour |
 |---|---|
-| Master or `rules.csv` locked (Excel) | A plain message in the status line. Nothing changes, except that a locked `rules.csv` after a successful master write leaves the labels in place and the status says the rule wasn't remembered. |
+| Master or `rules.csv` locked (Excel) | A plain message in the status line. Nothing changes, except that a locked or unreadable `rules.csv` after a successful master write leaves the labels (and Undo) in place and the status says the rule wasn't remembered. |
 | Rows gone or changed, e.g. a Reload elsewhere or a count mismatch | `The list changed — it has been refreshed.` Nothing is written, and the list re-renders. |
 | The rule fails the safety check | Remember is off, with the reason. A blocking reason also disables the checkbox. The non-blocking reason (mixed sign) can be ticked, but mixed groups only offer row buttons, which never add rules. |
 | Undo after another write | Undo is hidden and the status says `Can't undo — the data changed since.` |
