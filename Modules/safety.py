@@ -20,12 +20,26 @@ def _backup_dir(master: Path) -> Path:
     return Path(master).parent / BACKUP_DIRNAME
 
 
+def _match_mode(tmp: str, dest: Path) -> None:
+    """mkstemp makes the temp file 0600, and os.replace carries that mode to
+    the destination. Give the temp file the destination's current mode, or
+    the umask default for a new file, so the master stays readable by the
+    host user when it is a Docker bind mount."""
+    if dest.exists():
+        shutil.copymode(dest, tmp)
+    else:
+        old = os.umask(0)   # os.umask can only be read by setting it
+        os.umask(old)
+        os.chmod(tmp, 0o666 & ~old)
+
+
 def _replace_from(src: Path, dest: Path) -> None:
     """Copy src over dest atomically: temp file beside dest, then os.replace."""
     fd, tmp = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent)
     os.close(fd)
     try:
         shutil.copyfile(src, tmp)
+        _match_mode(tmp, dest)
         os.replace(tmp, dest)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -43,6 +57,7 @@ def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
     os.close(fd)
     try:
         df.to_csv(tmp, index=False)
+        _match_mode(tmp, path)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
