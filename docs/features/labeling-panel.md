@@ -61,7 +61,9 @@ Each group carries: `key` (a short hash), `merchant`, `count`, `total`, `abs_tot
 
 **Card layout (`_group_card`).** Merchant name, a `MIXED` badge (`.lg-badge`) when the group has money both in and out, `N txns · total · date span`, the example description, then the three buttons, an optional **Subcategory** box (suggestions from subcategories already in use), the **Remember for future statements** checkbox with its note, and a `Label rows one at a time (N)` expander listing each row (date · description · amount, with `×N` when identical twin rows share it) with its own three buttons.
 
-**Suggested Transfer.** A group whose descriptions match card-payment or own-account-transfer wording (`payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay`, `internet payment`; `looks_like_transfer`) gets its TRANSFER button highlighted (`.suggested`). It is only ever a suggestion; nothing is applied for you.
+**Card state survives a re-render.** Every label, Undo or rule delete re-renders the list. `render_label_list` reads back what you'd set on each card — the typed Subcategory, the Remember tick, and whether the row list is open — and re-applies it, so labeling one merchant doesn't wipe what you were doing on the next. Dash doesn't report a `<details>` toggle, so each summary (`lbl-rows-sum`) counts its clicks and the parity flips the last-rendered `open`. Switching the TO LABEL / RULES tab clears the status line (the UNDO button stays).
+
+**Suggested Transfer.** A group whose descriptions match card-payment or own-account-transfer wording (`payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay`, `internet payment`; `looks_like_transfer`) gets its TRANSFER button filled and starred (`★ TRANSFER`, `.suggested`) — plain buttons are already accent-outlined, so colour alone wasn't enough. It is only ever a suggestion; nothing is applied for you.
 
 ---
 
@@ -138,7 +140,7 @@ The **RULES** pill swaps the list for two sections:
 - **Added from this panel** — rules with an `added` date, each with a **DELETE** button.
 - **In rules.csv (edit the file to change)** — hand-written rules, read-only.
 
-Each row shows the keyword, its label (and subcategory), `matches N rows` (every row containing the keyword, labeled or not) and the date added. **DELETE** (`_do_delete_rule`) removes the rule under `MASTER_LOCK`, then reloads. Deleting a rule removes only the rule: rows already labeled in the master keep their labels, because panel clicks write labels into the master. Rows that were being labeled only by that rule, in memory, go back to unlabeled on the next load. See [transforms.md](transforms.md#apply_auto_categoriesdf-rules_path).
+Each row shows the keyword, its label (and subcategory), `matches N row(s)` (every row containing the keyword, labeled or not) and the date added. **DELETE** (`_do_delete_rule`) removes the rule under `MASTER_LOCK`, then reloads. Deleting a rule removes only the rule: rows already labeled in the master keep their labels, because panel clicks write labels into the master. Rows that were being labeled only by that rule, in memory, go back to unlabeled on the next load. See [transforms.md](transforms.md#apply_auto_categoriesdf-rules_path).
 
 ---
 
