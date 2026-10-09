@@ -91,3 +91,59 @@ def test_same_day_repeats_keep_order(master):
     rebuild_master(_combined([ROW, ROW, ROW]), master)
     subs = pd.read_csv(master)["sub_category"].fillna("").tolist()
     assert subs == ["First", "Second", ""]          # third occurrence is new
+
+
+from Modules.safety import orphan_count, orphans_path
+
+
+def test_changed_raw_field_keeps_label(master):
+    # The bank re-maps the category on a later export: the exact key no
+    # longer matches, the date/description/amount/source fallback does
+    _write_master(master, [ROW + ("Expense", "Coffee")])
+    changed = ("2025-03-01", "COFFEE SHOP", -4.5, "Dining")
+    result = rebuild_master(_combined([changed]), master)
+    out = pd.read_csv(master)
+    assert out.loc[0, "sub_category"] == "Coffee"
+    assert result["rescued"] == 1 and result["orphaned"] == 0
+
+
+def test_unplaceable_label_is_reported_not_dropped(master):
+    gone = ("2025-02-01", "OLD MERCHANT", -20.0, "Shopping")
+    _write_master(master, [ROW + ("Expense", ""), gone + ("Expense", "Gifts")])
+    result = rebuild_master(_combined([ROW]), master)
+    assert result["orphaned"] == 1
+    orphans = pd.read_csv(orphans_path(master))
+    assert orphans.loc[0, "description"] == "OLD MERCHANT"
+    assert orphans.loc[0, "sub_category"] == "Gifts"
+    assert orphan_count(master) == 1
+
+
+def test_orphans_survive_later_rebuilds_and_reattach(master):
+    gone = ("2025-02-01", "OLD MERCHANT", -20.0, "Shopping")
+    _write_master(master, [gone + ("Expense", "Gifts")])
+    rebuild_master(_combined([ROW]), master)          # transaction missing from RAW
+    rebuild_master(_combined([ROW]), master)          # a later reload must not forget it
+    assert orphan_count(master) == 1
+
+    result = rebuild_master(_combined([ROW, gone]), master)   # it's back
+    out = pd.read_csv(master).set_index("description")
+    assert out.loc["OLD MERCHANT", "sub_category"] == "Gifts"
+    assert result["orphaned"] == 0
+    assert not orphans_path(master).exists()
+
+
+def test_unlabeled_old_rows_are_not_orphans(master):
+    gone = ("2025-02-01", "OLD MERCHANT", -20.0, "Shopping")
+    _write_master(master, [gone + ("", "")])
+    assert rebuild_master(_combined([ROW]), master)["orphaned"] == 0
+
+
+def test_old_master_without_memo_rescued_by_fallback(master):
+    # Old-schema master has no memo column; the new export carries a memo,
+    # so the exact key misses and the fallback key must place the label
+    _write_master(master, [ROW + ("Expense", "Coffee")], drop=("memo",))
+    combined = _combined([ROW])
+    combined.loc[0, "memo"] = "card swipe"
+    result = rebuild_master(combined, master)
+    assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"
+    assert result["rescued"] == 1

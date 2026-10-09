@@ -3,7 +3,7 @@ from collections import defaultdict, deque
 import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
-from Modules.safety import atomic_write_csv, backup_master, restore_if_missing
+from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -24,6 +24,11 @@ MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category", "sub_category"]
 # drop every prior label on the first rebuild.
 # User-assigned columns (master_category, sub_category) also excluded.
 MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c not in ("card_last4", "institution")]
+
+# Looser key tried for labels the exact key couldn't place: a re-export that
+# changes a secondary field (bank category, memo, running balance) still
+# lands its label. Labels neither key places go to orphaned_labels.csv.
+FALLBACK_COLUMNS = ["date", "description", "amount", "source"]
 
 # ── Header signatures used to detect which bank format a file is ─────────────
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
@@ -213,6 +218,13 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     def row_key(d: pd.DataFrame) -> pd.Series:
         return d[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
 
+    def fallback_key(d: pd.DataFrame) -> pd.Series:
+        amount = pd.to_numeric(d["amount"], errors="coerce").round(2).astype(str)
+        parts = d[["date", "description", "source"]].fillna("").astype(str)
+        parts["description"] = parts["description"].str.strip()
+        return pd.Series(list(zip(parts["date"], parts["description"], amount, parts["source"])),
+                         index=d.index)
+
     result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
 
     restored = restore_if_missing(master_file)
@@ -233,18 +245,62 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         for col in ["date", "post_date"]:
             old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-        categorization = defaultdict(deque)
-        for key, mc, sc in zip(row_key(old_master), old_master["master_category"], old_master["sub_category"]):
-            categorization[key].append((mc, sc))
+        # Labels orphaned by earlier rebuilds get another chance every run —
+        # appended after the master's own rows so those take precedence
+        prior_orphans = orphans_path(master_file)
+        if prior_orphans.exists():
+            extra = pd.read_csv(prior_orphans, dtype={"card_last4": str})
+            for col in MASTER_COLUMNS:
+                if col not in extra.columns:
+                    extra[col] = None
+            old_master = pd.concat([old_master[MASTER_COLUMNS], extra[MASTER_COLUMNS]],
+                                   ignore_index=True)
 
+        old_master["master_category"] = old_master["master_category"].fillna("")
+        old_master["sub_category"]    = old_master["sub_category"].fillna("")
+        labeled = (old_master["master_category"] != "") | (old_master["sub_category"] != "")
+
+        def _take(idx, i):
+            combined.at[idx, "master_category"] = old_master.at[i, "master_category"] or None
+            combined.at[idx, "sub_category"]    = old_master.at[i, "sub_category"] or None
+            used.add(i)
+
+        # Pass 1: exact key, in order (same-day repeats inherit in sequence)
+        exact = defaultdict(deque)
+        for i, key in zip(old_master.index, row_key(old_master)):
+            exact[key].append(i)
+        used, matched = set(), set()
         for idx, key in zip(combined.index, row_key(combined)):
-            bucket = categorization.get(key)
+            bucket = exact.get(key)
             if bucket:
-                mc, sc = bucket.popleft()
-                combined.at[idx, "master_category"] = mc
-                combined.at[idx, "sub_category"]    = sc
+                _take(idx, bucket.popleft())
+                matched.add(idx)
                 result["carried"] += 1
-        print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)")
+
+        # Pass 2: labeled rows pass 1 couldn't place, by the looser key
+        spare = old_master[labeled & ~old_master.index.isin(used)]
+        fallback = defaultdict(deque)
+        for i, key in zip(spare.index, fallback_key(spare)):
+            fallback[key].append(i)
+        rest = combined[~combined.index.isin(matched)]
+        for idx, key in zip(rest.index, fallback_key(rest)):
+            bucket = fallback.get(key)
+            if bucket:
+                _take(idx, bucket.popleft())
+                result["rescued"] += 1
+
+        # Whatever's still unplaced is kept and reported, never silently dropped
+        orphans = old_master[labeled & ~old_master.index.isin(used)]
+        result["orphaned"] = len(orphans)
+        if orphans.empty:
+            orphans_path(master_file).unlink(missing_ok=True)
+        else:
+            atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
+        print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)"
+              f"; {result['rescued']} rescued by the fallback match")
+        if result["orphaned"]:
+            print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
+                  f"{orphans_path(master_file)}")
 
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     combined.sort_values("date", inplace=True, ignore_index=True, kind="stable")

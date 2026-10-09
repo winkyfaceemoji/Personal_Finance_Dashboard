@@ -10,6 +10,7 @@ from dash import dcc, html, ctx, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
+from Modules.safety import orphan_count
 from Modules.transforms import (
     load_transactions,
     monthly_expenses,
@@ -300,6 +301,8 @@ app.layout = html.Div(
             html.P(id="stale-note", className="notice"),
             # Unlabeled rows are ignored by every total — count and size them
             html.P(id="unlabeled-note", className="notice warn-text"),
+            # Labels the last rebuild couldn't place (kept in a side file)
+            html.P(id="orphan-note", className="notice warn-text"),
 
             html.Div(id="settings-menu-wrapper", children=[
                 html.Button(html.Span(className="gear-icon"), id="settings-menu-btn",
@@ -532,6 +535,19 @@ def update_unlabeled_note(_refresh):
     return (f"⚠ {u['count']:,} of {u['total']:,} transactions ({_dollar0(u['amount'])}) have no "
             f"Expense / Income / Transfer label and aren't counted. Label them with "
             f"Settings → Export CSV, then Import CSV.")
+
+
+@app.callback(
+    Output("orphan-note", "children"),
+    Input("refresh-trigger", "data"),
+)
+def update_orphan_note(_refresh):
+    n = orphan_count(MASTER_PATH) if MASTER_PATH else 0
+    if not n:
+        return ""
+    return (f"⚠ {n} label{'s' if n != 1 else ''} currently match no transaction. They're kept "
+            f"in SORTED/orphaned_labels.csv and re-attach automatically if those "
+            f"transactions come back in a later export.")
 
 
 # ── Period navigation ─────────────────────────────────────────────────────────
