@@ -35,6 +35,8 @@ Only labeled rows are counted. In the demo data, 562 of 1,343 rows ($152,346) ar
 
 ## Measured on the demo data (2026-10-09)
 
+> These numbers came from a prototype grouper. The implementation plan re-measures them with the final `merchant_key` at the Task 3 checkpoint and replaces them here.
+
 Grouping by the merchant **keyword** gives 209 groups, while grouping by the full description minus digits gives 304, because transaction IDs split one merchant into several groups. With keyword grouping:
 - the **top 25 groups cover 91%** of unlabeled dollars;
 - **175 of 209 groups (67% of dollars) pass the rule-safety check**;
@@ -95,10 +97,10 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
 
 | Function | Contract |
 |---|---|
-| `merchant_key(description) -> str` | The group key and rule keyword source, in this order: `normalize_description` (lowercase, `*` and `#` become spaces, whitespace collapsed); cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach `; cut at the first digit; drop `xx-…` code tokens (e.g. `rtl-tppsgd`); trim ` -.,/`. Empty → `"unknown"`. The drilldown's private `_merchant` in `app.py` is replaced by a display form of this (upper-case), so grouping is the same everywhere. |
+| `merchant_key(description) -> str` | The group key and rule keyword source, in this order: `normalize_description` (lowercase, `*` and `#` become spaces, whitespace collapsed); cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach `; drop `xx-…` code tokens (e.g. `rtl-tppsgd`); keep the first word, then each following word until one contains a digit (so `7-eleven`, `99 ranch market` and `1-800-flowers` survive); trim ` -.,/`. No letters left → `""`, and the row becomes its own *fallback* group keyed on its full normalized description, never a shared catch-all. The drilldown's `_merchant` is left as is (changing it is out of scope). |
 | `rule_keyword(group_descriptions) -> str` | The longest common **word-aligned prefix** of the group's descriptions, lowercased with whitespace collapsed, trimmed of ` -.,/`. It is therefore a real substring of every description in the group, which `merchant_key` isn't always (it drops code tokens). It may be `""`, in which case remember is blocked as too short. Descriptions are compared with whitespace collapsed throughout, and rules match against collapsed descriptions; see the transforms change below. |
 | `rule_check(df, rules, group) -> dict` | Applies the four *Rule safety* conditions. Returns `{"ok": bool, "keyword": str, "reason": str \| None, "blocking": bool, "rows_now": int, "dollars_now": float, "others": [merchant, …]}`. |
-| `unlabeled_groups(df, only_row_ids=None) -> list[dict]` | Unlabeled rows (`master_category` not in `PREDEFINED_CATEGORIES`), grouped by `merchant_key`. Each dict has `key` (a short stable hash), `merchant` (display form), `count`, `total`, `abs_total`, `first`, `last`, `example`, `mixed`, `suggest_transfer` and `rows` (records with `row_id`, `date`, `description`, `amount`, `source`, `card_last4`). Sorted by `abs_total`, descending. `only_row_ids` restricts it to the last import's rows. |
+| `unlabeled_groups(df, only_row_ids=None) -> list[dict]` | Unlabeled rows (`master_category` not in `PREDEFINED_CATEGORIES`), grouped by `merchant_key`. Each dict has `key` (a short stable hash), `merchant` (display form), `count`, `total`, `abs_total`, `first`, `last`, `example`, `mixed`, `fallback`, `sig` (a hash of the group's row ids and counts, re-checked at click time), `suggest_transfer` and `rows` (one record per distinct `row_id`, identical twins merged with a `count`: `row_id`, `date`, `description`, `amount`, `source`, `card_last4`, `count`). Fallback and mixed groups get no one-click group label; their rows are labeled one at a time. Sorted by `abs_total`, descending. `only_row_ids` restricts it to the last import's rows. |
 | `row_id(row) -> str` | Stable id from `date \| description \| amount \| source \| card_last4`. Identical twin rows share an id, consistent with the import matcher. |
 | `looks_like_transfer(description) -> bool` | Matches `payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay` and `internet payment`. Used only to highlight the suggestion. |
 | `label_rows(master, rows, category, sub) -> tuple[DataFrame, int]` | Builds an import frame from `rows` and runs `apply_label_import`. This is the single matching path for Excel and in-app labeling. |
@@ -147,7 +149,7 @@ The panel uses theme tokens only and reuses `.app-card`, `.btn-secondary`, `.btn
 ## Testing
 
 - **Unit tests:**
-  - `merchant_key`: the ID and code stripping that turns the five Coinbase variants into one key, whitespace collapse, and `unknown`;
+  - `merchant_key`: the ID and code stripping that turns the five Coinbase variants into one key, whitespace collapse, names that start with a number or contain a hyphen, and nameless descriptions returning `""`;
   - `rule_check`: each of the four conditions, and that it checks labeled rows too;
   - `unlabeled_groups`: grouping, sort order, the `mixed` flag, `only_row_ids`, and stable ids;
   - `looks_like_transfer`;
