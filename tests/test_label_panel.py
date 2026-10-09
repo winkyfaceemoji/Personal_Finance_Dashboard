@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 from pathlib import Path
@@ -125,3 +126,121 @@ def test_render_label_list_top_n(appmod):
     children, summary = appmod["render_label_list"]({"display": "block"}, 0, "todo", "dark", "all")
     assert 0 < len(children) <= appmod["LABEL_TOP_N"] + 1     # + the subcategory datalist
     assert "merchants" in summary
+
+
+def _live(appmod):
+    """The app module's live globals (runpy returns a copy; callbacks rebind df)."""
+    return appmod["_do_label"].__globals__
+
+
+def _bulk_group(g_):
+    from Modules.labels import unlabeled_groups
+    return next(g for g in unlabeled_groups(g_["df"]) if not g["fallback"] and not g["mixed"])
+
+
+def _group_trig(grp, cat="Expense", sig=None):
+    return {"type": "lbl-group", "group": grp["key"], "sig": sig or grp["sig"], "cat": cat}
+
+
+def test_label_click_ignores_rerender(appmod):
+    real = appmod["_is_real_click"]
+    pid = '{"cat":"Expense","group":"x","sig":"s","type":"lbl-group"}.n_clicks'
+    assert not real([])
+    assert not real([{"prop_id": pid, "value": 0}])
+    assert not real([{"prop_id": pid, "value": None}])
+    assert real([{"prop_id": pid, "value": 1}])
+
+
+def test_label_then_undo_roundtrip(appmod):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    grp = _bulk_group(g_)
+    status, undo, _, version = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
+    assert status.startswith("Labeled") and undo and version == 1
+    assert master.read_bytes() != before
+    undo = json.loads(json.dumps(undo))          # what the browser hands back
+    status2, undo2, _, _ = g_["_do_undo"](undo, 1)
+    assert status2 == "Undone." and undo2 is None
+    assert master.read_bytes() == before
+
+
+def test_undo_record_survives_json(appmod):
+    g_ = _live(appmod)
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    assert isinstance(undo["master_mtime"], str) and isinstance(undo["rules_mtime"], str)
+    assert json.loads(json.dumps(undo)) == undo
+
+
+def test_undo_refuses_after_change(appmod):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    changed = master.read_bytes() + b"\n"
+    master.write_bytes(changed)                  # something else wrote the master
+    status, undo2, _, _ = g_["_do_undo"](undo, 1)
+    assert status.startswith("Can't undo") and undo2 is None
+    assert master.read_bytes() == changed
+
+
+def test_undo_refuses_after_rules_change(appmod):
+    g_ = _live(appmod)
+    master, rules = g_["MASTER_PATH"], g_["RULES_PATH"]
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    after = master.read_bytes()
+    rules.write_text(rules.read_text() + "zzz unrelated shop,Expense,\n")
+    status, undo2, _, _ = g_["_do_undo"](undo, 1)
+    assert status.startswith("Can't undo") and undo2 is None
+    assert master.read_bytes() == after
+
+
+def test_label_click_refuses_stale_sig(appmod):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, version = g_["_do_label"](_group_trig(_bulk_group(g_), sig="0000000000"), "", False, 0, "all")
+    assert status.startswith("The list changed") and version == 1
+    assert master.read_bytes() == before
+
+
+def test_label_click_refuses_group_label_on_mixed_or_fallback(appmod):
+    from Modules.labels import unlabeled_groups
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    risky = [g for g in unlabeled_groups(g_["df"]) if g["fallback"] or g["mixed"]]
+    assert risky, "Test Data should contain at least one mixed or fallback group"
+    status, _, _, _ = g_["_do_label"](_group_trig(risky[0]), "", False, 0, "all")
+    assert status.startswith("Label these one at a time")
+    assert master.read_bytes() == before
+
+
+def test_row_click_labels_by_row_id(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    grp = _bulk_group(g_)
+    row = grp["rows"][-1]
+    status, _, _, _ = g_["_do_label"](
+        {"type": "lbl-row", "group": grp["key"], "row": row["row_id"], "cat": "Transfer"}, "", False, 0, "all")
+    assert status.startswith("Labeled")
+    df = g_["df"]
+    assert (df.loc[row_ids(df) == row["row_id"], "master_category"] == "Transfer").all()
+
+
+def test_label_survives_rules_file_locked(appmod, monkeypatch):
+    from Modules.labels import read_rules, rule_check, unlabeled_groups
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    rules = read_rules(g_["RULES_PATH"])
+    # A group whose rule is allowed, so add_rule is actually reached
+    grp = next(g for g in unlabeled_groups(g_["df"])
+               if not g["fallback"] and not g["mixed"] and rule_check(g_["df"], rules, g)["ok"])
+
+    def locked(*a, **k):
+        raise PermissionError("open in Excel")
+    monkeypatch.setitem(g_, "add_rule", locked)
+    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
+    assert status.startswith("Labeled") and "not remembered" in status
+    assert undo and undo["rule"] is None          # the label still has an undo
+    assert master.read_bytes() != before
