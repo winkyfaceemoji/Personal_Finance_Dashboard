@@ -499,3 +499,12 @@ def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
         {"type": "lbl-pair", "pair": "__all__", "sig": g_["_pairs_sig"](shown)}, 0, "all")
     assert status.startswith("Labeled 2 rows (1 pair)")
     assert [p["amount"] for p in g_["transfer_pairs"](g_["df"])] == [666.66]
+
+
+def test_skipped_files_text(appmod):
+    text = appmod["skipped_text"]
+    assert text([]) == ""
+    one = text([("CapitalOne/CapitalOne_2026.csv", "unrecognized format")])
+    assert one.startswith("⚠ 1 file in RAW wasn't imported") and "CapitalOne_2026.csv (unrecognized format)" in one
+    many = text([(f"f{i}.csv", "unrecognized format") for i in range(5)])
+    assert "5 files" in many and "and 2 more" in many and "f3.csv" not in many

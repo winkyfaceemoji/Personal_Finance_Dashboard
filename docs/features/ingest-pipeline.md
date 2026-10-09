@@ -61,7 +61,7 @@ RAW/
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
 
-Files with unrecognised headers are skipped with a `[SKIP]` log line. Multiple files from the same account — including overlapping re-exports of its history — can coexist; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below). Each account is keyed by `(institution, source, card_last4)`, so two institutions that happen to export the same CSV format never collapse into one account.
+A file that can't be used — unreadable, unrecognised headers, or a normalizer error on a malformed statement — is skipped with a `[SKIP]` log line and recorded, with its reason, in `SORTED/skipped_files.csv`; the dashboard header turns that into a red warning, because a skipped file's whole account is missing from every total. One bad file never aborts the import of the others. The record describes the latest run only (written even when nothing could be imported, removed when nothing was skipped). Multiple files from the same account — including overlapping re-exports of its history — can coexist; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below). Each account is keyed by `(institution, source, card_last4)`, so two institutions that happen to export the same CSV format never collapse into one account.
 
 **Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column. (No per-card subfolder is needed — the last-4 comes from the filename.)
 
@@ -178,6 +178,7 @@ The new master is written atomically (temp file + `os.replace`), so a crash mid-
 | `SORTED/edited_combined_transactions.csv` | Every pipeline run (full rebuild; categorization carried forward by match key) | `app.py` on startup and after reload |
 | `SORTED/backups/edited_combined_transactions.<timestamp>.csv` | Every rebuild and every import, unless the master is unchanged since the last backup (newest 10 kept) | Auto-restore when the master is missing or empty; manual rollback |
 | `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; header note |
+| `SORTED/skipped_files.csv` | Every import: RAW files that couldn't be used, with the reason (removed when none) | Header warning (`skipped-note`) |
 | `SORTED/last_import.csv` | A rebuild that added rows: their `row_id`s (left alone when nothing is new) | The header's `Last import: …` line and the labeling panel's `REVIEW →` filter |
 | `SORTED/backups/before-labeling-YYYY-MM-DD.csv` | The app, when the labeling panel first opens that day (outside the backup rotation, never pruned) | Manual rollback to the state before that day's labeling |
 
