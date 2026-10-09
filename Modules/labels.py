@@ -6,9 +6,13 @@ UTF-8 with a BOM or Windows-1252, dates as 3/15/2024, amounts as
 -$1,234.50 or ($1,234.50), and card numbers without their leading zero.
 Everything here tolerates that.
 """
+import hashlib
 import io
+import re
 
 import pandas as pd
+
+from Modules.transforms import PREDEFINED_CATEGORIES, normalize_description
 
 
 def read_import_csv(raw: bytes) -> pd.DataFrame:
@@ -97,3 +101,122 @@ def apply_label_import(master: pd.DataFrame, imp: pd.DataFrame) -> tuple[pd.Data
             master.loc[mask, "sub_category"] = sub
         updated += n
     return master, updated, skipped
+
+
+# ── Merchant grouping (the labeling panel) ────────────────────────────────────
+
+_ID_TAIL  = re.compile(r" (?:web id|ppd id|ccd id|id:|ach )")
+# ACH reference codes like "rtl-tppsgd" — narrow on purpose: a generic
+# "xx-…" pattern would also eat names like "wal-mart"
+_CODE     = re.compile(r"\b(?:rtl|ppd|ccd|web)-\S+")
+_TRANSFER = re.compile(r"payment thank|autopay|online transfer|transfer to|transfer from"
+                       r"|epay|card payment|directpay|internet payment")
+
+
+def _leading_words(text: str) -> str:
+    """Words up to the first word *after the first* that contains a digit:
+    store numbers and dates drop off, but a name that starts with a number
+    ('7-eleven', '99 ranch', '1-800-flowers') survives."""
+    words = text.split()
+    keep = words[:1]
+    for w in words[1:]:
+        if re.search(r"\d", w):
+            break
+        keep.append(w)
+    return " ".join(keep)
+
+
+def merchant_key(description) -> str:
+    """Who a transaction is with, stripped of store numbers, reference ids and
+    ACH codes, so one merchant's rows group together: 'STARBUCKS STORE 01234
+    SEATTLE' and '… 09876 NEW YORK' are both 'starbucks store'. Returns ''
+    when no name with a letter is left (e.g. '#1234') — the caller must not
+    lump those together."""
+    s = normalize_description(description)
+    s = _ID_TAIL.split(s, maxsplit=1)[0]
+    s = _CODE.sub("", s)
+    s = _leading_words(s).strip(" -.,/")
+    return s if re.search(r"[a-z]", s) else ""
+
+
+def rule_keyword(descriptions) -> str:
+    """The rule keyword for a group: the longest word-aligned prefix all its
+    descriptions share (normalized), cut at reference-id tails and before a
+    later word with a digit. Always a real substring of every description,
+    so the rule matches the whole group."""
+    split = [normalize_description(d).split() for d in descriptions]
+    common = []
+    for words in zip(*split):
+        if any(w != words[0] for w in words):
+            break
+        common.append(words[0])
+    prefix = _ID_TAIL.split(" ".join(common), maxsplit=1)[0]
+    return _leading_words(prefix).strip(" -.,/")
+
+
+def row_id(row: dict) -> str:
+    """Stable id for a transaction. Identical twin rows share it, the same way
+    the import matcher treats them."""
+    date = pd.Timestamp(row["date"]).strftime("%Y-%m-%d") if pd.notna(row["date"]) else ""
+    card = row.get("card_last4", "")
+    card = "" if card is None or (isinstance(card, float) and pd.isna(card)) else str(card)
+    raw = "|".join([date, str(row["description"]).strip(), f"{float(row['amount']):.2f}",
+                    str(row["source"]), card])
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
+def row_ids(df: pd.DataFrame) -> pd.Series:
+    return pd.Series([row_id(r) for r in df.to_dict("records")], index=df.index, dtype=str)
+
+
+def looks_like_transfer(description) -> bool:
+    """Card-payment / own-account wording — only ever a *suggestion*."""
+    return bool(_TRANSFER.search(normalize_description(description)))
+
+
+def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
+    """Rows with no valid label, grouped by merchant, biggest dollar total first.
+    only_row_ids restricts to those rows (the last import's)."""
+    un = df[~df["master_category"].isin(PREDEFINED_CATEGORIES)].copy()
+    if un.empty:
+        return []
+    un["_rid"] = row_ids(un)
+    if only_row_ids is not None:
+        un = un[un["_rid"].isin(set(only_row_ids))]
+    un["_mk"] = un["description"].map(merchant_key)
+    # No recognizable name: each description is its own group, flagged, so
+    # unrelated rows are never bulk-labeled together
+    un["_fb"] = un["_mk"] == ""
+    un.loc[un["_fb"], "_mk"] = un.loc[un["_fb"], "description"].map(normalize_description)
+    groups = []
+    for mk, g in un.groupby("_mk", sort=False):
+        amounts = g["amount"]
+        rows: dict[str, dict] = {}
+        # Identical twins share a row_id and are labeled together: one entry
+        for r in g.sort_values("date", kind="stable").to_dict("records"):
+            if r["_rid"] in rows:
+                rows[r["_rid"]]["count"] += 1
+            else:
+                rows[r["_rid"]] = {"row_id": r["_rid"], "date": r["date"],
+                                   "description": r["description"], "amount": float(r["amount"]),
+                                   "source": r["source"], "card_last4": r.get("card_last4", "") or "",
+                                   "count": 1}
+        sig_src = "|".join(sorted(f"{k}x{v['count']}" for k, v in rows.items()))
+        fallback = bool(g["_fb"].any())
+        groups.append({
+            "key": hashlib.sha1(mk.encode()).hexdigest()[:10],
+            "mkey": mk,
+            "merchant": (str(g["description"].iloc[0]).strip() if fallback else mk).upper(),
+            "count": int(len(g)),
+            "total": float(amounts.sum()),
+            "abs_total": float(amounts.abs().sum()),
+            "first": g["date"].min(),
+            "last": g["date"].max(),
+            "example": str(g["description"].iloc[0]).strip(),
+            "mixed": bool((amounts > 0).any() and (amounts < 0).any()),
+            "fallback": fallback,
+            "sig": hashlib.sha1(sig_src.encode()).hexdigest()[:10],
+            "suggest_transfer": bool(g["description"].map(looks_like_transfer).any()),
+            "rows": list(rows.values()),
+        })
+    return sorted(groups, key=lambda x: x["abs_total"], reverse=True)
