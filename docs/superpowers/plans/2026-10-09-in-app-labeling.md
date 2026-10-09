@@ -10,6 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-09-in-app-labeling-design.md`
 
+**Revision 2 (after the council's plan review):** fixes folded into the tasks below:
+- grouping keeps names that start with a number or contain a hyphen, and descriptions with no recognizable name become their own flagged *fallback* group;
+- a regression gate on the normalizer;
+- no one-click group labels on fallback or mixed-direction groups;
+- buttons keyed on `row_id` plus a group signature, and labeling touches only unlabeled master rows and aborts on a count mismatch;
+- a no-op Reload no longer clears `last_import.csv`;
+- undo state survives JSON (mtimes stored as strings);
+- a pre-labeling snapshot is kept outside the backup rotation;
+- an acceptance gate;
+- `FINANCE_RULES_PATH`, so tests and Playwright never touch the repo's `rules.csv`.
+
+**Checkpoint after Task 3 (controller):** before starting Task 4, re-check the Task 1 regression output, the re-measured grouping numbers, and that a no-op Reload keeps `last_import.csv`.
+
 ## Global Constraints
 
 - No new dependencies. Pinned versions stay as in `requirements.txt` / `requirements-dev.txt`.
@@ -24,7 +37,7 @@
 
 ## Review Focus
 
-1. **Twin rows** (two identical same-day purchases) produce duplicate component ids in the expanded row list, and Dash rejects duplicate ids. Row button ids must carry a position `n`. Pinned in Task 5: `test_group_card_row_ids_unique`.
+1. **Twin rows** (two identical same-day purchases) share a `row_id`. They are merged into one row entry with `count` 2 (shown `×2`), so component ids stay unique and a click labels both. Row buttons are keyed on `row_id`, never a list position, and group buttons carry the group's `sig`, so a click from a stale list is refused instead of labeling the wrong rows. Pinned in Task 5: `test_group_card_row_ids_unique`; Task 6: `test_label_click_refuses_stale_sig`.
 2. **The pattern-matching callback fires when the list re-renders** (new buttons with `n_clicks=0`). It must do nothing, and in particular write nothing. Pinned in Task 6: `test_label_click_ignores_rerender` (via `_is_real_click`).
 3. **Rules whose keyword contains `*` or `#`** (`mta*nyct paygo`, `sq *the` already exist) must keep labeling the same rows after the normalizer change. Pinned in Task 1: `test_existing_star_rules_still_match`.
 4. **A `rules.csv` saved by Excel** (with a BOM, or a keyword containing a comma) must still be read and written correctly. Pinned in Task 2: `test_rules_bom_and_quoting_roundtrip`.
@@ -62,7 +75,8 @@
   - `labels.row_id(row: dict) -> str`
   - `labels.row_ids(df) -> pd.Series`
   - `labels.looks_like_transfer(description) -> bool`
-  - `labels.unlabeled_groups(df, only_row_ids=None) -> list[dict]`. Each group dict has the keys `key, mkey, merchant, count, total, abs_total, first, last, example, mixed, suggest_transfer, rows`. Each row dict has `row_id, date, description, amount, source, card_last4`.
+  - `labels.unlabeled_groups(df, only_row_ids=None) -> list[dict]`. Each group dict has the keys `key, mkey, merchant, count, total, abs_total, first, last, example, mixed, fallback, sig, suggest_transfer, rows`. `rows` has **one entry per distinct `row_id`** (identical twins merged), each with `row_id, date, description, amount, source, card_last4, count`. `sig` is a short hash of the group's `row_id`s and counts. `fallback` is True when the description has no recognizable merchant name.
+  - `labels.merchant_key` returns `""` when no name with a letter is left. The group then falls back to the full normalized description.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -101,8 +115,19 @@ def test_merchant_key():
     assert merchant_key("COINBASE INC. RTL-TPPSGD WEB ID: 1") == "coinbase inc"
     assert merchant_key("COINBASE INC. RTL-QRARKLK WEB ID: 2") == "coinbase inc"
     assert merchant_key("VENMO            PAYMENT 1234") == "venmo payment"
-    assert merchant_key("   ") == "unknown"
-    assert merchant_key("#1234") == "unknown"
+    assert merchant_key("   ") == ""
+    assert merchant_key("#1234") == ""
+
+
+def test_merchant_key_keeps_numeric_and_hyphenated_names():
+    # Names that start with a number or contain a hyphen must not collapse
+    # into one shared bucket (council round 2)
+    assert merchant_key("7-ELEVEN 12345") == "7-eleven"
+    assert merchant_key("99 RANCH MARKET #12") == "99 ranch market"
+    assert merchant_key("1-800-FLOWERS") == "1-800-flowers"
+    assert merchant_key("23ANDME") == "23andme"
+    assert merchant_key("76 FUEL 1234") == "76 fuel"
+    assert merchant_key("WAL-MART #1234") == "wal-mart"
 
 
 def test_rule_keyword_is_common_prefix_and_substring():
@@ -113,6 +138,8 @@ def test_rule_keyword_is_common_prefix_and_substring():
     assert rule_keyword(["PAYPAL *NETFLIX 1", "PAYPAL *NETFLIX 2"]) == "paypal netflix"
     assert rule_keyword(["AMAZON MKTP US", "AMAZON.COM"]) == ""
     assert rule_keyword([]) == ""
+    assert rule_keyword(["7-ELEVEN 123", "7-ELEVEN 456"]) == "7-eleven"
+    assert rule_keyword(["MORGAN STANLEY ACH DEBIT PPD ID: 123"]) == "morgan stanley"
 
 
 def test_row_id_stable_and_twins_equal():
@@ -147,10 +174,27 @@ def test_unlabeled_groups():
     assert not sb["mixed"] and groups[1]["mixed"]
     assert sb["first"] == pd.Timestamp("2025-03-01") and sb["last"] == pd.Timestamp("2025-03-02")
     assert {r["row_id"] for r in sb["rows"]} == set(row_ids(df.iloc[:2]))
+    assert all(r["count"] == 1 for r in sb["rows"]) and not sb["fallback"]
+    assert sb["sig"] == unlabeled_groups(df)[2]["sig"] and len(sb["sig"]) == 10
     assert sb["key"] == unlabeled_groups(df)[2]["key"]          # stable
     only = unlabeled_groups(df, only_row_ids=[sb["rows"][0]["row_id"]])
     assert len(only) == 1 and only[0]["count"] == 1
     assert unlabeled_groups(df.iloc[3:5]) == []
+
+
+def test_twins_merged_into_one_row():
+    df = _df([("2025-03-01", "CAFE", -4.5, ""), ("2025-03-01", "CAFE", -4.5, "")])
+    g = unlabeled_groups(df)[0]
+    assert g["count"] == 2 and len(g["rows"]) == 1 and g["rows"][0]["count"] == 2
+
+
+def test_nameless_descriptions_are_separate_fallback_groups():
+    df = _df([("2025-03-01", "#1234", -4.5, ""), ("2025-03-02", "#5678", -9.0, ""),
+              ("2025-03-03", "STARBUCKS 1", -3.0, "")])
+    groups = unlabeled_groups(df)
+    assert len(groups) == 3
+    fb = [g for g in groups if g["fallback"]]
+    assert len(fb) == 2 and all(g["count"] == 1 for g in fb)
 
 
 def test_suggest_transfer_flag():
@@ -174,6 +218,58 @@ def test_existing_star_rules_still_match(tmp_path):
               ("2025-03-03", "SQ *OTHER SHOP", -4.0, "")])
     out = apply_auto_categories(df.copy(), rules)
     assert out["master_category"].tolist() == ["Expense", "Expense", ""]
+
+
+def _old_apply(df, rules):
+    """The matching loop as it was before the normalizer (for the regression gate)."""
+    from Modules.transforms import PREDEFINED_CATEGORIES
+    desc = df["description"].str.lower()
+    unlabeled = df["master_category"] == ""
+    for _, rule in rules.iterrows():
+        keyword = str(rule["keyword"]).strip().lower()
+        mc = str(rule.get("master_category", "")).strip()
+        sc = str(rule.get("sub_category", "")).strip()
+        if not keyword or (mc and mc not in PREDEFINED_CATEGORIES) or (not mc and not sc):
+            continue
+        hits = desc.str.contains(keyword, regex=False, na=False)
+        if mc:
+            take = unlabeled & hits
+            df.loc[take, "master_category"] = mc
+            unlabeled = unlabeled & ~take
+        if sc:
+            fill = hits & (df["sub_category"] == "")
+            if mc:
+                fill = fill & (df["master_category"] == mc)
+            df.loc[fill, "sub_category"] = sc
+    return df
+
+
+def test_normalizer_regression_gate(tmp_path, capsys):
+    """Every demo row whose rule label changes under the normalizer must be
+    explained by it: the normalizer must actually have altered that row's
+    description (padding, '*' or '#'). Prints the diff for the report."""
+    import shutil
+    from pathlib import Path
+    from main import main as run_ingest
+    repo = Path(__file__).resolve().parent.parent
+    data = tmp_path / "data"
+    shutil.copytree(repo / "Test Data" / "RAW", data / "RAW")
+    run_ingest(data)
+    master = pd.read_csv(data / "SORTED" / "edited_combined_transactions.csv",
+                         dtype=str, keep_default_na=False)
+    base = master[["description", "master_category", "sub_category"]].copy()
+    rules = pd.read_csv(repo / "rules.csv", encoding="utf-8-sig").fillna("")
+    old = _old_apply(base.copy(), rules)
+    new = apply_auto_categories(base.copy(), repo / "rules.csv")
+    changed = ((old["master_category"] != new["master_category"])
+               | (old["sub_category"] != new["sub_category"]))
+    with capsys.disabled():
+        print(f"\n[regression gate] {int(changed.sum())} of {len(base)} demo rows change label")
+        for i in base.index[changed][:20]:
+            print(f"  {base.at[i, 'description']!r}: {old.at[i, 'master_category'] or '-'}"
+                  f" -> {new.at[i, 'master_category'] or '-'}")
+    for d in base.loc[changed, "description"]:
+        assert normalize_description(d) != str(d).lower().strip(), f"unexplained change: {d!r}"
 
 
 def test_rules_file_with_bom(tmp_path):
@@ -238,33 +334,52 @@ and append:
 # ── Merchant grouping (the labeling panel) ────────────────────────────────────
 
 _ID_TAIL  = re.compile(r" (?:web id|ppd id|ccd id|id:|ach )")
-_CODE     = re.compile(r"\b[a-z]{2,4}-\S+")
+# ACH reference codes like "rtl-tppsgd" — narrow on purpose: a generic
+# "xx-…" pattern would also eat names like "wal-mart"
+_CODE     = re.compile(r"\b(?:rtl|ppd|ccd|web)-\S+")
 _TRANSFER = re.compile(r"payment thank|autopay|online transfer|transfer to|transfer from"
                        r"|epay|card payment|directpay|internet payment")
+
+
+def _leading_words(text: str) -> str:
+    """Words up to the first word *after the first* that contains a digit:
+    store numbers and dates drop off, but a name that starts with a number
+    ('7-eleven', '99 ranch', '1-800-flowers') survives."""
+    words = text.split()
+    keep = words[:1]
+    for w in words[1:]:
+        if re.search(r"\d", w):
+            break
+        keep.append(w)
+    return " ".join(keep)
 
 
 def merchant_key(description) -> str:
     """Who a transaction is with, stripped of store numbers, reference ids and
     ACH codes, so one merchant's rows group together: 'STARBUCKS STORE 01234
-    SEATTLE' and '… 09876 NEW YORK' are both 'starbucks store'."""
+    SEATTLE' and '… 09876 NEW YORK' are both 'starbucks store'. Returns ''
+    when no name with a letter is left (e.g. '#1234') — the caller must not
+    lump those together."""
     s = normalize_description(description)
     s = _ID_TAIL.split(s, maxsplit=1)[0]
-    s = re.split(r"\d", s, maxsplit=1)[0]
     s = _CODE.sub("", s)
-    return re.sub(r"\s+", " ", s).strip(" -.,/") or "unknown"
+    s = _leading_words(s).strip(" -.,/")
+    return s if re.search(r"[a-z]", s) else ""
 
 
 def rule_keyword(descriptions) -> str:
     """The rule keyword for a group: the longest word-aligned prefix all its
-    descriptions share (normalized), cut before any digit. Always a real
-    substring of every description, so the rule matches the whole group."""
-    split = [normalize_description(d).split(" ") for d in descriptions]
+    descriptions share (normalized), cut at reference-id tails and before a
+    later word with a digit. Always a real substring of every description,
+    so the rule matches the whole group."""
+    split = [normalize_description(d).split() for d in descriptions]
     common = []
     for words in zip(*split):
         if any(w != words[0] for w in words):
             break
         common.append(words[0])
-    return re.split(r"\d", " ".join(common), maxsplit=1)[0].strip(" -.,/")
+    prefix = _ID_TAIL.split(" ".join(common), maxsplit=1)[0]
+    return _leading_words(prefix).strip(" -.,/")
 
 
 def row_id(row: dict) -> str:
@@ -297,13 +412,29 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
     if only_row_ids is not None:
         un = un[un["_rid"].isin(set(only_row_ids))]
     un["_mk"] = un["description"].map(merchant_key)
+    # No recognizable name: each description is its own group, flagged, so
+    # unrelated rows are never bulk-labeled together
+    un["_fb"] = un["_mk"] == ""
+    un.loc[un["_fb"], "_mk"] = un.loc[un["_fb"], "description"].map(normalize_description)
     groups = []
     for mk, g in un.groupby("_mk", sort=False):
         amounts = g["amount"]
+        rows: dict[str, dict] = {}
+        # Identical twins share a row_id and are labeled together: one entry
+        for r in g.sort_values("date", kind="stable").to_dict("records"):
+            if r["_rid"] in rows:
+                rows[r["_rid"]]["count"] += 1
+            else:
+                rows[r["_rid"]] = {"row_id": r["_rid"], "date": r["date"],
+                                   "description": r["description"], "amount": float(r["amount"]),
+                                   "source": r["source"], "card_last4": r.get("card_last4", "") or "",
+                                   "count": 1}
+        sig_src = "|".join(sorted(f"{k}x{v['count']}" for k, v in rows.items()))
+        fallback = bool(g["_fb"].any())
         groups.append({
             "key": hashlib.sha1(mk.encode()).hexdigest()[:10],
             "mkey": mk,
-            "merchant": mk.upper(),
+            "merchant": (str(g["description"].iloc[0]).strip() if fallback else mk).upper(),
             "count": int(len(g)),
             "total": float(amounts.sum()),
             "abs_total": float(amounts.abs().sum()),
@@ -311,19 +442,23 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
             "last": g["date"].max(),
             "example": str(g["description"].iloc[0]).strip(),
             "mixed": bool((amounts > 0).any() and (amounts < 0).any()),
+            "fallback": fallback,
+            "sig": hashlib.sha1(sig_src.encode()).hexdigest()[:10],
             "suggest_transfer": bool(g["description"].map(looks_like_transfer).any()),
-            "rows": [{"row_id": r["_rid"], "date": r["date"], "description": r["description"],
-                      "amount": float(r["amount"]), "source": r["source"],
-                      "card_last4": r.get("card_last4", "") or ""}
-                     for r in g.sort_values("date", kind="stable").to_dict("records")],
+            "rows": list(rows.values()),
         })
     return sorted(groups, key=lambda x: x["abs_total"], reverse=True)
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python -m pytest tests/ -q -p no:cacheprovider`
-Expected: every test passes (`tests/test_grouping.py` adds 11; the 49 existing still pass).
+Run: `python -m pytest tests/ -q -p no:cacheprovider -s`
+Expected: every test passes. Copy the `[regression gate]` lines into your report: the controller reviews every changed row.
+
+- [ ] **Step 4b: Measure the grouping on the demo data** (for the spec's numbers). Using a temp copy of `Test Data` (ingest it with `main.main(data_dir)`), load it with `load_transactions(..., rules_path=<repo>/rules.csv)` and report:
+  - `len(unlabeled_groups(df))`;
+  - the share of unlabeled `abs_total` covered by the top 25;
+  - how many groups are `fallback` and how many are `mixed`.
 
 - [ ] **Step 5: Commit**
 
@@ -347,7 +482,7 @@ git commit -m "Group unlabeled rows by merchant; normalize rule matching"
   - `read_rules(path) -> pd.DataFrame` (all columns `str`; `RULE_COLUMNS` always present)
   - `add_rule(path, keyword, category, sub="") -> bool`
   - `delete_rule(path, keyword) -> bool`
-  - `rule_check(df, rules, group, norm=None) -> dict`, with keys `ok, keyword, reason, blocking, rows_now, dollars_now, others`
+  - `rule_check(df, rules, group, norm=None) -> dict`, with keys `ok, keyword, reason, blocking, rows_now, dollars_now, others, direction` (`"money out"`, `"money in"` or `"mixed"`). Fallback groups are always blocked.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -381,6 +516,15 @@ def test_rule_check_ok():
     assert chk["ok"] and not chk["blocking"] and chk["reason"] is None
     assert chk["keyword"] == "starbucks store"
     assert chk["rows_now"] == 2 and chk["dollars_now"] == 11.0
+    assert chk["direction"] == "money out"
+
+
+def test_rule_check_blocks_fallback_groups():
+    df = _df([("2025-03-01", "#123456", -5.0, "")])
+    g = unlabeled_groups(df)[0]
+    assert g["fallback"]
+    chk = rule_check(df, read_rules("/nonexistent"), g)
+    assert not chk["ok"] and chk["blocking"] and "name" in chk["reason"]
 
 
 def test_rule_check_too_short():
@@ -410,6 +554,7 @@ def test_rule_check_mixed_sign_is_not_blocking():
               ("2025-03-02", "AMAZON MKTP 2", 20.0, "")])
     chk = rule_check(df, read_rules("/nonexistent"), _group(df, "AMAZON MKTP"))
     assert not chk["ok"] and not chk["blocking"] and "in and out" in chk["reason"]
+    assert chk["direction"] == "mixed"
 
 
 def test_add_rule_new_file_and_refusals(tmp_path):
@@ -515,14 +660,21 @@ def rule_check(df: pd.DataFrame, rules: pd.DataFrame, group: dict, norm=None) ->
     """
     descs = [r["description"] for r in group["rows"]]
     kw = rule_keyword(descs)
+    direction = "mixed" if group["mixed"] else ("money in" if group["total"] > 0 else "money out")
     out = {"ok": False, "keyword": kw, "reason": None, "blocking": True,
-           "rows_now": 0, "dollars_now": 0.0, "others": []}
+           "rows_now": 0, "dollars_now": 0.0, "others": [], "direction": direction}
+    if group.get("fallback"):
+        out["reason"] = "no recognizable merchant name — label these one at a time"
+        return out
     if len(kw) < MIN_KEYWORD:
         out["reason"] = "no keyword long enough to be safe"
         return out
     norm = df["description"].map(normalize_description) if norm is None else norm
     hits = norm.str.contains(kw, regex=False)
-    others = sorted(set(df.loc[hits, "description"].map(merchant_key)) - {group["mkey"]})
+    # Group keys exactly as unlabeled_groups makes them (nameless rows key on
+    # their own description)
+    keys = {merchant_key(d) or normalize_description(d) for d in df.loc[hits, "description"]}
+    others = sorted(keys - {group["mkey"]})
     if others:
         out["others"] = [o.upper() for o in others[:3]]
         out["reason"] = "also matches " + ", ".join(out["others"])
@@ -548,6 +700,11 @@ def rule_check(df: pd.DataFrame, rules: pd.DataFrame, group: dict, norm=None) ->
 Run: `python -m pytest tests/ -q -p no:cacheprovider`
 Expected: all pass.
 
+- [ ] **Step 4b: Measure rule safety on the demo data** (for the spec). On the same temp copy as Task 1 Step 4b, report:
+  - how many groups `rule_check` passes (`ok`), and their share of unlabeled dollars;
+  - how many of the top 25 pass;
+  - a count of the blocking reasons.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -568,11 +725,12 @@ git commit -m "Add rule safety check and rules.csv read/add/delete"
 **Interfaces:**
 - Consumes: from Task 1, `row_id`, `row_ids` and `unlabeled_groups`; the existing `apply_label_import`, `atomic_write_csv`, `backup_master` and `_replace_from`.
 - Produces:
-  - `label_rows(master, rows, category, sub="") -> tuple[pd.DataFrame, int]`
+  - `label_rows(master, rows, category, sub="") -> tuple[pd.DataFrame, int]`. It touches **only master rows with no valid label**, so a hand-labeled twin is never overwritten. Callers compare the returned count with `sum(r["count"] for r in rows)` and write nothing on a mismatch.
+  - `safety.snapshot_master(master, name="before-labeling") -> Path | None`: a copy kept **outside** the 10-backup rotation (`SORTED/backups/before-labeling.csv`)
   - `LAST_IMPORT_NAME = "last_import.csv"`
   - `last_import_ids(master_path) -> list[str] | None`
   - `safety.restore_backup(backup, master) -> None`
-  - `SORTED/last_import.csv`, a single `row_id` column
+  - `SORTED/last_import.csv`, a single `row_id` column, written only when an import added rows. A Reload that adds nothing leaves it alone.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -620,6 +778,13 @@ def test_label_rows_twins_once_each():
     assert out.loc[0, "sub_category"] == "Coffee"
 
 
+def test_label_rows_never_overwrites_a_labeled_twin():
+    master = _master_df([("2025-03-01", "CAFE", -4.5, ""), ("2025-03-01", "CAFE", -4.5, "")])
+    master.loc[0, "master_category"] = "Income"            # hand-labeled twin
+    out, n = label_rows(master, _as_rows(master, [1]), "Expense")
+    assert n == 1 and out["master_category"].tolist() == ["Income", "Expense"]
+
+
 def test_label_rows_card_aware():
     master = _master_df([("2025-03-01", "CAFE", -4.5, "0123"), ("2025-03-01", "CAFE", -4.5, "4567")])
     out, n = label_rows(master, _as_rows(master, [0]), "Expense")
@@ -634,6 +799,19 @@ def test_restore_backup(tmp_path):
     master.write_text("a\n2\n")
     restore_backup(b, master)
     assert master.read_text() == "a\n1\n"
+
+
+def test_snapshot_survives_backup_rotation(tmp_path):
+    from Modules.safety import list_backups, snapshot_master
+    master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master.parent.mkdir()
+    master.write_text("a\n0\n")
+    snap = snapshot_master(master)
+    for i in range(1, 13):
+        master.write_text(f"a\n{i}\n")
+        backup_master(master, keep=3)
+    assert snap.exists() and snap.read_text() == "a\n0\n"
+    assert snap not in list_backups(master)
 
 
 def _combined(rows):
@@ -658,6 +836,8 @@ def test_last_import_records_only_new_rows(tmp_path):
                        "source": "Chase Credit", "card_last4": ""})
     assert ids == [expected]
     assert (master.parent / LAST_IMPORT_NAME).exists()
+    rebuild_master(_combined([a, b]), master)                    # no-op Reload
+    assert last_import_ids(master) == [expected]                 # still remembered
 
 
 @pytest.fixture
@@ -685,6 +865,56 @@ def test_labeling_a_group_raises_totals_by_exactly_its_amount(demo):
         -sum(r["amount"] for r in group["rows"]))
     ids = {r["row_id"] for r in group["rows"]}
     assert (df2.loc[row_ids(df2).isin(ids), "master_category"] == "Expense").all()
+
+
+def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
+    """The goal, end to end: labeling the top groups (remembering safe ones)
+    shrinks the unreviewed dollars, loses or duplicates nothing, and the next
+    statement's matching row is labeled by the new rule automatically."""
+    from main import main as run_ingest
+    from Modules.labels import add_rule, read_rules, rule_check
+    from Modules.transforms import PREDEFINED_CATEGORIES as CATS
+    rules = tmp_path / "rules.csv"
+    shutil.copy(REPO / "rules.csv", rules)
+    df = load_transactions(demo, rules_path=rules)
+    n_rows, total = len(df), df["amount"].sum()
+    unrev = lambda d: d.loc[~d["master_category"].isin(CATS), "amount"].abs().sum()
+    before = unrev(df)
+
+    groups = [g for g in unlabeled_groups(df) if not g["fallback"] and not g["mixed"]][:25]
+    master = pd.read_csv(demo, dtype={"card_last4": str, "master_category": str, "sub_category": str})
+    labeled, remembered = 0.0, []
+    for g in groups:
+        cat = "Expense" if g["total"] < 0 else "Income"
+        master, n = label_rows(master, g["rows"], cat)
+        assert n == sum(r["count"] for r in g["rows"])
+        labeled += g["abs_total"]
+        chk = rule_check(df, read_rules(rules), g)
+        if chk["ok"] and add_rule(rules, chk["keyword"], cat):
+            remembered.append(chk["keyword"])
+    atomic_write_csv(master, demo)
+    df2 = load_transactions(demo, rules_path=rules)
+
+    assert len(df2) == n_rows and df2["amount"].sum() == pytest.approx(total)   # nothing lost or duplicated
+    assert unrev(df2) <= before - labeled + 0.01
+    buckets = sum(df2.loc[df2["master_category"] == c, "amount"].sum() for c in CATS)
+    unrev_amt = df2.loc[~df2["master_category"].isin(CATS), "amount"].sum()
+    assert buckets + unrev_amt == pytest.approx(total)                          # every row in one bucket
+    assert remembered, "no top group was safe to remember"
+
+    # Next week's statement: one row from a remembered merchant, two new ones
+    kw = remembered[0]
+    (demo.parent.parent / "RAW" / "Chase" / "Chase9999_Activity_20260110.CSV").write_text(
+        "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
+        f"01/05/2026,01/06/2026,{kw.upper()} 555,Shopping,Sale,-12.34,\n"
+        "01/06/2026,01/07/2026,NEWSHOP ALPHA 1,Shopping,Sale,-20.00,\n"
+        "01/07/2026,01/08/2026,NEWSHOP BETA 2,Shopping,Sale,-30.00,\n")
+    run_ingest(demo.parent.parent)
+    ids = last_import_ids(demo)
+    df3 = load_transactions(demo, rules_path=rules)
+    new = df3[row_ids(df3).isin(set(ids))]
+    assert len(ids) == 3
+    assert int(new["master_category"].isin(CATS).sum()) == 1                  # the rule caught it
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -700,6 +930,20 @@ In `Modules/safety.py`, after `_replace_from`:
 def restore_backup(backup: Path, master: Path) -> None:
     """Put a backup back over the master, atomically (used by the panel's Undo)."""
     _replace_from(Path(backup), Path(master))
+
+
+def snapshot_master(master: Path, name: str = "before-labeling") -> Path | None:
+    """A named copy kept OUTSIDE the backup rotation: labeling takes a backup
+    per click, so ten clicks would otherwise prune away the state from before
+    the labeling session — the recovery point that matters most."""
+    master = Path(master)
+    if not master.exists():
+        return None
+    d = _backup_dir(master)
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / f"{name}{master.suffix}"          # outside list_backups' glob
+    _replace_from(master, dest)
+    return dest
 ```
 
 Append to `Modules/labels.py`:
@@ -712,8 +956,10 @@ LAST_IMPORT_NAME = "last_import.csv"
 
 def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str = "") -> tuple[pd.DataFrame, int]:
     """Label exactly these rows in the master, through the same matcher Excel
-    imports use (date + description + amount + source + card). Twin rows are
-    sent once so the count isn't doubled. Returns (master, rows labeled)."""
+    imports use (date + description + amount + source + card), touching only
+    rows that have no valid label yet. Twin rows are sent once so the count
+    isn't doubled. Returns (master, rows labeled); the caller checks the count
+    against what it expected and writes nothing on a mismatch."""
     imp = pd.DataFrame([{
         "date": pd.Timestamp(r["date"]).strftime("%Y-%m-%d"),
         "description": str(r["description"]),
@@ -723,7 +969,14 @@ def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str =
         "master_category": category,
         "sub_category": sub or "",
     } for r in rows]).drop_duplicates()
-    master, updated, _ = apply_label_import(master, imp)
+    # Only rows without a valid label are candidates: a hand-labeled twin of an
+    # unlabeled row (same date, description, amount, card) must keep its label
+    master = master.copy()
+    open_ = ~master["master_category"].fillna("").astype(str).str.strip().isin(PREDEFINED_CATEGORIES)
+    part, updated, _ = apply_label_import(master[open_], imp)
+    for col in ("master_category", "sub_category"):
+        master[col] = master[col].fillna("").astype(str)
+        master.loc[part.index, col] = part[col]
     return master, updated
 
 
@@ -740,41 +993,45 @@ def last_import_ids(master_path) -> list[str] | None:
         return None
 ```
 
-In `main.py`, add `from Modules.labels import LAST_IMPORT_NAME, row_id` to the imports. In `rebuild_master`:
+In `main.py`, add `from Modules.labels import LAST_IMPORT_NAME, row_id` to the imports. Then make four edits in `rebuild_master`. Each code block below is shown at the indentation it has in the function.
 
-1. Next to `orphans = None`, add `new_ids = None   # rows this import added; set only when a prior master existed`.
-2. In pass 2, track rescued rows. Change
-   ```python
-               if bucket:
-                   _take(idx, bucket.popleft())
-                   result["rescued"] += 1
-   ```
-   to
-   ```python
-               if bucket:
-                   _take(idx, bucket.popleft())
-                   rescued.add(idx)
-                   result["rescued"] += 1
-   ```
-   and initialise `rescued = set()` on the line before `rest = combined[...]`.
-3. Directly after `result["orphaned"] = len(orphans)`, add:
-   ```python
-           # What this import added: rows neither carried nor rescued from the
-           # old master. Computed before the sort below renumbers the index.
-           fresh = combined.index.difference(list(matched | rescued))
-           new_ids = [row_id(r) for r in combined.loc[fresh].to_dict("records")]
-   ```
-4. After the orphan block, and before `return result`:
-   ```python
-       # Record the import's new rows for the dashboard's "N new · K need you"
-       # line. Skipped on the very first import, when every row is new.
-       if new_ids is not None:
-           try:
-               atomic_write_csv(pd.DataFrame({"row_id": new_ids}),
-                                master_file.parent / LAST_IMPORT_NAME)
-           except OSError as e:
-               print(f"  ⚠ Could not record the last import ({e})")
-   ```
+**(a)** Next to `orphans = None`:
+
+```python
+    new_ids = None   # rows this import added; set only when a prior master existed
+```
+
+**(b)** In pass 2, put `rescued = set()` on the line before `rest = combined[...]`. Then change the `if bucket:` block to:
+
+```python
+            if bucket:
+                _take(idx, bucket.popleft())
+                rescued.add(idx)
+                result["rescued"] += 1
+```
+
+**(c)** Directly after `result["orphaned"] = len(orphans)`:
+
+```python
+        # What this import added: rows neither carried nor rescued from the
+        # old master. Computed before the sort below renumbers the index.
+        fresh = combined.index.difference(list(matched | rescued))
+        new_ids = [row_id(r) for r in combined.loc[fresh].to_dict("records")]
+```
+
+**(d)** After the orphan block, and before `return result`:
+
+```python
+    # Record the import's new rows for the dashboard's "N new · K need you"
+    # line — only when this import added any: a Reload that finds nothing new
+    # must not wipe the record of the last real import.
+    if new_ids:
+        try:
+            atomic_write_csv(pd.DataFrame({"row_id": new_ids}),
+                             master_file.parent / LAST_IMPORT_NAME)
+        except OSError as e:
+            print(f"  ⚠ Could not record the last import ({e})")
+```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -790,17 +1047,18 @@ git commit -m "Label rows via the import matcher; record each import's new rows"
 
 ---
 
-### Task 4: Header entry points, unreviewed line, drilldown grouping
+### Task 4: Header entry points, unreviewed line, rules-path override
 
 **Files:**
-- Modify: `app.py`: imports; the header layout (`unlabeled-note` area); `update_unlabeled_note`; a new `update_last_import_note`; `update_stats`; the drilldown's `_merchant`; and a new `_HIDDEN` / `_SHOWN_INLINE` style pair near `_MENU_HIDDEN`
+- Modify: `app.py`: imports; `RULES_PATH` (env override); the header layout (`unlabeled-note` area); `update_unlabeled_note`; a new `update_last_import_note`; `update_stats`; and a new `_HIDDEN` / `_SHOWN_INLINE` style pair near `_MENU_HIDDEN`. The drilldown's `_merchant` is **not** changed: that would be an unrelated behaviour change.
 - Modify: `assets/app.css` (the `.notice-row` and `.unreviewed` rules)
 - Test: `tests/test_label_panel.py` (header and stat-card helpers)
 
 **Interfaces:**
 - Consumes: from Tasks 1 and 3, `unlabeled_groups`, `row_ids`, `last_import_ids` and `merchant_key`.
 - Produces:
-  - layout ids `open-label-panel`, `last-import-note` and `open-label-review`
+  - `RULES_PATH` honours `FINANCE_RULES_PATH`, so tests and Playwright point the app at a temp copy and never write the repo's `rules.csv`
+  - layout ids `open-label-panel`, `last-import-note` and `open-label-review`. The two buttons have no callback until Task 5 and stay hidden until data exists, which is acceptable inside this branch.
   - the module helpers `unreviewed_amounts(pdf) -> tuple[float, float]` (money out, money in) and `last_import_text(df, ids) -> tuple[str, int]` (text, need-you count)
 
 - [ ] **Step 1: Write the failing tests**
@@ -823,15 +1081,23 @@ def appmod(tmp_path_factory):
     import runpy
     data = tmp_path_factory.mktemp("data")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
-    old = os.environ.get("FINANCE_DATA_DIR")
+    rules = data / "rules.csv"
+    shutil.copy(REPO / "rules.csv", rules)          # never write the repo's rules.csv
+    saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH")}
     os.environ["FINANCE_DATA_DIR"] = str(data)
+    os.environ["FINANCE_RULES_PATH"] = str(rules)
     try:
         yield runpy.run_path(str(REPO / "app.py"), run_name="test_app")
     finally:
-        if old is None:
-            os.environ.pop("FINANCE_DATA_DIR", None)
-        else:
-            os.environ["FINANCE_DATA_DIR"] = old
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_rules_path_override(appmod):
+    assert Path(appmod["RULES_PATH"]).parent != REPO
 
 
 def test_unreviewed_amounts(appmod):
@@ -857,7 +1123,15 @@ Expected: FAIL, `KeyError: 'unreviewed_amounts'`.
 
 - [ ] **Step 3: Implement**
 
-Imports in `app.py`: add `ALL` to `from dash import …`. Extend the labels import to `from Modules.labels import apply_label_import, read_import_csv, merchant_key, row_ids, last_import_ids` (later tasks add more names). Add `PREDEFINED_CATEGORIES` to the `Modules.transforms` import.
+`RULES_PATH` in `app.py` becomes:
+
+```python
+# FINANCE_RULES_PATH lets tests and scripted checks use a copy, so they never
+# rewrite the real rules.csv now that the app can add and delete rules
+RULES_PATH  = Path(os.environ.get("FINANCE_RULES_PATH") or BASE_DIR / "rules.csv")
+```
+
+Imports in `app.py`: add `ALL` to `from dash import …`. Extend the labels import to `from Modules.labels import apply_label_import, read_import_csv, row_ids, last_import_ids` (later tasks add more names). Add `PREDEFINED_CATEGORIES` to the `Modules.transforms` import.
 
 Near `_MENU_HIDDEN`:
 
@@ -954,8 +1228,6 @@ In `update_stats`, before `cards = [`:
 
 Then change the SPENT and INCOME cards so they pass `[*_lines("exp", False), _unreviewed(out_unrev)]` and `[*_lines("inc", True), _unreviewed(in_unrev)]` respectively. In `_stat_card`, filter out `None`: `*[l for l in lines if l is not None]`.
 
-Drilldown: delete the inner `_merchant` function and its comment, and change `txns["description"].map(_merchant)` to `txns["description"].map(lambda d: merchant_key(d).upper())`. Merchant grouping is now shared with the labeling panel.
-
 CSS (append to `assets/app.css` under the Header section):
 
 ```css
@@ -974,7 +1246,7 @@ Expected: all pass; pyflakes shows only the two existing `main.py` f-string warn
 
 ```bash
 git add app.py assets/app.css tests/test_label_panel.py
-git commit -m "Header entry points, unreviewed totals, shared merchant grouping"
+git commit -m "Header entry points, unreviewed totals, rules-path override"
 ```
 
 ---
@@ -993,8 +1265,8 @@ git commit -m "Header entry points, unreviewed totals, shared merchant grouping"
   - stores `label-filter` (`"all"`/`"last"`), `label-undo` and `label-version`
   - ids `label-panel`, `label-list`, `label-summary`, `label-tab`, `label-status`, `label-undo-btn` and `close-label-panel`
   - pattern ids:
-    - `{"type": "lbl-group", "group", "cat"}`
-    - `{"type": "lbl-row", "group", "n", "cat"}`
+    - `{"type": "lbl-group", "group", "sig", "cat"}`, where `sig` is the group's signature at render time, checked again at click time
+    - `{"type": "lbl-row", "group", "row", "cat"}`, where `row` is a `row_id`, never a list position
     - `{"type": "lbl-sub", "group"}`
     - `{"type": "lbl-remember", "group"}`
     - `{"type": "lbl-rule-del", "keyword"}`
@@ -1017,6 +1289,22 @@ def _ids(component):
         if kids is not None:
             stack.append(kids)
     return out
+
+
+def test_mixed_and_fallback_groups_have_no_group_buttons(appmod):
+    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-03-01", "2025-03-02", "2025-03-03"]),
+        "description": ["AMAZON MKTP 1", "AMAZON MKTP 2", "#99999"], "amount": [-20.0, 20.0, -5.0],
+        "master_category": ["", "", ""], "sub_category": ["", "", ""],
+        "source": ["Chase Credit"] * 3, "card_last4": ["", "", ""],
+    })
+    for g in unlabeled_groups(df):
+        assert g["mixed"] or g["fallback"]
+        card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+        ids = _ids(card)
+        assert not any(isinstance(i, dict) and i.get("type") == "lbl-group" for i in ids)
+        assert any(isinstance(i, dict) and i.get("type") == "lbl-row" for i in ids)
 
 
 def test_group_card_row_ids_unique(appmod):
@@ -1072,7 +1360,7 @@ Expected: FAIL, `KeyError: '_group_card'`.
 
 - [ ] **Step 3: Implement**
 
-Extend the `Modules.labels` import with `unlabeled_groups, rule_check, read_rules`, and add `normalize_description` to the transforms import.
+Extend the `Modules.labels` import with `unlabeled_groups, rule_check, read_rules`, add `normalize_description` to the transforms import, and add `snapshot_master` to the `Modules.safety` import.
 
 Constants, after `CHART_PERIODS`:
 
@@ -1148,9 +1436,13 @@ def _group_card(g: dict, chk: dict):
     """One merchant group: three label buttons, subcategory, remember, rows."""
     key = g["key"]
 
-    def _btn(cat, n=None):
-        id_ = ({"type": "lbl-group", "group": key, "cat": cat} if n is None
-               else {"type": "lbl-row", "group": key, "n": n, "cat": cat})
+    # Bulk buttons only when one click is safe: never on a nameless (fallback)
+    # group or one with money both in and out — those are labeled row by row
+    bulk = not g["fallback"] and not g["mixed"]
+
+    def _btn(cat, row=None):
+        id_ = ({"type": "lbl-group", "group": key, "sig": g["sig"], "cat": cat} if row is None
+               else {"type": "lbl-row", "group": key, "row": row, "cat": cat})
         cls = "btn-secondary btn-small"
         if cat == "Transfer" and g["suggest_transfer"]:
             cls += " suggested"
@@ -1159,17 +1451,18 @@ def _group_card(g: dict, chk: dict):
                            if "suggested" in cls else None)
 
     if chk["ok"]:
-        note = (f'rule "{chk["keyword"]}" · labels {chk["rows_now"]} row'
+        note = (f'rule "{chk["keyword"]}" ({chk["direction"]}) · labels {chk["rows_now"]} row'
                 f'{"s" if chk["rows_now"] != 1 else ""} ({_dollar0(chk["dollars_now"])}) now')
     else:
         note = chk["reason"]
 
     rows = [html.Div(className="lg-row", children=[
                 html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
-                html.Span(r["description"], className="lg-desc", title=r["description"]),
+                html.Span(r["description"] + (f"  ×{r['count']}" if r["count"] > 1 else ""),
+                          className="lg-desc", title=r["description"]),
                 html.Span(_dollar(r["amount"]), className="lg-amt"),
-                html.Div(className="lg-buttons", children=[_btn(c, i) for c in PREDEFINED_CATEGORIES]),
-            ]) for i, r in enumerate(g["rows"])]
+                html.Div(className="lg-buttons", children=[_btn(c, r["row_id"]) for c in PREDEFINED_CATEGORIES]),
+            ]) for r in g["rows"]]
 
     return html.Div(className="app-card label-group", children=[
         html.Div(className="lg-main", children=[
@@ -1182,7 +1475,8 @@ def _group_card(g: dict, chk: dict):
                          f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
                 html.Div(g["example"], className="lg-example"),
             ]),
-            html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]),
+            html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
+            else html.Div("Label these one at a time below", className="hint"),
         ]),
         html.Div(className="lg-options", children=[
             dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
@@ -1195,7 +1489,8 @@ def _group_card(g: dict, chk: dict):
             ),
             html.Span(note, className="hint"),
         ]),
-        html.Details(className="lg-rows", children=[
+        # Row-by-row groups stay open so each click doesn't re-collapse them
+        html.Details(className="lg-rows", open=not bulk, children=[
             html.Summary(f"Label rows one at a time ({g['count']})"), *rows,
         ]),
     ])
@@ -1255,6 +1550,11 @@ def toggle_label_panel(_open, _review, _close, trigger):
     if ctx.triggered_id == "close-label-panel":
         return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
     filt = "last" if ctx.triggered_id == "open-label-review" else "all"
+    # Keep the state from before this labeling session outside the backup
+    # rotation (each click takes a rotating backup)
+    if MASTER_PATH and MASTER_PATH.exists():
+        with MASTER_LOCK:
+            snapshot_master(MASTER_PATH)
     return {"display": "block"}, filt, "todo", dash.no_update
 
 
@@ -1342,52 +1642,126 @@ git commit -m "Labeling panel: layout, guide, merchant groups, rules tab"
 - Test: `tests/test_label_panel.py` (append)
 
 **Interfaces:**
-- Consumes: from Tasks 1–5, `label_rows`, `rule_check`, `add_rule`, `delete_rule`, `read_rules`, `restore_backup`, `backup_master`, `atomic_write_csv`, `MASTER_LOCK` and the ids from Task 5.
-- Produces: `_is_real_click`, `_do_label`, `_do_undo`, and the callbacks. `label-undo` data is `{"backup": str, "master_mtime": int, "rules_mtime": int, "rule": str | None}`.
+- Consumes: from Tasks 1–5, `label_rows`, `rule_check`, `add_rule`, `delete_rule`, `read_rules`, `restore_backup`, `backup_master`, `atomic_write_csv`, `MASTER_LOCK` and the ids from Task 5 (`lbl-group` carries `sig`; `lbl-row` carries `row`, a `row_id`).
+- Produces: `_is_real_click`, `_mtime`, `_do_label`, `_do_undo`, and the callbacks. `label-undo` data is `{"backup": str, "master_mtime": str, "rules_mtime": str, "rule": str | None}`. The mtimes are **strings**: `st_mtime_ns` is above 2^53, and the browser's JSON round-trip would round an int, so undo would always refuse.
 
 - [ ] **Step 1: Write the failing tests** (append)
 
 ```python
+import json
+
+
 def _live(appmod):
     """The app module's live globals (runpy returns a copy; callbacks rebind df)."""
     return appmod["_do_label"].__globals__
 
 
+def _bulk_group(g_):
+    from Modules.labels import unlabeled_groups
+    return next(g for g in unlabeled_groups(g_["df"]) if not g["fallback"] and not g["mixed"])
+
+
+def _group_trig(grp, cat="Expense", sig=None):
+    return {"type": "lbl-group", "group": grp["key"], "sig": sig or grp["sig"], "cat": cat}
+
+
 def test_label_click_ignores_rerender(appmod):
     real = appmod["_is_real_click"]
+    pid = '{"cat":"Expense","group":"x","sig":"s","type":"lbl-group"}.n_clicks'
     assert not real([])
-    assert not real([{"prop_id": '{"cat":"Expense","group":"x","type":"lbl-group"}.n_clicks', "value": 0}])
-    assert not real([{"prop_id": '{"cat":"Expense","group":"x","type":"lbl-group"}.n_clicks', "value": None}])
-    assert real([{"prop_id": '{"cat":"Expense","group":"x","type":"lbl-group"}.n_clicks', "value": 1}])
+    assert not real([{"prop_id": pid, "value": 0}])
+    assert not real([{"prop_id": pid, "value": None}])
+    assert real([{"prop_id": pid, "value": 1}])
 
 
 def test_label_then_undo_roundtrip(appmod):
-    from Modules.labels import unlabeled_groups
     g_ = _live(appmod)
     master = g_["MASTER_PATH"]
     before = master.read_bytes()
-    grp = unlabeled_groups(g_["df"])[0]
-    status, undo, _, version = g_["_do_label"](
-        {"type": "lbl-group", "group": grp["key"], "cat": "Expense"}, "", False, 0, "all")
+    grp = _bulk_group(g_)
+    status, undo, _, version = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
     assert status.startswith("Labeled") and undo and version == 1
     assert master.read_bytes() != before
+    undo = json.loads(json.dumps(undo))          # what the browser hands back
     status2, undo2, _, _ = g_["_do_undo"](undo, 1)
     assert status2 == "Undone." and undo2 is None
     assert master.read_bytes() == before
 
 
+def test_undo_record_survives_json(appmod):
+    g_ = _live(appmod)
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    assert isinstance(undo["master_mtime"], str) and isinstance(undo["rules_mtime"], str)
+    assert json.loads(json.dumps(undo)) == undo
+
+
 def test_undo_refuses_after_change(appmod):
-    from Modules.labels import unlabeled_groups
     g_ = _live(appmod)
     master = g_["MASTER_PATH"]
-    grp = unlabeled_groups(g_["df"])[0]
-    _, undo, _, _ = g_["_do_label"](
-        {"type": "lbl-group", "group": grp["key"], "cat": "Expense"}, "", False, 0, "all")
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
     changed = master.read_bytes() + b"\n"
     master.write_bytes(changed)                  # something else wrote the master
     status, undo2, _, _ = g_["_do_undo"](undo, 1)
     assert status.startswith("Can't undo") and undo2 is None
     assert master.read_bytes() == changed
+
+
+def test_undo_refuses_after_rules_change(appmod):
+    g_ = _live(appmod)
+    master, rules = g_["MASTER_PATH"], g_["RULES_PATH"]
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    after = master.read_bytes()
+    rules.write_text(rules.read_text() + "zzz unrelated shop,Expense,,2026-01-01\n")
+    status, undo2, _, _ = g_["_do_undo"](undo, 1)
+    assert status.startswith("Can't undo") and undo2 is None
+    assert master.read_bytes() == after
+
+
+def test_label_click_refuses_stale_sig(appmod):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, version = g_["_do_label"](_group_trig(_bulk_group(g_), sig="0000000000"), "", False, 0, "all")
+    assert status.startswith("The list changed") and version == 1
+    assert master.read_bytes() == before
+
+
+def test_label_click_refuses_group_label_on_mixed_or_fallback(appmod):
+    from Modules.labels import unlabeled_groups
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    risky = [g for g in unlabeled_groups(g_["df"]) if g["fallback"] or g["mixed"]]
+    assert risky, "Test Data should contain at least one mixed or fallback group"
+    status, _, _, _ = g_["_do_label"](_group_trig(risky[0]), "", False, 0, "all")
+    assert status.startswith("Label these one at a time")
+    assert master.read_bytes() == before
+
+
+def test_row_click_labels_by_row_id(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    grp = _bulk_group(g_)
+    row = grp["rows"][-1]
+    status, _, _, _ = g_["_do_label"](
+        {"type": "lbl-row", "group": grp["key"], "row": row["row_id"], "cat": "Transfer"}, "", False, 0, "all")
+    assert status.startswith("Labeled")
+    df = g_["df"]
+    assert (df.loc[row_ids(df) == row["row_id"], "master_category"] == "Transfer").all()
+
+
+def test_label_survives_rules_file_locked(appmod, monkeypatch):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+
+    def locked(*a, **k):
+        raise PermissionError("open in Excel")
+    monkeypatch.setitem(g_, "add_rule", locked)
+    status, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", True, 0, "all")
+    assert status.startswith("Labeled") and "not remembered" in status
+    assert undo and undo["rule"] is None          # the label still has an undo
+    assert master.read_bytes() != before
 ```
 
 The callback bodies live in plain functions so the tests can call them without a running Dash server:
@@ -1397,24 +1771,31 @@ The callback bodies live in plain functions so the tests can call them without a
 
 The callbacks themselves only read `ctx` and the ALL-states, then delegate.
 
+If `test_label_click_refuses_group_label_on_mixed_or_fallback` finds no risky group in `Test Data/`, build one in the test's temp master instead (append an unlabeled `#99999` row); don't skip the test.
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_label_panel.py -v -p no:cacheprovider`
-Expected: FAIL, `KeyError: 'label_click'`.
+Expected: FAIL, `KeyError: '_do_label'`.
 
 - [ ] **Step 3: Implement**
 
-Extend the imports to `from Modules.labels import (…, label_rows, add_rule, delete_rule)` and `from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, restore_backup`.
+Extend the imports to `from Modules.labels import (…, label_rows, add_rule, delete_rule)` and `from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, restore_backup, snapshot_master`.
 
 ```python
+_LOCKED_MSG = "⚠ The data file is open in another program (Excel?) — close it and try again."
+
+
 def _is_real_click(triggered) -> bool:
     """Re-rendering the list adds buttons with n_clicks=0 (or None), which fires
     pattern-matching callbacks too — only a real click may write anything."""
     return bool(triggered) and bool(triggered[0].get("value"))
 
 
-def _mtime(path) -> int:
-    return path.stat().st_mtime_ns if path and Path(path).exists() else 0
+def _mtime(path) -> str:
+    """A file's mtime as a string: st_mtime_ns is past 2^53, and the undo record
+    goes through the browser's JSON, which would round an int."""
+    return str(Path(path).stat().st_mtime_ns) if path and Path(path).exists() else "0"
 
 
 def _do_label(trig: dict, sub: str, remember: bool, version, filt):
@@ -1422,34 +1803,54 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
     backup first, then — only if that succeeded — the rule. Returns
     (status, undo, undo-button style, version)."""
     global df
+    bumped = (version or 0) + 1
+    stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
-    group = next((g for g in unlabeled_groups(df, only_row_ids=only) if g["key"] == trig["group"]), None)
-    if group is None:
-        return "Nothing to label — the list was out of date.", dash.no_update, dash.no_update, (version or 0) + 1
-    rows = group["rows"] if trig["type"] == "lbl-group" else [group["rows"][trig["n"]]]
+    groups = unlabeled_groups(df, only_row_ids=only)
+    group = next((g for g in groups if g["key"] == trig["group"]), None)
+    if trig["type"] == "lbl-group":
+        if group is None or group["sig"] != trig.get("sig"):
+            return stale                           # never label rows the user didn't see
+        if group["fallback"] or group["mixed"]:
+            return ("Label these one at a time — the rows don't all look alike.",
+                    dash.no_update, dash.no_update, bumped)
+        rows = group["rows"]
+    else:
+        # A row is found by its id anywhere in the list, so it still works after
+        # another click regrouped things
+        row = next((r for g in groups for r in g["rows"] if r["row_id"] == trig.get("row")), None)
+        if row is None:
+            return stale
+        rows, group = [row], group or {"merchant": row["description"]}
+    expected = sum(r["count"] for r in rows)
     cat = trig["cat"]
     try:
         with MASTER_LOCK:
             master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
             master, n = label_rows(master, rows, cat, sub)
-            if n == 0:
-                return "Nothing to label — the list was out of date.", dash.no_update, dash.no_update, (version or 0) + 1
+            if n != expected:
+                # Something relabeled or removed these rows since the list was
+                # drawn — write nothing rather than a partial label
+                return stale
             backup = backup_master(MASTER_PATH)
             atomic_write_csv(master, MASTER_PATH)
-            rule = None
+            rule, rule_note = None, ""
             if remember and trig["type"] == "lbl-group":
                 chk = rule_check(df, read_rules(RULES_PATH), group)
-                if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
-                    rule = chk["keyword"]
+                try:
+                    if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
+                        rule = chk["keyword"]
+                except PermissionError:
+                    rule_note = " · not remembered: rules.csv is open in another program"
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except PermissionError:
-        return ("⚠ The data or rules file is open in another program (Excel?) — close it and try again.",
-                dash.no_update, dash.no_update, dash.no_update)
+        return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+    # The master write happened, so Undo must be offered even if the rule failed
     undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
             "rules_mtime": _mtime(RULES_PATH), "rule": rule}
     status = (f"Labeled {n} {group['merchant']} row{'s' if n != 1 else ''} as {cat}"
-              + (f' · rule "{rule}" added' if rule else ""))
-    return status, undo, _SHOWN_INLINE, (version or 0) + 1
+              + (f' · rule "{rule}" added' if rule else "") + rule_note)
+    return status, undo, _SHOWN_INLINE, bumped
 
 
 def _do_undo(undo: dict, version):
@@ -1458,7 +1859,8 @@ def _do_undo(undo: dict, version):
     global df
     if not undo:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    if _mtime(MASTER_PATH) != undo["master_mtime"] or _mtime(RULES_PATH) != undo["rules_mtime"]:
+    if (_mtime(MASTER_PATH) != str(undo["master_mtime"])
+            or _mtime(RULES_PATH) != str(undo["rules_mtime"])):
         return "Can't undo — the data changed since.", None, _HIDDEN, dash.no_update
     try:
         with MASTER_LOCK:
@@ -1477,8 +1879,8 @@ def _do_undo(undo: dict, version):
     Output("label-undo",     "data"),
     Output("label-undo-btn", "style"),
     Output("label-version",  "data"),
-    Input({"type": "lbl-group", "group": ALL, "cat": ALL}, "n_clicks"),
-    Input({"type": "lbl-row", "group": ALL, "n": ALL, "cat": ALL}, "n_clicks"),
+    Input({"type": "lbl-group", "group": ALL, "sig": ALL, "cat": ALL}, "n_clicks"),
+    Input({"type": "lbl-row", "group": ALL, "row": ALL, "cat": ALL}, "n_clicks"),
     State({"type": "lbl-sub", "group": ALL}, "value"),
     State({"type": "lbl-sub", "group": ALL}, "id"),
     State({"type": "lbl-remember", "group": ALL}, "value"),
@@ -1533,10 +1935,14 @@ def delete_rule_click(_clicks, version):
     return (f'Rule "{keyword}" deleted' if removed else "That rule was already gone"), (version or 0) + 1
 ```
 
+Notes for the implementer:
+- `add_rule` is looked up as a module global at call time, which is what lets `test_label_survives_rules_file_locked` patch it. Don't bind it to a local alias.
+- `snapshot_master` is already called by `toggle_label_panel` (Task 5); this task only needs it imported if Task 5 didn't already import it.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/ -q -p no:cacheprovider && python -m pyflakes app.py main.py Modules tests`
-Expected: all pass; pyflakes shows only the two existing warnings.
+Expected: all pass; pyflakes shows only the two existing warnings. `git status` shows the repo's `rules.csv` and `Test Data/` unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -1558,16 +1964,18 @@ git commit -m "Labeling panel actions: label, remember, undo, delete rule"
 - Consumes: everything above.
 - Produces: docs and screenshots.
 
-- [ ] **Step 1: Run the app on a temp copy of Test Data and drive it.** Use Playwright with `executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome"` at 1440×900 to do the following, recording the browser console errors:
+- [ ] **Step 1: Run the app on a temp copy of Test Data and drive it.** Copy `Test Data/` and `rules.csv` into the scratchpad and start the app with `FINANCE_DATA_DIR` and `FINANCE_RULES_PATH` pointing at the copies, so nothing in the repo is written. Afterwards, `git status` must show `rules.csv` and `Test Data/` unchanged. Use Playwright with `executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome"` at 1440×900 to do the following, recording the browser console errors:
   1. load the page and wait 5 s;
   2. click `#open-label-panel`, then screenshot;
   3. expand `.label-guide`, then screenshot;
-  4. click the first `.label-group` EXPENSE button; check that `#label-status` starts with `Labeled` and that the group count in `#label-summary` dropped by one;
+  4. click the EXPENSE button of the first `.label-group` that has group buttons; check that `#label-status` starts with `Labeled` and that the group count in `#label-summary` dropped by one;
   5. click `#label-undo-btn`; check that the status reads `Undone.`;
   6. expand the first `.lg-rows` and click one row's EXPENSE;
   7. click the `RULES` pill, then screenshot;
   8. click `#close-label-panel`; check that the panel is hidden;
   9. switch to the light theme, reopen the panel, then screenshot.
+
+  Also check that a mixed or fallback group card shows no group buttons, only "Label these one at a time below" with its rows already expanded, and that `SORTED/backups/before-labeling.csv` exists in the temp copy after the panel was opened.
 
   Expected: no console errors and every check passes. Look at the screenshots: cards readable in both themes, MIXED badges and suggested-Transfer highlights visible, nothing overflowing.
 
@@ -1576,12 +1984,15 @@ git commit -m "Labeling panel actions: label, remember, undo, delete rule"
     - purpose;
     - entry points (header button, last-import REVIEW);
     - the labeling guide (copy `LABEL_GUIDE`);
-    - grouping (`merchant_key`);
+    - grouping (`merchant_key`; names starting with a number or containing a hyphen are kept; descriptions with no recognizable name become one-row *fallback* groups);
+    - which groups get one-click group labels (not fallback, not mixed-direction) and why;
     - rule safety (the four conditions, and that mixed sign is the only non-blocking one);
-    - writes (lock, backup, atomic, rule after master);
-    - undo (both mtimes);
+    - writes (lock, backup, atomic, rule after master; only unlabeled rows are touched; a stale list or a count mismatch writes nothing);
+    - the `before-labeling.csv` snapshot, outside the rotation, and how to restore it;
+    - undo (both mtimes, stored as strings);
     - the Rules tab;
-    - `last_import.csv`;
+    - `last_import.csv` (written only when an import added rows);
+    - `FINANCE_RULES_PATH`;
     - the top-25 limit;
     - frontmatter `resource: app.py, Modules/labels.py`.
   - `docs/decisions.md`: add an ADR, "Label in the app through the import matcher; remember only provably safe rules; show unreviewed money instead of counting it", with the why from the spec's Decisions table.
@@ -1589,6 +2000,7 @@ git commit -m "Labeling panel actions: label, remember, undo, delete rule"
   - `docs/features/overview-charts.md`: header bullets for the LABEL THEM button and the last-import line; the stat-card `+ $X unreviewed` line.
   - `docs/features/README.md`: add the labeling-panel row to the feature table.
   - `readme.md`: in the UI tour, one paragraph on the labeling panel, and the Import/export section says to label in the app first, with Excel for bulk edits.
+  - `docs/superpowers/specs/2026-10-09-in-app-labeling-design.md`: replace the "Measured on the demo data" numbers with the ones measured at the Task 3 checkpoint.
 
 - [ ] **Step 3: Full check**
 
