@@ -433,21 +433,24 @@ def test_snapshot_failure_does_not_block_panel(appmod, monkeypatch):
     g_["_snapshot_before_labeling"]()            # must not raise
 
 
-def _add_transfer_pair(g_, cents=77777):
-    """Append a certain card-payment pair to the temp master and reload df."""
+def _add_transfer_pair(g_, cents=77777, labels=("", "")):
+    """Append a certain card-payment pair to the temp master and reload df.
+    labels: (out side, in side) master_category."""
     master = g_["MASTER_PATH"]
     m = pd.read_csv(master, dtype=str, keep_default_na=False)
     amt = f"{cents / 100:.2f}"
     base = {c: "" for c in m.columns}
     out_row = {**base, "date": "2026-01-05", "post_date": "2026-01-05", "source": "Chase Debit",
                "description": "ACME SAVINGS XFER OUT 4823", "amount": f"-{amt}",
-               "card_last4": "4823"}
+               "card_last4": "4823", "master_category": labels[0]}
     in_row = {**base, "date": "2026-01-06", "post_date": "2026-01-06", "source": "Chase Credit",
-              "description": "ACME SAVINGS XFER IN 3094", "amount": amt, "card_last4": "3094"}
+              "description": "ACME SAVINGS XFER IN 3094", "amount": amt, "card_last4": "3094",
+              "master_category": labels[1]}
     m = pd.concat([m, pd.DataFrame([out_row, in_row])], ignore_index=True)
     m.to_csv(master, index=False)
     g_["df"] = g_["load_transactions"](master, rules_path=g_["RULES_PATH"])
-    return next(p for p in g_["transfer_pairs"](g_["df"]) if p["amount"] == cents / 100)
+    found = g_["transfer_pairs"](g_["df"]) + g_["suspect_transfers"](g_["df"])
+    return next(p for p in found if p["amount"] == cents / 100)
 
 
 def test_pairs_tab_lists_and_labels_a_pair(appmod):
@@ -508,3 +511,32 @@ def test_skipped_files_text(appmod):
     assert one.startswith("⚠ 1 file in RAW wasn't imported") and "CapitalOne_2026.csv (unrecognized format)" in one
     many = text([(f"f{i}.csv", "unrecognized format") for i in range(5)])
     assert "5 files" in many and "and 2 more" in many and "f3.csv" not in many
+
+
+
+def test_transfer_labeled_expense_is_flagged_fixed_and_undone(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    pair = _add_transfer_pair(g_, cents=55555, labels=("Expense", "Transfer"))
+    assert "labeled Expense or Income" in g_["transfer_check_text"](g_["_suspects"]())
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, _ = g_["_do_fix_suspect"]({"pair": pair["key"], "act": "fix"}, 0)
+    assert status.startswith("Relabeled 1 row as Transfer")
+    df = g_["df"]
+    out_row = row_ids(df) == pair["out"]["row_id"]
+    assert out_row.sum() == 1 and (df.loc[out_row, "master_category"] == "Transfer").all()
+    assert pair["key"] not in {p["key"] for p in g_["_suspects"]()}
+    status, _, _, _ = g_["_do_undo"](undo, 1)
+    assert status == "Undone." and master.read_bytes() == before
+
+
+def test_not_a_transfer_stops_the_flag_and_keeps_labels(appmod):
+    g_ = _live(appmod)
+    pair = _add_transfer_pair(g_, cents=44444, labels=("Expense", "Income"))
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, _, _, _ = g_["_do_fix_suspect"]({"pair": pair["key"], "act": "dismiss"}, 0)
+    assert status.startswith("Kept as is")
+    assert master.read_bytes() == before
+    assert pair["key"] not in {p["key"] for p in g_["_suspects"]()}
