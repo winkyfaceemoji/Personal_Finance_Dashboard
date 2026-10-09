@@ -13,6 +13,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your code, including the Data folder
 COPY . .
 
+# Inside a container the server must listen on every interface or Docker
+# can't forward the port. Keep it private on the host instead, by publishing
+# to loopback only: docker run -p 127.0.0.1:8050:8050 ...
+# Debug mode gives the hot reload the dev workflow (code mounted at /app)
+# relies on.
+ENV FINANCE_HOST=0.0.0.0 \
+    FINANCE_DEBUG=1
+
 # Expose the port.
 EXPOSE 8050
 

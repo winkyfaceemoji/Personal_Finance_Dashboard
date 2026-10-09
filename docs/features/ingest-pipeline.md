@@ -1,9 +1,9 @@
 ---
 type: Feature Doc
 title: Ingest pipeline
-description: Converts raw bank CSVs into a normalized, deduplicated master file, rebuilt from RAW each run.
+description: Converts raw bank CSVs into a normalized master file — overlapping exports merged by date coverage — rebuilt from RAW each run.
 resource: main.py, config.py
-updated: 2026-07-06
+updated: 2026-10-09
 ---
 
 # Ingest pipeline (`main.py`)
@@ -17,8 +17,10 @@ The pipeline converts raw bank CSVs into a single, schema-normalised master file
 | Mode | Command | Hot-reload |
 |------|---------|-----------|
 | venv (local) | `.venv\Scripts\python main.py` | No — restart manually |
-| Docker (dev) | `docker run -p 8050:8050 -v "%cd%:/app" personal-finance` | Yes — Dash reloads on `.py` save |
-| Docker (prod) | `docker run -p 8050:8050 personal-finance` | No — code is baked into image |
+| Docker (dev) | `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` | Yes — Dash reloads on `.py` save |
+| Docker (prod) | `docker run -p 127.0.0.1:8050:8050 personal-finance` | No — code is baked into image. Labels are written inside the container and lost when it's removed, so mount your data folder for real use |
+
+Run directly, the app listens on `127.0.0.1` with debug off; set `FINANCE_HOST=0.0.0.0` to reach it from other devices and `FINANCE_DEBUG=1` for hot reload and tracebacks. The Docker image sets both (a container must listen on all interfaces for port forwarding), which is why the commands publish to `127.0.0.1` only — see [decisions.md](../decisions.md#local-only-and-debug-off-by-default).
 
 In dev Docker mode the local project directory is mounted into the container at `/app`. Dash's built-in reloader watches `.py` files and restarts the server automatically on save. Only rebuild the image (`docker build -t personal-finance .`) when `requirements.txt` changes.
 
@@ -160,7 +162,11 @@ This means a match key that occurs *more* times in the rebuilt data than it did 
 
 If the master file doesn't exist yet (first run), it's created directly from the combined data with `master_category` and `sub_category` set to `None` — there's nothing to inherit from.
 
-**Backup:** before rebuilding, the existing master file is renamed to `edited_combined_transactions.csv.bak` (overwriting any previous backup). This is a rolling one-generation backup, not a full history — enough to recover from a bad run without accumulating files indefinitely.
+**Backups:** once the existing master has been read successfully, it is *copied* to `SORTED/backups/edited_combined_transactions.<timestamp>.csv` (UTC timestamp; a `_001` counter is added if two land on the same stamp); the newest 10 are kept, and no copy is made when the master is identical to the newest backup (a legacy `.csv.bak` from older versions is left alone and used as a last resort). A master that can't be parsed is never backed up — the run fails instead — so repeated failed Reloads can't push the good backups out. If the master is missing or empty when `main()` starts — e.g. after a failed run or a save torn by power loss — the newest backup is restored first (even if RAW is empty) and the console says so. To deliberately start over, delete the master, `SORTED/backups/`, `SORTED/orphaned_labels.csv`, and any old `edited_combined_transactions.csv.bak` — any one left behind brings its labels back on a later rebuild.
+
+**Fallback match & orphans:** labels the exact `MATCH_COLUMNS` key can't place are tried again by `FALLBACK_COLUMNS` (date, description, amount, source) — so a re-export that changes a bank category, memo, or running balance keeps its labels. Labels neither key places are kept in `SORTED/orphaned_labels.csv`, re-tried on every later rebuild (so they re-attach if the transaction reappears in a new export), counted in the dashboard header, and the file is deleted once it's empty. The orphans file is only written *after* the new master is safely on disk, so a failed master write (e.g. the file is open in Excel) never loses a label that was re-attaching. Updating it is best effort: if the orphans file itself is open in Excel, the rebuild still succeeds and the console names the file to close. Its dates are re-read whatever format Excel saved them in, and an orphan identical to a row already in the master (one that re-attached while the file was locked) is dropped rather than reported again or handed to a later same-day repeat.
+
+The new master is written atomically (temp file + `os.replace`), so a crash mid-write can't truncate it. The file keeps its existing permissions (a new file gets the normal umask default), so a master written from Docker stays readable on the host. On a Linux host, files the container creates (the master, `SORTED/backups/`) are owned by root — readable, but not writable, by your user. In the app, every rebuild and import holds one lock (`MASTER_LOCK`), so a Reload and an Import can't interleave and drop each other's labels.
 
 ---
 
@@ -170,6 +176,7 @@ If the master file doesn't exist yet (first run), it's created directly from the
 |------|-----------|---------|
 | `SORTED/combined_transactions.csv` | Every pipeline run (full rebuild) | Not read by the app directly |
 | `SORTED/edited_combined_transactions.csv` | Every pipeline run (full rebuild; categorization carried forward by match key) | `app.py` on startup and after reload |
-| `SORTED/edited_combined_transactions.csv.bak` | Every pipeline run (overwritten each time) | Manual recovery only — not read by the app |
+| `SORTED/backups/edited_combined_transactions.<timestamp>.csv` | Every rebuild and every import, unless the master is unchanged since the last backup (newest 10 kept) | Auto-restore when the master is missing or empty; manual rollback |
+| `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; header note |
 
 Paths are relative to the configured data directory (default: `Test Data/`).
