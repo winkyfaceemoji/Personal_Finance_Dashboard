@@ -16,7 +16,10 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     transfer_pairs, TRANSFER_PAIR_DAYS,
 )
-from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, restore_backup, snapshot_master
+from Modules.safety import (
+    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
+    snapshot_master,
+)
 from Modules.transforms import (
     load_transactions,
     normalize_description,
@@ -236,6 +239,19 @@ def unreviewed_amounts(pdf: pd.DataFrame) -> tuple[float, float]:
             float(un.loc[un["amount"] > 0, "amount"].sum()))
 
 
+def skipped_text(skipped: list[tuple[str, str]]) -> str:
+    """Header warning for RAW files the last import skipped. A new bank format
+    (or a changed export) is otherwise only a console line, while a whole
+    account's spending quietly drops out of every total."""
+    if not skipped:
+        return ""
+    n = len(skipped)
+    shown = ", ".join(f"{f} ({why})" for f, why in skipped[:3])
+    more = f", and {n - 3} more" if n > 3 else ""
+    return (f"⚠ {n} file{'s' if n != 1 else ''} in RAW {'weren' if n != 1 else 'wasn'}'t imported: "
+            f"{shown}{more}. Their transactions are missing from every total.")
+
+
 def last_import_text(frame: pd.DataFrame, ids) -> tuple[str, int]:
     """'Last import: 31 new · 27 labeled · 4 need you', and the need-you count."""
     if not ids:
@@ -394,6 +410,8 @@ app.layout = html.Div(
             ]),
             # Labels the last rebuild couldn't place (kept in a side file)
             html.P(id="orphan-note", className="notice warn-text"),
+            # RAW files the last import couldn't use — their money is missing
+            html.P(id="skipped-note", className="notice warn-text"),
 
             html.Div(id="settings-menu-wrapper", children=[
                 html.Button(html.Span(className="gear-icon"), id="settings-menu-btn",
@@ -843,6 +861,14 @@ def update_orphan_note(_refresh):
     return (f"⚠ {n} label{'s' if n != 1 else ''} currently match no transaction. They're kept "
             f"in SORTED/orphaned_labels.csv and re-attach automatically if those "
             f"transactions come back in a later export.")
+
+
+@app.callback(
+    Output("skipped-note", "children"),
+    Input("refresh-trigger", "data"),
+)
+def update_skipped_note(_refresh):
+    return skipped_text(read_skipped(MASTER_PATH)) if MASTER_PATH else ""
 
 
 # ── Period navigation ─────────────────────────────────────────────────────────

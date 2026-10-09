@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
 from Modules.labels import LAST_IMPORT_NAME, row_id
-from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing
+from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_skipped
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -123,21 +123,35 @@ NORMALIZERS = {
 }
 
 
-def load_and_normalize(filepath: Path, input_folder: Path) -> pd.DataFrame | None:
-    """Load a CSV, detect its format, and normalize it to the unified schema."""
+def load_and_normalize(filepath: Path, input_folder: Path, skipped: list | None = None) -> pd.DataFrame | None:
+    """Load a CSV, detect its format, and normalize it to the unified schema.
+    A file that can't be used is skipped — appended to `skipped` as (path under
+    RAW, reason) so the dashboard can say so — never aborting the import."""
+    rel_name = str(filepath.relative_to(input_folder))
+
+    def _skip(reason: str) -> None:
+        print(f"  [SKIP] {filepath.name}: {reason}")
+        if skipped is not None:
+            skipped.append((rel_name, reason))
+
     try:
         df = pd.read_csv(filepath, index_col=False)
         df.columns = df.columns.str.strip()
     except Exception as e:
-        print(f"  [SKIP] Could not read {filepath.name}: {e}")
+        _skip(f"couldn't be read ({e})")
         return None
 
     fmt = detect_format(df)
     if fmt is None:
-        print(f"  [SKIP] Unrecognized format: {filepath.name}")
+        _skip("unrecognized format")
         return None
 
-    result = NORMALIZERS[fmt](df)
+    try:
+        result = NORMALIZERS[fmt](df)
+    except Exception as e:
+        # One malformed statement used to take the whole import down with it
+        _skip(f"couldn't be parsed as {fmt} ({e})")
+        return None
 
     # Institution = the top-level folder under RAW (folder-authoritative
     # identity). Files dropped directly in RAW get a blank institution.
@@ -383,15 +397,17 @@ def main(data_dir: Path | None = None):
         print(f"Master file was missing or empty — restored labels from backup {restored.name}")
 
     csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
+    skipped: list[tuple[str, str]] = []
     if not csv_files:
         print(f"No CSV files found in {input_folder}")
+        write_skipped(master_file, skipped)
         return
 
     print(f"Found {len(csv_files)} CSV file(s) in {input_folder}\n")
 
     groups: dict[tuple, list[pd.DataFrame]] = defaultdict(list)
     for f in csv_files:
-        normalized = load_and_normalize(f, input_folder)
+        normalized = load_and_normalize(f, input_folder, skipped)
         if normalized is None or normalized.empty:
             continue
         normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
@@ -402,6 +418,10 @@ def main(data_dir: Path | None = None):
                normalized["source"].iat[0],
                normalized["card_last4"].iat[0])
         groups[key].append(normalized)
+
+    # Recorded before anything below can return or fail: the header warning
+    # must describe this run, not a stale one
+    write_skipped(master_file, skipped)
 
     if not groups:
         print("No valid files were processed. Exiting.")
