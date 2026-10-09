@@ -3,7 +3,7 @@ type: Feature Doc
 title: Setup screen
 description: First-launch data-directory setup overlay and automatic ingest.
 resource: app.py, config.py
-updated: 2026-07-06
+updated: 2026-10-09
 ---
 
 # Setup screen
@@ -16,11 +16,13 @@ A full-screen overlay in `app.py` for choosing which folder the dashboard reads 
 
 | Control | ID | Notes |
 |---------|----|-------|
-| Change Data Folder (nav button) | `open-setup-btn` | Reopens the overlay, prefilled with the currently configured directory |
+| Change Data Folder (settings menu) | `open-setup-btn` | Reopens the overlay, prefilled with the currently configured directory |
 | Path input | `setup-path-input` | Free-text folder path; also filled by Browse |
 | Browse | `setup-browse-btn` | Opens a native OS folder picker (`_pick_folder()`) and writes the result into the path input |
-| Save & Launch | `setup-save-btn` | Validates the path, ingests it if needed, and switches the dashboard to it |
+| Save & Launch | `setup-save-btn` | The one primary (filled) button. Validates the path, ingests it if needed, and switches the dashboard to it |
 | Cancel | `setup-cancel-btn` | Closes the overlay without changing anything |
+
+The overlay uses the app's own components — `.app-card`, `.btn-primary` / `.btn-secondary`, the theme tokens — so it matches the current theme, and it sits above the settings menu (z-index 100; see [design.md](../design.md#layering)).
 
 ---
 
@@ -45,13 +47,13 @@ if MASTER_PATH and not MASTER_PATH.exists():
 
 This is what makes the bundled `Test Data/` populate and display immediately on a fresh checkout — no manual setup step required. If ingest fails or produces nothing (e.g. an empty `RAW/` folder, or no data directory resolved at all), the failure is printed to the console, `MASTER_PATH` still won't exist, and the overlay is shown blocking the dashboard, same as before.
 
-`_run_ingest_pipeline()` is also used by `reload_data` and `save_setup` below, so there's a single place that imports and calls `main.main()`.
+`_run_ingest_pipeline()` is also used by `reload_data` and `save_setup` below, so there's a single place that imports and calls `main.main()`. `reload_data` passes the folder currently on screen (`MASTER_PATH.parent.parent`) explicitly — calling it bare would rebuild whatever `get_data_dir()` resolves, which differs from the picked folder when `FINANCE_DATA_DIR` is set.
 
 ---
 
 ## Reopening the overlay
 
-The **CHANGE DATA FOLDER** nav button (`open-setup-btn`) shows the overlay on demand, independent of whether data is currently loaded. It prefills the path input with the directory backing the currently loaded `MASTER_PATH`, so switching folders starts from your current location rather than a blank field.
+The **CHANGE DATA FOLDER** button in the settings menu (`open-setup-btn`) shows the overlay on demand, independent of whether data is currently loaded. It prefills the path input with the directory backing the currently loaded `MASTER_PATH`, so switching folders starts from your current location rather than a blank field.
 
 ---
 
@@ -75,7 +77,8 @@ Returns `""` on cancel or failure, in which case the path input is left unchange
    run _run_ingest_pipeline(data_dir) — passing the picked folder explicitly
 4. save_data_dir(path) → writes config.json
 5. Reload df from the new MASTER_PATH
-6. Hide the overlay
+6. Hide the overlay and bump refresh-trigger, so every card, the header
+   notes, and the period bar re-render from the new folder
 ```
 
 **Why the picked folder is passed explicitly (step 3):** `main.main()` normally resolves its own data directory via `config.get_data_dir()`. If ingest were triggered before `save_data_dir()` (step 4) without passing `data_dir` in, it would silently ingest whatever directory was *previously* configured instead of the one just picked — new, never-before-ingested folders would then fail with "Ingest ran but master file was not created," with no way to complete setup. Passing `data_dir` into `main(data_dir)` directly avoids depending on `config.json` being written first.
@@ -86,7 +89,7 @@ Any failure at steps 2–5 shows an inline error in `setup-status` and leaves th
 
 ## Cancel (`cancel_setup`)
 
-Simply hides the overlay and clears `setup-status`. Does not touch `df`, `MASTER_PATH`, or `config.json` — whatever was loaded before stays loaded. This is the escape hatch if you open the overlay (via the nav button) and can't find or don't want to change the directory.
+Simply hides the overlay and clears `setup-status`. Does not touch `df`, `MASTER_PATH`, or `config.json` — whatever was loaded before stays loaded. This is the escape hatch if you open the overlay (via the settings menu) and can't find or don't want to change the directory.
 
 ---
 

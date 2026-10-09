@@ -1,0 +1,205 @@
+/* Dashboard styles.
+   Every colour here is a theme token — var(--bg), var(--accent), … — and
+   the tokens themselves are generated from _CHART in app.py (theme_css), so
+   CSS and the Plotly figures share one palette. Never hardcode a hex here. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); color: var(--text); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+#app-root {
+    min-height: 100vh; padding: 32px 40px;
+    background: var(--bg); color: var(--text);
+    transition: background 0.2s, color 0.2s;
+}
+@media (max-width: 640px) { #app-root { padding: 20px 16px; } }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.app-header { position: relative; margin-bottom: 20px; padding-right: 56px; }
+.wordmark {
+    font-family: "Syne", sans-serif; font-weight: 800; line-height: 1.1;
+    font-size: clamp(24px, 5vw, 32px); letter-spacing: -1px;
+}
+.wordmark .accent { color: var(--accent); }
+.header-meta { color: var(--subtext); font-size: 12px; margin-top: 8px; }
+.notice { font-size: 12px; margin-top: 4px; color: var(--subtext); }
+.notice:empty { display: none; }
+.warn-text { color: var(--accent2); }
+
+/* ── Period bar (sticky: it drives everything below it) ─────────────────── */
+.period-bar {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px;
+    background: var(--bg); padding: 12px 0; margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.stepper { display: flex; align-items: center; gap: 10px; }
+.period-text { min-width: 210px; text-align: center; }
+.period-label { font-family: "Syne", sans-serif; font-size: 20px; font-weight: 700; line-height: 1.2; }
+.step-btn {
+    width: 36px; height: 36px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font-family: inherit; font-size: 18px; line-height: 1;
+}
+.step-btn:hover:not(:disabled) { border-color: var(--accent); }
+.step-btn:disabled { opacity: 0.35; cursor: default; }
+@media (max-width: 640px) {
+    .stepper { width: 100%; }
+    .period-text { min-width: 0; flex: 1; }
+    .period-label { font-size: 17px; }
+}
+
+/* ── Pills (dcc.RadioItems styled as chips) ─────────────────────────────── */
+/* Dash 4 renders each option as <label class="dash-options-list-option">,
+   with .selected on the chosen one (see docs/design.md, gotcha #2). */
+.pills { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.pills label {
+    padding: 6px 14px; white-space: nowrap; border-radius: 6px; cursor: pointer;
+    font-size: 12px; font-weight: 600; letter-spacing: 1px;
+    color: var(--subtext); background: var(--chip); border: 1px solid var(--border);
+    transition: all 0.15s;
+}
+.pills label:hover { color: var(--text); }
+.pills .dash-options-list-option.selected {
+    color: var(--text); border-color: var(--accent); background: var(--accent-weak);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.app-card {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: 12px; padding: 24px; margin-bottom: 24px;
+}
+.card-head {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 12px;
+}
+.app-label {
+    font-size: 11px; letter-spacing: 2px; font-weight: 600;
+    text-transform: uppercase; color: var(--label);
+}
+.hint { font-size: 11px; color: var(--subtext); margin-top: 3px; }
+.muted-text { color: var(--subtext); }
+
+/* ── Stat cards ─────────────────────────────────────────────────────────── */
+.stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px; margin-bottom: 16px;
+}
+.stat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px; display: flex; flex-direction: column; gap: 6px;
+}
+.stat-title { font-size: 11px; letter-spacing: 1.5px; font-weight: 600; color: var(--subtext); }
+.stat-value {
+    font-family: "Syne", sans-serif; font-size: 30px; font-weight: 700;
+    line-height: 1.1; color: var(--text); margin-bottom: 4px;
+}
+.stat-delta { font-size: 11px; color: var(--subtext); }
+.delta-good { color: var(--accent3); font-weight: 600; }
+.delta-bad  { color: var(--accent2); font-weight: 600; }
+
+/* ── Pace strip (shown while the selected period is still in progress) ──── */
+.pace-card { padding: 18px 20px; margin-bottom: 24px; }
+.pace-card:empty { display: none; }
+.pace-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pace-status { font-size: 13px; font-weight: 600; }
+.pace-track { position: relative; height: 10px; border-radius: 5px; background: var(--border); margin: 6px 0 8px; }
+.pace-fill { height: 10px; border-radius: 5px; }
+.pace-marker {
+    position: absolute; top: -4px; width: 2px; height: 18px;
+    background: var(--text); border-radius: 1px;
+}
+.pace-legend { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--subtext); }
+
+/* ── Drilldown ──────────────────────────────────────────────────────────── */
+.drilldown { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 20px; }
+.drill-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.drill-name { flex: 0 0 220px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drill-track { flex: 1; height: 8px; border-radius: 4px; background: var(--border); }
+.drill-fill { height: 8px; border-radius: 4px; background: var(--accent); }
+.drill-fill.muted { background: var(--subtext); }
+.drill-stat { flex: 0 0 180px; font-size: 11px; text-align: right; color: var(--subtext); }
+.divider { height: 1px; background: var(--border); margin: 12px 0; }
+@media (max-width: 640px) {
+    .drill-name { flex-basis: 110px; }
+    .drill-stat { flex-basis: 120px; }
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn-primary, .btn-secondary {
+    border-radius: 6px; padding: 10px 20px; cursor: pointer;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    font-weight: 600; letter-spacing: 1px;
+}
+.btn-primary { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }
+.btn-secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.btn-primary:hover, .btn-secondary:hover { opacity: 0.85; }
+.btn-secondary:disabled { opacity: 0.35; cursor: default; }
+.btn-secondary.active { background: var(--accent-weak); color: var(--text); }
+.btn-small { font-size: 11px; padding: 8px 14px; }
+
+/* ── Settings menu ──────────────────────────────────────────────────────── */
+#settings-menu-wrapper { position: absolute; top: 0; right: 0; z-index: 50; }
+#settings-menu-btn {
+    width: 44px; height: 44px; border-radius: 50%; padding: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; line-height: 1;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    box-shadow: 0 4px 16px var(--shade-weak); transition: all 0.2s;
+}
+#settings-menu-btn:hover { transform: scale(1.1); }
+#settings-menu-btn .gear-icon {
+    width: 20px; height: 20px; display: inline-block; background-color: currentColor;
+    -webkit-mask: var(--gear-icon) center / contain no-repeat;
+    mask: var(--gear-icon) center / contain no-repeat;
+}
+#settings-menu-panel {
+    position: absolute; top: 56px; right: 0; min-width: 240px;
+    flex-direction: column; gap: 8px; padding: 16px; margin: 0;
+    box-shadow: 0 8px 24px var(--shade-strong);
+}
+/* Invisible full-screen layer behind the open menu: a click anywhere outside
+   the panel lands here and closes it */
+#settings-backdrop { position: fixed; inset: 0; z-index: 40; }
+.settings-label { font-size: 9px; letter-spacing: 2px; font-weight: 600; color: var(--subtext); }
+.settings-status { font-size: 11px; color: var(--accent3); }
+.settings-row { display: flex; gap: 8px; }
+.settings-row > * { flex: 1; }
+
+/* ── Setup overlay ──────────────────────────────────────────────────────── */
+#setup-overlay { position: fixed; inset: 0; z-index: 100; background: var(--bg); align-items: center; justify-content: center; }
+.setup-card { width: 480px; max-width: 90vw; padding: 48px; margin: 0; }
+.setup-copy { margin: 24px 0 16px; color: var(--subtext); font-size: 13px; line-height: 1.5; }
+.setup-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.setup-input {
+    flex: 1; min-width: 0; padding: 10px 14px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    font-family: "IBM Plex Mono", monospace; font-size: 13px;
+}
+.setup-input:focus { outline: none; border-color: var(--accent); }
+.setup-status { margin-top: 12px; font-size: 12px; color: var(--accent2); }
+
+/* ── Dash 4 dropdown ────────────────────────────────────────────────────── */
+/* The popup renders in a portal directly under <body>, which carries the
+   theme class too (assets/theme_sync.js), so these tokens resolve there. */
+.dash-dropdown, .dash-dropdown-content, .dash-dropdown-wrapper,
+.dash-dropdown-search-container {
+    background-color: var(--surface) !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
+}
+.dash-dropdown-option, .dash-dropdown-value, .dash-dropdown-search { color: var(--text) !important; }
+.dash-dropdown-search { background: transparent !important; }
+.dash-dropdown-option:hover, .dash-dropdown-option:focus { background-color: var(--border) !important; }
+.dash-dropdown-placeholder, .dash-dropdown-clear, .dash-dropdown-trigger-icon { color: var(--subtext) !important; }
+/* Metric dropdown styled as a card title — matches the .app-label headers */
+.title-dropdown .dash-dropdown-value {
+    font-size: 11px !important; letter-spacing: 2px !important;
+    font-weight: 600 !important; text-transform: uppercase;
+}
+
+/* ── dcc.Loading fullscreen overlay ─────────────────────────────────────── */
+/* The component hardcodes a white backdrop; !important beats it in both themes */
+body .dash-spinner-container { background-color: var(--overlay) !important; }

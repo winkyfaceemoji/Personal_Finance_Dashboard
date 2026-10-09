@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
+from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -23,6 +24,11 @@ MASTER_COLUMNS = UNIFIED_COLUMNS + ["master_category", "sub_category"]
 # drop every prior label on the first rebuild.
 # User-assigned columns (master_category, sub_category) also excluded.
 MATCH_COLUMNS = [c for c in UNIFIED_COLUMNS if c not in ("card_last4", "institution")]
+
+# Looser key tried for labels the exact key couldn't place: a re-export that
+# changes a secondary field (bank category, memo, running balance) still
+# lands its label. Labels neither key places go to orphaned_labels.csv.
+FALLBACK_COLUMNS = ["date", "description", "amount", "source"]
 
 # ── Header signatures used to detect which bank format a file is ─────────────
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
@@ -128,7 +134,8 @@ def load_and_normalize(filepath: Path, input_folder: Path) -> pd.DataFrame | Non
     institution = rel[0] if len(rel) > 1 else ""
     result["institution"] = institution
 
-    # Extract card last-4 from Chase filenames: Chase_XXXX_Activity...
+    # Extract card last-4 from Chase filenames: ChaseXXXX_Activity... (no
+    # separator between "Chase" and the digits — the regex requires that)
     last4 = None
     m = re.search(r"Chase(\d{4})_", filepath.name, re.IGNORECASE)
     if m:
@@ -183,7 +190,7 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
 
 
-def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
+def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     """
     Rebuild edited_combined_transactions.csv from the freshly-merged combined
     data, carrying forward existing master_category / sub_category
@@ -192,11 +199,15 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
 
     Every unified-schema column is regenerated from RAW on every run — only
     the user-assigned categorization is preserved. A match key that occurs
-    more times in the new combined data than in the prior master (e.g. a
-    same-day repeat transaction an older, buggy ingest had collapsed away)
-    inherits the category of an existing occurrence of that key, in order;
-    any occurrence beyond what the prior master had is genuinely new and
-    starts uncategorized.
+    more times in the new combined data than in the prior master inherits
+    the categorization of existing occurrences, in order; any occurrence
+    beyond what the prior master had is genuinely new and starts blank.
+
+    Label safety: the prior master is *copied* to SORTED/backups/ (never
+    renamed away), a master missing after a failed run is restored from the
+    newest backup first, older master schemas are tolerated, and the new
+    master is written atomically — so a crash at any point leaves either
+    the old master or the complete new one.
     """
     combined = combined.copy()
     for col in ["date", "post_date"]:
@@ -204,41 +215,127 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
     combined["master_category"] = None
     combined["sub_category"]    = None
 
+    def iso_dates(d: pd.DataFrame) -> None:
+        for col in ["date", "post_date"]:
+            d[col] = pd.to_datetime(d[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
     def row_key(d: pd.DataFrame) -> pd.Series:
         return d[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
 
+    def full_key(d: pd.DataFrame) -> pd.Series:
+        return d[MASTER_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
+
+    def fallback_key(d: pd.DataFrame) -> pd.Series:
+        amount = pd.to_numeric(d["amount"], errors="coerce").round(2).astype(str)
+        parts = d[["date", "description", "source"]].fillna("").astype(str)
+        parts["description"] = parts["description"].str.strip()
+        return pd.Series(list(zip(parts["date"], parts["description"], amount, parts["source"])),
+                         index=d.index)
+
+    result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
+    orphans = None   # set once a prior master is read; written only after the master is
+
+    restored = restore_if_missing(master_file)
+    if restored:
+        result["restored_from"] = restored
+        print(f"  Master file was missing or empty — restored labels from backup {restored.name}")
+
     if master_file.exists():
-        # Keep a rolling backup — this rebuild replaces the whole file.
-        master_file.replace(master_file.with_suffix(".csv.bak"))
-        old_master = pd.read_csv(master_file.with_suffix(".csv.bak"), dtype={"card_last4": str})
+        old_master = pd.read_csv(master_file, dtype={"card_last4": str})
         if "category" in old_master.columns and "original_category" not in old_master.columns:
             old_master = old_master.rename(columns={"category": "original_category"})
-        for col in ("master_category", "sub_category"):
+        # Masters written by older versions lack newer columns; a missing
+        # column reads as blank rather than aborting the rebuild
+        for col in MASTER_COLUMNS:
             if col not in old_master.columns:
                 old_master[col] = None
-        for col in ["date", "post_date"]:
-            if col in old_master.columns:
-                old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
+        # Back up only a master that parsed: backing up a torn one on every
+        # failed run would rotate the good, labelled backups out
+        backup_master(master_file)
+        iso_dates(old_master)
 
-        categorization = defaultdict(deque)
-        for key, mc, sc in zip(row_key(old_master), old_master["master_category"], old_master["sub_category"]):
-            categorization[key].append((mc, sc))
+        # Labels orphaned by earlier rebuilds get another chance every run —
+        # appended after the master's own rows so those take precedence
+        prior_orphans = orphans_path(master_file)
+        if prior_orphans.exists():
+            extra = pd.read_csv(prior_orphans, dtype={"card_last4": str})
+            for col in MASTER_COLUMNS:
+                if col not in extra.columns:
+                    extra[col] = None
+            # Its own pass: dates parse by the format of their first row, and
+            # an orphan file saved from Excel has M/D/YYYY, not the master's ISO
+            iso_dates(extra)
+            # An orphan identical to a master row, label included, is one that
+            # was placed but whose file couldn't then be updated (open in
+            # Excel). Kept, it would be re-reported forever and hand its label
+            # to the next same-day repeat; the master row already carries it.
+            in_master = set(full_key(old_master))
+            extra = extra[[k not in in_master for k in full_key(extra)]]
+            old_master = pd.concat([old_master[MASTER_COLUMNS], extra[MASTER_COLUMNS]],
+                                   ignore_index=True)
 
-        carried = 0
+        old_master["master_category"] = old_master["master_category"].fillna("")
+        old_master["sub_category"]    = old_master["sub_category"].fillna("")
+        labeled = (old_master["master_category"] != "") | (old_master["sub_category"] != "")
+
+        def _take(idx, i):
+            combined.at[idx, "master_category"] = old_master.at[i, "master_category"] or None
+            combined.at[idx, "sub_category"]    = old_master.at[i, "sub_category"] or None
+            used.add(i)
+
+        # Pass 1: exact key, in order (same-day repeats inherit in sequence)
+        exact = defaultdict(deque)
+        for i, key in zip(old_master.index, row_key(old_master)):
+            exact[key].append(i)
+        used, matched = set(), set()
         for idx, key in zip(combined.index, row_key(combined)):
-            bucket = categorization.get(key)
+            bucket = exact.get(key)
             if bucket:
-                mc, sc = bucket.popleft()
-                combined.at[idx, "master_category"] = mc
-                combined.at[idx, "sub_category"]    = sc
-                carried += 1
-        print(f"  Categorization carried over for {carried}/{len(combined)} row(s)")
+                _take(idx, bucket.popleft())
+                matched.add(idx)
+                result["carried"] += 1
+
+        # Pass 2: labeled rows pass 1 couldn't place, by the looser key
+        spare = old_master[labeled & ~old_master.index.isin(used)]
+        fallback = defaultdict(deque)
+        for i, key in zip(spare.index, fallback_key(spare)):
+            fallback[key].append(i)
+        rest = combined[~combined.index.isin(matched)]
+        for idx, key in zip(rest.index, fallback_key(rest)):
+            bucket = fallback.get(key)
+            if bucket:
+                _take(idx, bucket.popleft())
+                result["rescued"] += 1
+
+        # Whatever's still unplaced is kept and reported, never silently dropped
+        orphans = old_master[labeled & ~old_master.index.isin(used)]
+        result["orphaned"] = len(orphans)
+        print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)"
+              f"; {result['rescued']} rescued by the fallback match")
 
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
-    combined.sort_values("date", inplace=True, ignore_index=True)
+    combined.sort_values("date", inplace=True, ignore_index=True, kind="stable")
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
-    combined[MASTER_COLUMNS].to_csv(master_file, index=False)
+    atomic_write_csv(combined[MASTER_COLUMNS], master_file)
     print(f"  Master file rebuilt with {len(combined)} rows -> {master_file}")
+
+    # Only now that the new master is safely on disk may the orphan file change:
+    # a failed master write must leave every not-yet-placed label where it was.
+    # Best effort: the master — the part that matters — is already written, so
+    # a locked orphan file (open in Excel) is a warning, not a failed rebuild;
+    # the old file's labels are still offered to the next one.
+    if orphans is not None:
+        try:
+            if orphans.empty:
+                orphans_path(master_file).unlink(missing_ok=True)
+            else:
+                atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
+                print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
+                      f"{orphans_path(master_file)}")
+        except OSError as e:
+            print(f"  ⚠ Could not update {orphans_path(master_file)} ({e}) — "
+                  f"close it (Excel?) and Reload")
+    return result
 
 
 def main(data_dir: Path | None = None):
@@ -250,6 +347,12 @@ def main(data_dir: Path | None = None):
     input_folder = data_dir / "RAW"
     output_file  = data_dir / "SORTED" / "combined_transactions.csv"
     master_file  = get_master_path(data_dir)
+
+    # Restore a lost master before anything can return early: with RAW empty
+    # the rebuild (which also restores) never runs
+    restored = restore_if_missing(master_file)
+    if restored:
+        print(f"Master file was missing or empty — restored labels from backup {restored.name}")
 
     csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
     if not csv_files:
