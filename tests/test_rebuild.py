@@ -1,4 +1,6 @@
 # tests/test_rebuild.py
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -147,3 +149,28 @@ def test_old_master_without_memo_rescued_by_fallback(master):
     result = rebuild_master(combined, master)
     assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"
     assert result["rescued"] == 1
+
+
+def test_failed_master_write_does_not_lose_prior_orphan(master, monkeypatch):
+    # An orphaned label's transaction is back in RAW, but the master can't be
+    # written (open in Excel): the orphan file must still hold the label
+    gone = ("2025-02-01", "OLD MERCHANT", -20.0, "Shopping")
+    _write_master(master, [gone + ("Expense", "Gifts")])
+    rebuild_master(_combined([ROW]), master)          # label orphaned
+    assert orphan_count(master) == 1
+    before = master.read_text()
+    orphans_before = orphans_path(master).read_text()
+
+    real_replace = safety.os.replace
+
+    def locked_master(src, dst):
+        if Path(dst).name == "edited_combined_transactions.csv":
+            raise PermissionError("open in Excel")
+        return real_replace(src, dst)
+    monkeypatch.setattr(safety.os, "replace", locked_master)
+
+    with pytest.raises(PermissionError):
+        rebuild_master(_combined([ROW, gone]), master)  # would place the label
+    assert orphans_path(master).read_text() == orphans_before
+    assert "Gifts" in orphans_path(master).read_text()
+    assert master.read_text() == before
