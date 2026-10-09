@@ -32,18 +32,21 @@ Bank CSVs (RAW/)
   │  setup overlay  ← auto-ingests Test Data/ on first launch;
   │                    reopen anytime via CHANGE DATA FOLDER
   │  Modules/transforms.py  ← totals, period maths (week/month/year), helpers
-  │  Modules/labels.py      ← merchant groups, rule safety, label writes, Excel import matcher
+  │  Modules/labels.py      ← merchant groups, transfer pairs, rule safety, label writes, Excel import matcher
+  │  Modules/recurring.py   ← recurring charges (subscriptions, rent, utilities)
   │  rules.csv              ← keyword auto-categorization rules (FINANCE_RULES_PATH overrides the path)
   │
   └─ Single-page dashboard
-       ├─ Header  (data freshness, stale-data notice, unlabeled rows + $ → LABEL THEM, last import → REVIEW)
+       ├─ Header  (data freshness, stale-data notice, unlabeled rows + $ → LABEL THEM, last import → REVIEW,
+       │           likely transfers labeled Expense/Income → CHECK, skipped RAW files)
        ├─ Period bar  (WEEK | MONTH | YEAR · ‹ period › · LATEST) — drives everything below
        ├─ Stat cards  (spent / income / net / savings rate vs previous and typical)
        ├─ Pace strip  (spending so far vs typical by now — in-progress periods)
        ├─ Spending over time  (bar per week/month/year; click to open a period)
        ├─ Categories  (sorted bars for the period + click-to-merchants drilldown)
+       ├─ Recurring charges  (subscriptions, rent, utilities — active and stopped, cost per year)
        ├─ Seasonality  (same-month lines per year, selected year highlighted)
-       ├─ Labeling panel  (full-screen overlay: label unlabeled rows by merchant, Rules tab)
+       ├─ Labeling panel  (full-screen overlay: label by merchant, transfer pairs, Rules tab)
        └─ Settings gear  (import/export CSV, reload, change data folder, theme)
 ```
 
@@ -58,8 +61,7 @@ Each doc declares the source file(s) it documents in its `resource:` frontmatter
 | [ingest-pipeline.md](ingest-pipeline.md) | `main.py`, `config.py` | Data directory config, format detection, normalisation, date-coverage merge, master-file rebuild |
 | [setup-screen.md](setup-screen.md) | `app.py`, `config.py` | Setup overlay: first-launch auto-ingest, Change Data Folder / Browse / Save & Launch / Cancel |
 | [transforms.md](transforms.md) | `Modules/transforms.py` | load_transactions, auto-labeling rules, period maths, aggregation helpers |
-| [overview-charts.md](overview-charts.md) | `app.py`, `Modules/transforms.py` | Period bar, stat cards, pace strip, spending-over-time and seasonality charts, header |
+| [overview-charts.md](overview-charts.md) | `app.py`, `Modules/transforms.py`, `Modules/recurring.py` | Period bar, stat cards, pace strip, spending-over-time, recurring charges and seasonality, header |
 | [category-breakdown.md](category-breakdown.md) | `app.py` | Category bars for the selected period, click-to-merchants drilldown |
 | [import-export.md](import-export.md) | `app.py`, `Modules/transforms.py` | Import/export in the settings menu: CSV labeling workflow, category system, transfers |
-| [overview-charts.md](overview-charts.md#recurring-charges-recurring-list) | `Modules/recurring.py`, `app.py` | Recurring charges: subscriptions and other regular charges, active and stopped, with yearly cost |
 | [labeling-panel.md](labeling-panel.md) | `app.py`, `Modules/labels.py` | In-app labeling: merchant groups, one-click labels, transfer pairs, rule safety, undo, the pre-session snapshot, the Rules tab |

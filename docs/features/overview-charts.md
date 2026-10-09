@@ -1,8 +1,8 @@
 ---
 type: Feature Doc
 title: Period view & charts
-description: The week / month / year period bar, stat cards, pace strip, spending-over-time chart, seasonality chart, and the page header.
-resource: app.py, Modules/transforms.py
+description: The week / month / year period bar, stat cards, pace strip, spending-over-time chart, recurring charges, seasonality chart, and the page header.
+resource: app.py, Modules/transforms.py, Modules/recurring.py
 updated: 2026-10-09
 ---
 
@@ -109,14 +109,18 @@ Gap periods (no labeled transactions) appear as zero bars rather than disappeari
 
 ## Recurring charges (`recurring-list`)
 
-Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it (not labeled Transfer or Income):
+Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it:
 
-- at least **3 times**, on a **monthly** (gaps of 20–40 days), **quarterly** (75–105) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
+- on **3 or more days**, on a **monthly** (gaps of 20–40 days), **every 2 months** (50–70), **quarterly** (75–105), **every 6 months** (160–200) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
 - at a **steady amount** — at least 75% of charges within 25% of the median, so one price change or odd month doesn't hide it.
 
-Same-day charges from one merchant count as one. Each row shows the merchant, cadence, the **latest** charge (prices change), the yearly cost (latest × charges per year) and the last charge date. A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **Stopped (N)** — worth a glance when something you cancelled may still be billing. The subtitle totals the active ones per year.
+Labeled **Expense** and **unlabeled** money out both count — except transfers: rows labeled Transfer or Income, unlabeled rows with transfer wording ("online transfer", "autopay", …), and either side of a likely transfer pair (a fixed monthly move to savings is not a subscription).
 
-The card isn't tied to the period bar: a subscription is a standing commitment, judged over all your history. Yearly charges need three years of data — two similar charges a year apart (the same trip twice) are too often a coincidence.
+Each row shows the merchant, cadence, the **latest charge near the typical amount** (prices change, but a one-off fee or prorated charge from the same payee isn't the subscription), the yearly cost (that × charges per year) and the last charge date. A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **Stopped (N)** — worth a glance when something you cancelled may still be billing. The subtitle totals the active ones per year.
+
+The card isn't tied to the period bar: a subscription is a standing commitment, judged over all your history. Yearly charges need three charges (about two years apart end to end) — two similar charges a year apart (the same trip twice) are too often a coincidence.
+
+**Known limits:** several subscriptions billed under one merchant name (Apple, Google, PayPal at different amounts and days) don't look steady or regular together, so they aren't found; neither is a subscription whose price jumped by more than 25% for half its history (an intro price ending).
 
 ## Seasonality (`seasonality-chart`)
 
