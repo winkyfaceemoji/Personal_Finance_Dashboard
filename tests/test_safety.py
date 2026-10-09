@@ -1,0 +1,96 @@
+import os
+
+import pandas as pd
+import pytest
+
+from Modules import safety
+from Modules.safety import (
+    atomic_write_csv,
+    backup_master,
+    list_backups,
+    orphan_count,
+    orphans_path,
+    restore_if_missing,
+)
+
+
+def _master(tmp_path, rows=(("2025-01-01", "Expense"),)):
+    path = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    path.parent.mkdir(parents=True)
+    pd.DataFrame(rows, columns=["date", "master_category"]).to_csv(path, index=False)
+    return path
+
+
+def test_atomic_write_replaces_content(tmp_path):
+    path = _master(tmp_path)
+    atomic_write_csv(pd.DataFrame({"a": [1]}), path)
+    assert pd.read_csv(path).columns.tolist() == ["a"]
+    assert [p.name for p in path.parent.iterdir()] == [path.name]   # no temp left
+
+
+def test_failed_replace_leaves_original_and_no_temp(tmp_path, monkeypatch):
+    path = _master(tmp_path)
+    before = path.read_text()
+
+    def locked(*_):
+        raise PermissionError("file is open in Excel")
+    monkeypatch.setattr(safety.os, "replace", locked)
+
+    with pytest.raises(PermissionError):
+        atomic_write_csv(pd.DataFrame({"a": [1]}), path)
+    assert path.read_text() == before
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_backup_is_a_copy(tmp_path):
+    path = _master(tmp_path)
+    dest = backup_master(path)
+    assert path.exists() and dest.exists()
+    assert dest.read_text() == path.read_text()
+    assert dest.parent.name == "backups"
+
+
+def test_backups_have_unique_names(tmp_path):
+    path = _master(tmp_path)
+    a, b = backup_master(path), backup_master(path)
+    assert a != b and a.exists() and b.exists()
+
+
+def test_backups_pruned_to_keep_newest(tmp_path):
+    path = _master(tmp_path)
+    made = [backup_master(path, keep=3) for _ in range(5)]
+    kept = list_backups(path, include_legacy=False)
+    assert kept == list(reversed(made))[:3]
+
+
+def test_legacy_bak_listed_last_and_never_pruned(tmp_path):
+    path = _master(tmp_path)
+    legacy = path.with_suffix(".csv.bak")
+    legacy.write_text("date,master_category\n")
+    for _ in range(4):
+        backup_master(path, keep=2)
+    backups = list_backups(path)
+    assert backups[-1] == legacy and legacy.exists()
+    assert len(backups) == 3
+
+
+def test_restore_if_missing(tmp_path):
+    path = _master(tmp_path)
+    dest = backup_master(path)
+    path.unlink()
+    assert restore_if_missing(path) == dest
+    assert path.read_text() == dest.read_text()
+
+
+def test_restore_is_noop_when_master_exists_or_no_backup(tmp_path):
+    path = _master(tmp_path)
+    assert restore_if_missing(path) is None          # master present
+    path.unlink()
+    assert restore_if_missing(path) is None          # nothing to restore from
+
+
+def test_orphan_count(tmp_path):
+    path = _master(tmp_path)
+    assert orphan_count(path) == 0
+    pd.DataFrame({"x": [1, 2]}).to_csv(orphans_path(path), index=False)
+    assert orphan_count(path) == 2
