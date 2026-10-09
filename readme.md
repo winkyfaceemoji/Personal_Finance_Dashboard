@@ -131,7 +131,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-The tests cover the week / month / year maths and run the full ingest on a temporary copy of `Test Data/` — they never write into the repo.
+The tests cover the week / month / year maths and run the full ingest on a temporary copy of `Test Data/` — they never write into the repo. GitHub Actions runs them on every pull request and every push to `main`, on Linux and Windows (`.github/workflows/tests.yml`).
 
 ---
 
@@ -157,7 +157,7 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 
 ### Label transactions
 
-**LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone. A group that looks like a card payment gets a highlighted *suggested* TRANSFER button. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. Each time the panel opens, it saves `SORTED/backups/before-labeling.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Details in [labeling-panel.md](docs/features/labeling-panel.md).
+**LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone. A group that looks like a card payment gets a starred *suggested* `★ TRANSFER` button. The **TRANSFER PAIRS** tab finds the same amount leaving one of your accounts and arriving in another within 5 days (a card payment, a move to savings) and labels both sides Transfer in one click. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. The first time the panel opens each day, it saves `SORTED/backups/before-labeling-YYYY-MM-DD.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Details in [labeling-panel.md](docs/features/labeling-panel.md).
 
 ### Import / export
 

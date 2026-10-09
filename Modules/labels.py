@@ -239,6 +239,74 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
     return sorted(groups, key=lambda x: x["abs_total"], reverse=True)
 
 
+# ── Transfer pairs ────────────────────────────────────────────────────────────
+
+# Card payments and own-account moves post on both sides within a few days
+# (weekends and holidays included); longer gaps start pairing coincidences
+TRANSFER_PAIR_DAYS = 5
+
+
+def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list[dict]:
+    """
+    Likely transfers between your own accounts: one row out and one row in of
+    exactly the same amount, on different accounts (source + card), within
+    max_days of each other — e.g. "Payment to Chase card ending in 3094" on
+    checking and "AUTOMATIC PAYMENT - THANK" on that card.
+
+    Only certain matches are returned: if either row has more than one
+    candidate (two equal payments, identical twins) the pair is a guess and is
+    skipped. Pairs with a side labeled Expense or Income are left alone (the
+    user decided that), and pairs already labeled Transfer on both sides have
+    nothing to do. Each dict: key, out, in (row dicts like unlabeled_groups'),
+    amount, gap (days), to_label (the sides without a valid label).
+    Biggest first.
+    """
+    if df.empty:
+        return []
+    d = df[_ID_COLUMNS + ["master_category"]].copy()
+    d["card_last4"] = d["card_last4"].fillna("").astype(str)
+    # Anything that isn't a valid label counts as unlabeled, as everywhere else
+    d["master_category"] = d["master_category"].where(d["master_category"].isin(PREDEFINED_CATEGORIES), "")
+    d["_acct"] = d["source"].astype(str) + "|" + d["card_last4"]
+    d["_cents"] = (d["amount"].astype(float) * 100).round().astype("int64")
+    d["_pos"] = range(len(d))
+    out = d[d["_cents"] < 0].assign(_key=lambda x: -x["_cents"])
+    inn = d[d["_cents"] > 0].assign(_key=lambda x: x["_cents"])
+    m = out.merge(inn, on="_key", suffixes=("_o", "_i"))
+    m = m[(m["_acct_o"] != m["_acct_i"])
+          & ((m["date_i"] - m["date_o"]).abs() <= pd.Timedelta(days=max_days))]
+    if m.empty:
+        return []
+    # Ambiguity counts every candidate, labeled or not: a pairing that might
+    # belong to another row is not certain
+    unique = (m.groupby("_pos_o")["_pos_i"].transform("size").eq(1)
+              & m.groupby("_pos_i")["_pos_o"].transform("size").eq(1))
+    m = m[unique]   # identical twins land here too: each gives the other side two candidates
+
+    def _side(r, sfx) -> dict:
+        # row ids only for the few rows that pair, not the whole frame
+        rid = row_id({c: r[f"{c}{sfx}"] for c in _ID_COLUMNS})
+        return {"row_id": rid, "date": r[f"date{sfx}"],
+                "description": r[f"description{sfx}"], "amount": float(r[f"amount{sfx}"]),
+                "source": r[f"source{sfx}"], "card_last4": r[f"card_last4{sfx}"],
+                "count": 1, "label": r[f"master_category{sfx}"]}
+
+    pairs = []
+    for r in m.to_dict("records"):
+        sides = [_side(r, "_o"), _side(r, "_i")]
+        labels = {s["label"] for s in sides}
+        if labels & {"Expense", "Income"} or labels == {"Transfer"}:
+            continue
+        pairs.append({
+            "key": hashlib.sha1((sides[0]["row_id"] + sides[1]["row_id"]).encode()).hexdigest()[:10],
+            "out": sides[0], "in": sides[1],
+            "amount": abs(sides[0]["amount"]),
+            "gap": int(abs((sides[1]["date"] - sides[0]["date"]).days)),
+            "to_label": [s for s in sides if not s["label"]],
+        })
+    return sorted(pairs, key=lambda p: (p["amount"], p["out"]["date"]), reverse=True)
+
+
 # ── Rules: safety check and rules.csv I/O ─────────────────────────────────────
 
 RULE_COLUMNS = ["keyword", "master_category", "sub_category", "added"]

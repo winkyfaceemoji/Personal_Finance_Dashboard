@@ -183,7 +183,8 @@ def test_normalizer_regression_gate(tmp_path, capsys):
     with capsys.disabled():
         print(f"\n[regression gate] {int(changed.sum())} of {len(base)} demo rows change label")
         for i in base.index[changed][:20]:
-            print(f"  {base.at[i, 'description']!r}: {old.at[i, 'master_category'] or '-'}"
+            # !a: ASCII-only, so a non-ASCII description can't crash a cp1252 console
+            print(f"  {base.at[i, 'description']!a}: {old.at[i, 'master_category'] or '-'}"
                   f" -> {new.at[i, 'master_category'] or '-'}")
     for d in base.loc[changed, "description"]:
         assert normalize_description(d) != str(d).lower().strip(), f"unexplained change: {d!r}"
