@@ -122,6 +122,42 @@ def test_group_card_remember_state(appmod):
     assert remember.value == [] and remember.options[0]["disabled"] is True
 
 
+def _card_remember(appmod, rows):
+    """(Remember checklist, note text) for the card of the first group in rows."""
+    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    df = pd.DataFrame({
+        "date": pd.to_datetime([r[0] for r in rows]), "description": [r[1] for r in rows],
+        "amount": [r[2] for r in rows], "master_category": [""] * len(rows),
+        "sub_category": [""] * len(rows), "source": ["Chase Credit"] * len(rows),
+        "card_last4": [""] * len(rows),
+    })
+    g = unlabeled_groups(df)[0]
+    card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+    remember = next(c for c in _walk(card) if getattr(c, "id", None) == {"type": "lbl-remember", "group": g["key"]})
+    note = " ".join(c.children for c in _walk(card) if isinstance(getattr(c, "children", None), str))
+    return remember, note
+
+
+def test_mixed_card_remember_disabled_and_unticked(appmod):
+    # No group buttons on a mixed card, so a ticked Remember could never be used
+    remember, _ = _card_remember(appmod, [("2025-03-01", "AMAZON MKTP 1", -20.0),
+                                          ("2025-03-02", "AMAZON MKTP 2", 20.0)])
+    assert remember.value == [] and remember.options[0]["disabled"] is True
+
+
+def test_single_row_ok_group_starts_unticked(appmod):
+    remember, note = _card_remember(appmod, [("2025-03-01", "STARBUCKS STORE 1", -5.0)])
+    assert remember.value == [] and remember.options[0]["disabled"] is False
+    assert "only one transaction — tick to remember anyway" in note
+
+
+def test_two_row_ok_group_starts_ticked(appmod):
+    remember, note = _card_remember(appmod, [("2025-03-01", "STARBUCKS STORE 1", -5.0),
+                                             ("2025-03-02", "STARBUCKS STORE 2", -6.0)])
+    assert remember.value == ["yes"] and remember.options[0]["disabled"] is False
+    assert "only one transaction" not in note
+
+
 def test_render_label_list_top_n(appmod):
     children, summary = appmod["render_label_list"]({"display": "block"}, 0, "todo", "dark", "all")
     assert 0 < len(children) <= appmod["LABEL_TOP_N"] + 1     # + the subcategory datalist
@@ -224,7 +260,9 @@ def test_row_click_labels_by_row_id(appmod):
         {"type": "lbl-row", "group": grp["key"], "row": row["row_id"], "cat": "Transfer"}, "", False, 0, "all")
     assert status.startswith("Labeled")
     df = g_["df"]
-    assert (df.loc[row_ids(df) == row["row_id"], "master_category"] == "Transfer").all()
+    sel = row_ids(df) == row["row_id"]
+    assert sel.any()
+    assert (df.loc[sel, "master_category"] == "Transfer").all()
 
 
 def test_label_survives_rules_file_locked(appmod, monkeypatch):
@@ -266,3 +304,96 @@ def test_label_refreshes_when_master_changed_underneath(appmod):
     assert master.read_bytes() == before                      # nothing written
     df = g_["df"]                                             # reloaded: the list can now be redrawn correctly
     assert (df.loc[row_ids(df) == first["row_id"], "master_category"] == "Expense").all()
+
+
+def _rule_safe_group(g_):
+    """A bulk group whose rule is allowed right now (so add_rule is reached)."""
+    from Modules.labels import read_rules, rule_check, unlabeled_groups
+    rules = read_rules(g_["RULES_PATH"])
+    return next(g for g in unlabeled_groups(g_["df"])
+                if not g["fallback"] and not g["mixed"] and rule_check(g_["df"], rules, g)["ok"])
+
+
+def test_label_keeps_undo_when_rules_unreadable(appmod, monkeypatch):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    grp = _rule_safe_group(g_)
+
+    def unreadable(*a, **k):
+        raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
+    monkeypatch.setitem(g_, "read_rules", unreadable)
+    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
+    assert status.startswith("Labeled") and "not remembered" in status
+    assert undo and undo["rule"] is None
+    assert master.read_bytes() != before
+
+
+def test_label_keeps_undo_when_reload_fails(appmod, monkeypatch):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    grp = _bulk_group(g_)
+    real_load = g_["load_transactions"]
+
+    def broken(*a, **k):
+        raise ValueError("bad row")
+    monkeypatch.setitem(g_, "load_transactions", broken)
+    try:
+        status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
+    finally:
+        g_["df"] = real_load(master, rules_path=g_["RULES_PATH"])
+    assert status.startswith("Labeled") and "RELOAD DATA" in status
+    assert undo and undo["backup"]
+    assert master.read_bytes() != before
+
+
+def test_label_rejects_unknown_category(appmod):
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_), cat="Groceries"), "", False, 0, "all")
+    assert "Groceries" in status and not status.startswith("Labeled")
+    assert undo is g_["dash"].no_update
+    assert master.read_bytes() == before
+
+
+def test_remembered_label_undo_restores_master_and_removes_rule(appmod):
+    from Modules.labels import read_rules
+    g_ = _live(appmod)
+    master, rules = g_["MASTER_PATH"], g_["RULES_PATH"]
+    before = master.read_bytes()
+    grp = _rule_safe_group(g_)
+    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
+    assert undo["rule"] and "rule" in status
+    assert undo["rule"] in read_rules(rules)["keyword"].tolist()
+    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status2 == "Undone."
+    assert master.read_bytes() == before
+    assert undo["rule"] not in read_rules(rules)["keyword"].tolist()
+
+
+def test_delete_rule_unlabels_its_rows(appmod):
+    from Modules.labels import add_rule, row_ids
+    g_ = _live(appmod)
+    grp = _rule_safe_group(g_)
+    kw = g_["rule_check"](g_["df"], g_["read_rules"](g_["RULES_PATH"]), grp)["keyword"]
+    ids = {r["row_id"] for r in grp["rows"]}
+    assert add_rule(g_["RULES_PATH"], kw, "Expense")
+    g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
+    sel = row_ids(g_["df"]).isin(ids)
+    assert sel.any() and (g_["df"].loc[sel, "master_category"] == "Expense").all()
+    status, version = g_["_do_delete_rule"](kw, 0)
+    assert status.startswith("Rule") and version == 1
+    df = g_["df"]
+    sel = row_ids(df).isin(ids)
+    assert sel.any() and (df.loc[sel, "master_category"] == "").all()   # unlabeled again
+
+
+def test_snapshot_failure_does_not_block_panel(appmod, monkeypatch):
+    g_ = _live(appmod)
+
+    def full(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setitem(g_, "snapshot_master", full)
+    g_["_snapshot_before_labeling"]()            # must not raise

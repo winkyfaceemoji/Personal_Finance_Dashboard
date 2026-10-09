@@ -557,8 +557,15 @@ def _group_card(g: dict, chk: dict):
     if chk["ok"]:
         note = (f'rule "{chk["keyword"]}" ({chk["direction"]}) · labels {chk["rows_now"]} row'
                 f'{"s" if chk["rows_now"] != 1 else ""} ({_dollar0(chk["dollars_now"])}) now')
+        if g["count"] < 2:
+            note += " · only one transaction — tick to remember anyway"
     else:
         note = chk["reason"]
+    # Remember only acts on a group-button click, so it is disabled where there
+    # are none; and one transaction is thin evidence for a rule that labels
+    # every future match, so it starts unticked there
+    can_remember = bulk and not chk["blocking"]
+    ticked = can_remember and chk["ok"] and g["count"] >= 2
 
     rows = [html.Div(className="lg-row", children=[
                 html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
@@ -588,8 +595,8 @@ def _group_card(g: dict, chk: dict):
             dcc.Checklist(
                 id={"type": "lbl-remember", "group": key}, className="lg-remember",
                 options=[{"label": " Remember for future statements", "value": "yes",
-                          "disabled": bool(chk["blocking"])}],
-                value=["yes"] if chk["ok"] else [],
+                          "disabled": not can_remember}],
+                value=["yes"] if ticked else [],
             ),
             html.Span(note, className="hint"),
         ]),
@@ -1521,12 +1528,21 @@ def toggle_label_panel(_open, _review, _close, trigger):
     if ctx.triggered_id == "close-label-panel":
         return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
     filt = "last" if ctx.triggered_id == "open-label-review" else "all"
-    # Keep the state from before this labeling session outside the backup
-    # rotation (each click takes a rotating backup)
-    if MASTER_PATH and MASTER_PATH.exists():
+    _snapshot_before_labeling()
+    return {"display": "block"}, filt, "todo", dash.no_update
+
+
+def _snapshot_before_labeling() -> None:
+    """Keep the state from before today's labeling outside the backup rotation
+    (each click takes a rotating backup). A failed copy — disk full, read-only
+    folder — must not keep the panel shut: every click still backs up."""
+    if not (MASTER_PATH and MASTER_PATH.exists()):
+        return
+    try:
         with MASTER_LOCK:
             snapshot_master(MASTER_PATH)
-    return {"display": "block"}, filt, "todo", dash.no_update
+    except OSError as e:
+        print(f"Warning: pre-labeling snapshot failed: {e}")
 
 
 @app.callback(
@@ -1577,9 +1593,13 @@ def _mtime(path) -> str:
 
 def _do_label(trig: dict, sub: str, remember: bool, version, filt):
     """Label a group (or one row of it): master write under the lock with a
-    backup first, then — only if that succeeded — the rule. Returns
+    backup first, then — only if that succeeded — the rule. Once the master is
+    written, nothing after it may lose the Undo. Returns
     (status, undo, undo-button style, version)."""
     global df
+    cat = trig["cat"]
+    if cat not in PREDEFINED_CATEGORIES:            # a forged or stale button id
+        return f'"{cat}" isn\'t a label — nothing was changed.', dash.no_update, dash.no_update, dash.no_update
     bumped = (version or 0) + 1
     stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
@@ -1600,9 +1620,9 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
             return stale
         rows, group = [row], group or {"merchant": row["description"]}
     expected = sum(r["count"] for r in rows)
-    cat = trig["cat"]
-    try:
-        with MASTER_LOCK:
+    with MASTER_LOCK:
+        # Only failures before the master write mean "nothing happened"
+        try:
             master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
             master, n = label_rows(master, rows, cat, sub)
             if n != expected:
@@ -1613,20 +1633,26 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
                 return stale
             backup = backup_master(MASTER_PATH)
             atomic_write_csv(master, MASTER_PATH)
-            rule, rule_note = None, ""
-            if remember and trig["type"] == "lbl-group":
+        except PermissionError:
+            return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+        # The master is written: Undo is offered whatever happens to the rule
+        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH), "rule": None}
+        rule_note = ""
+        if remember and trig["type"] == "lbl-group":
+            try:
                 chk = rule_check(df, read_rules(RULES_PATH), group)
-                try:
-                    if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
-                        rule = chk["keyword"]
-                except PermissionError:
-                    rule_note = " · not remembered: rules.csv is open in another program"
+                if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
+                    undo["rule"] = chk["keyword"]
+            except PermissionError:
+                rule_note = " · not remembered: rules.csv is open in another program"
+            except Exception:
+                rule_note = " · not remembered: rules.csv couldn't be read or written"
+        undo["rules_mtime"] = _mtime(RULES_PATH)
+    try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
-    except PermissionError:
-        return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
-    # The master write happened, so Undo must be offered even if the rule failed
-    undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
-            "rules_mtime": _mtime(RULES_PATH), "rule": rule}
+    except Exception:
+        rule_note += " · couldn't reload the data — use RELOAD DATA"
+    rule = undo["rule"]
     status = (f"Labeled {n} {group['merchant']} row{'s' if n != 1 else ''} as {cat}"
               + (f' · rule "{rule}" added' if rule else "") + rule_note)
     return status, undo, _SHOWN_INLINE, bumped
@@ -1702,12 +1728,20 @@ def undo_label(n_clicks, undo, version):
     prevent_initial_call=True,
 )
 def delete_rule_click(_clicks, version):
-    global df
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return dash.no_update, dash.no_update
-    keyword = ctx.triggered_id["keyword"]
+    return _do_delete_rule(ctx.triggered_id["keyword"], version)
+
+
+def _do_delete_rule(keyword: str, version):
+    """Remove a panel-added rule; the rows it labeled (and nothing saved in
+    the master) go back to unlabeled on the reload. Returns (status, version)."""
+    global df
     try:
-        removed = delete_rule(RULES_PATH, keyword)
+        # Under the lock like every other write, so it can't interleave with a
+        # label click's add_rule or an Undo's delete_rule
+        with MASTER_LOCK:
+            removed = delete_rule(RULES_PATH, keyword)
     except PermissionError:
         return "⚠ rules.csv is open in another program (Excel?) — close it and try again.", dash.no_update
     df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)

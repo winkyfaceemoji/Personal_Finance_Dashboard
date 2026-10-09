@@ -104,3 +104,26 @@ def test_delete_rule(tmp_path):
     assert delete_rule(path, "STARBUCKS STORE")
     assert read_rules(path)["keyword"].tolist() == ["rent co"]
     assert not delete_rule(path, "nothing like this")
+
+
+def test_read_rules_empty_file(tmp_path):
+    path = tmp_path / "rules.csv"
+    path.write_bytes(b"")                                     # zero-byte, no header
+    r = read_rules(path)
+    assert r.empty and list(r.columns) == ["keyword", "master_category", "sub_category", "added"]
+    assert add_rule(path, "starbucks store", "Expense")
+    assert read_rules(path)["keyword"].tolist() == ["starbucks store"]
+    df = _df([("2025-03-01", "CAFE 1", -5.0, "")])
+    path.write_bytes(b"")
+    assert apply_auto_categories(df.copy(), path).loc[0, "master_category"] == ""
+
+
+def test_read_rules_cp1252(tmp_path):
+    # Excel's plain "CSV" save on Windows is Windows-1252, not UTF-8
+    path = tmp_path / "rules.csv"
+    path.write_bytes("keyword,master_category,sub_category\ncafé luna,Expense,Café\n".encode("cp1252"))
+    r = read_rules(path)
+    assert r.loc[0, "keyword"] == "café luna" and r.loc[0, "sub_category"] == "Café"
+    df = _df([("2025-03-01", "CAFÉ LUNA 12", -5.0, "")])
+    out = apply_auto_categories(df.copy(), path)
+    assert (out.loc[0, "master_category"], out.loc[0, "sub_category"]) == ("Expense", "Café")
