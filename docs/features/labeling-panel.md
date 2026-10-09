@@ -133,6 +133,19 @@ Undo compares both current mtimes to the stored ones. If they differ the status 
 
 ---
 
+## Transfer pairs
+
+A card payment shows up twice: money out of checking ("Payment to Chase card ending in 3094") and money into the card ("AUTOMATIC PAYMENT - THANK"). Both sides are Transfer, and labeling either as Expense counts the same money twice. The **TRANSFER PAIRS** tab (`transfer_pairs` in `Modules/labels.py`) finds them:
+
+- one row **out** and one row **in** of exactly the same amount, to the cent;
+- on **different accounts** (source + card) — a refund on the same card is money back, not a move;
+- within **`TRANSFER_PAIR_DAYS` = 5 days** of each other (posting delays, weekends, holidays);
+- **certain matches only**: if either row has more than one candidate (two equal payments, identical twin rows), which one pairs is a guess, so neither is shown. Every row counts as a candidate here, labeled or not.
+
+A pair with a side already labeled **Expense or Income** is left alone (that was your call); a pair labeled Transfer on both sides has nothing to do. A pair with one side already Transfer offers **LABEL AS TRANSFER** for the other. Each card shows both rows (date, OUT/IN, account, description, current label, amount) with **LABEL BOTH TRANSFER**; **LABEL ALL N PAIRS** labels every pair shown in one write. Clicks are checked against the pair key (or, for LABEL ALL, a signature of the whole list) and go through the same locked write as every other label (`_write_labels`: count check, backup, atomic write) with the same **UNDO**. The TO LABEL summary says how many pairs were found.
+
+Your existing rules may already cover the common card payments (`payment thank you`, `automatic payment`, `payment to chase card`); pairs then catch the rest — moves to savings, other banks, wallets.
+
 ## The Rules tab
 
 The **RULES** pill swaps the list for two sections:
