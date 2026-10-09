@@ -116,8 +116,31 @@ def test_label_rows_relabel_overwrites_only_the_named_row():
            "source": "Chase Debit", "card_last4": "4823", "count": 1}
     _, n = label_rows(master, [row], "Transfer")                  # default: labeled rows are safe
     assert n == 0
-    out, n = label_rows(master, [row], "Transfer", relabel=True)
+    _, n = label_rows(master, [row], "Transfer", relabel_from={"Income"})   # label changed since
+    assert n == 0
+    out, n = label_rows(master, [row], "Transfer", relabel_from={"Expense"})
     assert n == 1 and out["master_category"].tolist() == ["Transfer", "Expense"]
+
+
+def test_pair_lists_matches_the_separate_calls():
+    from Modules.labels import pair_lists
+    df = _df([PAY_OUT[:5] + ("Expense",), PAY_IN,
+              ("2025-04-01", "Payment to card", -20.0, "Chase Debit", "4823", ""),
+              ("2025-04-02", "PAYMENT THANK YOU", 20.0, "Discover Credit", "", "")])
+    assert pair_lists(df) == (transfer_pairs(df), suspect_transfers(df))
+
+
+def test_unreadable_dismissals_are_never_overwritten(tmp_path):
+    import pytest
+    from Modules.labels import add_not_transfer, not_transfer_keys
+    master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master.parent.mkdir()
+    bad = master.parent / "not_transfers.csv"
+    bad.write_text("Pair Key\nabc\n")                  # header changed by hand
+    assert not_transfer_keys(master) == set()
+    with pytest.raises(KeyError):
+        add_not_transfer(master, "new0000000")
+    assert bad.read_text() == "Pair Key\nabc\n"
 
 
 def test_not_a_transfer_is_remembered(tmp_path):

@@ -71,3 +71,42 @@ def test_biggest_yearly_cost_first():
 
 def test_empty():
     assert recurring_charges(_df([])) == []
+
+
+def test_amount_ignores_an_odd_latest_charge():
+    # A prorated or fee charge from the same payee must not become "the rent"
+    rows = _monthly("RENT CO", -1500.0) + [("2025-07-20", "RENT CO", -200.0)]
+    (r,) = recurring_charges(_df(rows))
+    assert r["amount"] == 1500.0 and r["yearly"] == 18000.0
+
+
+def test_same_day_charges_are_not_summed():
+    rows = _monthly("HULU 877", -7.99) + [("2025-06-15", "HULU 877", -7.99)]
+    (r,) = recurring_charges(_df(rows))
+    assert r["amount"] == 7.99
+
+
+def test_transfers_are_not_charges():
+    rows = (_monthly("ONLINE TRANSFER TO SAV XXXX1234", -500.0)        # unlabeled, looks like a transfer
+            + _monthly("ACME SAVINGS XFER 1", -250.0))                  # a side of a transfer pair
+    from Modules.labels import row_ids
+    df = _df(rows)
+    df["source"], df["card_last4"] = "Chase Debit", ""
+    acme = df["description"].str.startswith("ACME")
+    assert {r["merchant"] for r in recurring_charges(df)} == {"ACME SAVINGS XFER"}
+    assert recurring_charges(df, exclude_row_ids=set(row_ids(df[acme]))) == []
+
+
+def test_bimonthly_and_semiannual():
+    water = [(d, "CITY WATER 7", -80.0) for d in ("2024-11-05", "2025-01-06", "2025-03-05", "2025-05-06")]
+    car = [(d, "GEICO AUTO", -620.0) for d in ("2024-01-10", "2024-07-10", "2025-01-09")]
+    found = {r["merchant"]: r for r in recurring_charges(_df(water + car), as_of=pd.Timestamp("2025-05-30"))}
+    assert found["CITY WATER"]["cadence"] == "every 2 months" and found["CITY WATER"]["yearly"] == 480.0
+    assert found["GEICO AUTO"]["cadence"] == "every 6 months" and found["GEICO AUTO"]["yearly"] == 1240.0
+
+
+def test_missing_descriptions_are_skipped():
+    rows = _monthly("NETFLIX.COM", -15.49)
+    df = _df(rows)
+    df.loc[0, "description"] = None
+    assert [r["merchant"] for r in recurring_charges(df)] == ["NETFLIX.COM"]

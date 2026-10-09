@@ -14,7 +14,7 @@ from config import get_data_dir, get_master_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
-    transfer_pairs, TRANSFER_PAIR_DAYS, suspect_transfers, not_transfer_keys, add_not_transfer,
+    TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -720,11 +720,22 @@ def _pair_card(p: dict):
     ])
 
 
+_PAIRS_CACHE: dict = {}
+
+
+def _pair_lists() -> tuple[list[dict], list[dict]]:
+    """(transfer_pairs, suspect_transfers) for the current df, computed once per
+    load: the header, the TO LABEL hint and the pairs tab all ask for them."""
+    if _PAIRS_CACHE.get("df") is not df:
+        _PAIRS_CACHE.update(df=df, lists=pair_lists(df))
+    return _PAIRS_CACHE["lists"]
+
+
 def _shown_pairs(filt) -> tuple[list[dict], int]:
     """(the pairs the TRANSFER PAIRS tab shows, how many exist). Opened from
     REVIEW, only pairs touching the last import's rows; at most LABEL_TOP_N,
     and LABEL ALL acts on exactly these — never on pairs the user didn't see."""
-    pairs = transfer_pairs(df)
+    pairs = _pair_lists()[0]
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     if only is not None:
         only = set(only)
@@ -736,7 +747,7 @@ def _suspects(filt=None) -> list[dict]:
     """Likely transfers labeled Expense/Income that the user hasn't dismissed
     (REVIEW: only those touching the last import), biggest first."""
     dismissed = not_transfer_keys(MASTER_PATH) if MASTER_PATH else set()
-    out = [p for p in suspect_transfers(df) if p["key"] not in dismissed]
+    out = [p for p in _pair_lists()[1] if p["key"] not in dismissed]
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     if only is not None:
         only = set(only)
@@ -1472,8 +1483,11 @@ def category_drilldown(label, _theme, store):
 )
 def update_recurring(_refresh):
     # Not tied to the period bar: a subscription is a standing commitment,
-    # judged over all your history and "active" as of your newest data
-    return recurring_view(recurring_charges(df))
+    # judged over all your history and "active" as of your newest data. The
+    # sides of likely transfers (a fixed monthly move to savings) aren't charges
+    pairs, suspects = _pair_lists()
+    transfer_ids = {s["row_id"] for p in pairs + suspects for s in (p["out"], p["in"])}
+    return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids))
 
 
 # ── Seasonality ───────────────────────────────────────────────────────────────
@@ -1855,14 +1869,27 @@ def _mtime(path) -> str:
 
 def _write_labels(rows: list[dict], cat: str, sub: str = "", relabel: bool = False):
     """The master write every label action shares; call it holding MASTER_LOCK.
-    Labels exactly these rows (unlabeled ones only), backup first, atomic
-    write. Returns (rows labeled, backup), or None — with nothing written and
-    df reloaded — when the master no longer matches what the user saw.
-    PermissionError (file open in Excel) propagates: nothing was written."""
+    Labels exactly these rows — unlabeled ones only, or with relabel (an
+    explicit fix) each row whose label on disk is still the one shown (its
+    "label") — backup first, atomic write. Returns (rows labeled, backup), or
+    None — with nothing written and df reloaded — when the master no longer
+    matches what the user saw. PermissionError (file open in Excel)
+    propagates: nothing was written."""
     global df
     expected = sum(r["count"] for r in rows)
     master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
-    master, n = label_rows(master, rows, cat, sub, relabel=relabel)
+    if relabel:
+        # Row by row, each checked on its own: a combined count could hide one
+        # side matching nothing while another matches an unseen row
+        n = 0
+        for r in rows:
+            master, k = label_rows(master, [r], cat, sub, relabel_from={r["label"]} if r.get("label") else None)
+            if k != r["count"]:
+                n = -1
+                break
+            n += k
+    else:
+        master, n = label_rows(master, rows, cat, sub)
     if n != expected:
         # Something relabeled or removed these rows since the list was drawn —
         # write nothing rather than a partial label, and reload so the next
@@ -2049,6 +2076,10 @@ def _do_fix_suspect(trig: dict, version, filt=None):
         except PermissionError:
             return ("⚠ SORTED/not_transfers.csv is open in another program (Excel?) — close it and try again.",
                     dash.no_update, dash.no_update, dash.no_update)
+        except (OSError, KeyError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            # Never replace a file we can't read: that would undo every earlier dismissal
+            return ("⚠ SORTED/not_transfers.csv couldn't be read (edited by hand?) — fix or delete it "
+                    "and try again.", dash.no_update, dash.no_update, dash.no_update)
         return "Kept as is — this pair won't be flagged again.", dash.no_update, dash.no_update, bumped
     with MASTER_LOCK:
         try:

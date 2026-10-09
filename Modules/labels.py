@@ -300,12 +300,13 @@ def _certain_pairs(df: pd.DataFrame, max_days: int) -> list[dict]:
     return sorted(pairs, key=lambda p: (p["amount"], p["out"]["date"]), reverse=True)
 
 
-def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list[dict]:
+def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS,
+                   _certain: list[dict] | None = None) -> list[dict]:
     """Certain pairs (see _certain_pairs) with something to label: no side
     labeled Expense or Income (that's suspect_transfers' list), not Transfer on
     both sides already. Adds to_label: the sides without a valid label."""
     out = []
-    for p in _certain_pairs(df, max_days):
+    for p in (_certain if _certain is not None else _certain_pairs(df, max_days)):
         labels = {p["out"]["label"], p["in"]["label"]}
         if labels & {"Expense", "Income"} or labels == {"Transfer"}:
             continue
@@ -313,7 +314,14 @@ def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list
     return out
 
 
-def suspect_transfers(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list[dict]:
+def pair_lists(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> tuple[list[dict], list[dict]]:
+    """(transfer_pairs, suspect_transfers) from a single matching pass."""
+    certain = _certain_pairs(df, max_days)
+    return transfer_pairs(df, max_days, certain), suspect_transfers(df, max_days, certain)
+
+
+def suspect_transfers(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS,
+                      _certain: list[dict] | None = None) -> list[dict]:
     """
     Certain pairs with a side labeled Expense or Income — most likely a card
     payment or a move between your own accounts that is being counted as
@@ -322,7 +330,7 @@ def suspect_transfers(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> l
     counted (the dollars those sides put into totals).
     """
     out = []
-    for p in _certain_pairs(df, max_days):
+    for p in (_certain if _certain is not None else _certain_pairs(df, max_days)):
         if not {p["out"]["label"], p["in"]["label"]} & {"Expense", "Income"}:
             continue
         fix = [s for s in (p["out"], p["in"]) if s["label"] != "Transfer"]
@@ -431,13 +439,14 @@ LAST_IMPORT_NAME = "last_import.csv"
 
 
 def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str = "",
-               relabel: bool = False) -> tuple[pd.DataFrame, int]:
+               relabel_from: set[str] | None = None) -> tuple[pd.DataFrame, int]:
     """Label exactly these rows in the master, through the same matcher Excel
     imports use (date + description + amount + source + card), touching only
-    rows that have no valid label yet — or, with relabel, these rows whatever
-    their label (an explicit fix the user clicked). Twin rows are sent once so
-    the count isn't doubled. Returns (master, rows labeled); the caller checks
-    the count against what it expected and writes nothing on a mismatch."""
+    rows that have no valid label yet — plus, for an explicit fix the user
+    clicked, rows currently labeled one of relabel_from (the label they saw, so
+    a label changed on disk since is never overwritten). Twin rows are sent
+    once so the count isn't doubled. Returns (master, rows labeled); the caller
+    checks the count against what it expected and writes nothing on a mismatch."""
     imp = pd.DataFrame([{
         "date": pd.Timestamp(r["date"]).strftime("%Y-%m-%d"),
         "description": str(r["description"]),
@@ -450,9 +459,10 @@ def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str =
     # Only rows without a valid label are candidates: a hand-labeled twin of an
     # unlabeled row (same date, description, amount, card) must keep its label
     master = master.copy()
-    open_ = ~master["master_category"].fillna("").astype(str).str.strip().isin(PREDEFINED_CATEGORIES)
-    if relabel:
-        open_[:] = True
+    current = master["master_category"].fillna("").astype(str).str.strip()
+    open_ = ~current.isin(PREDEFINED_CATEGORIES)
+    if relabel_from:
+        open_ |= current.isin(relabel_from)
     part, updated, _ = apply_label_import(master[open_], imp)
     for col in ("master_category", "sub_category"):
         master[col] = master[col].fillna("").astype(str)
@@ -463,19 +473,25 @@ def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str =
 NOT_TRANSFERS_NAME = "not_transfers.csv"
 
 
-def not_transfer_keys(master_path) -> set[str]:
-    """Pair keys the user marked "not a transfer" — never flagged again."""
-    p = Path(master_path).parent / NOT_TRANSFERS_NAME
+def _read_not_transfers(p: Path) -> set[str]:
     if not p.exists():
         return set()
+    return set(pd.read_csv(p, dtype=str, keep_default_na=False)["pair"])
+
+
+def not_transfer_keys(master_path) -> set[str]:
+    """Pair keys the user marked "not a transfer" — never flagged again."""
     try:
-        return set(pd.read_csv(p, dtype=str, keep_default_na=False)["pair"])
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, KeyError, OSError):
+        return _read_not_transfers(Path(master_path).parent / NOT_TRANSFERS_NAME)
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, KeyError, OSError, ValueError):
         return set()
 
 
 def add_not_transfer(master_path, key: str) -> None:
-    keys = not_transfer_keys(master_path) | {key}
+    """Remember one more dismissed pair. An existing file that can't be read
+    (hand-edited, saved by Excel) raises instead of being replaced by just
+    this key, which would silently bring back every earlier dismissal."""
+    keys = _read_not_transfers(Path(master_path).parent / NOT_TRANSFERS_NAME) | {key}
     atomic_write_csv(pd.DataFrame({"pair": sorted(keys)}),
                      Path(master_path).parent / NOT_TRANSFERS_NAME)
 

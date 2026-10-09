@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from Modules.labels import suspect_transfers, transfer_pairs
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -449,7 +451,7 @@ def _add_transfer_pair(g_, cents=77777, labels=("", "")):
     m = pd.concat([m, pd.DataFrame([out_row, in_row])], ignore_index=True)
     m.to_csv(master, index=False)
     g_["df"] = g_["load_transactions"](master, rules_path=g_["RULES_PATH"])
-    found = g_["transfer_pairs"](g_["df"]) + g_["suspect_transfers"](g_["df"])
+    found = transfer_pairs(g_["df"]) + suspect_transfers(g_["df"])
     return next(p for p in found if p["amount"] == cents / 100)
 
 
@@ -472,7 +474,7 @@ def test_pairs_tab_lists_and_labels_a_pair(appmod):
     df = g_["df"]
     both = row_ids(df).isin({pair["out"]["row_id"], pair["in"]["row_id"]})
     assert both.sum() == 2 and (df.loc[both, "master_category"] == "Transfer").all()
-    assert pair["key"] not in {p["key"] for p in g_["transfer_pairs"](df)}
+    assert pair["key"] not in {p["key"] for p in transfer_pairs(df)}
     status, _, _, _ = g_["_do_undo"](undo, 1)
     assert status == "Undone." and master.read_bytes() == before
 
@@ -484,9 +486,9 @@ def test_label_all_pairs_refuses_a_stale_list(appmod):
     before = master.read_bytes()
     status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": "0000000000"}, 0)
     assert status.startswith("The list changed") and master.read_bytes() == before
-    sig = g_["_pairs_sig"](g_["transfer_pairs"](g_["df"]))
+    sig = g_["_pairs_sig"](transfer_pairs(g_["df"]))
     status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": sig}, 0)
-    assert status.startswith("Labeled") and g_["transfer_pairs"](g_["df"]) == []
+    assert status.startswith("Labeled") and transfer_pairs(g_["df"]) == []
 
 
 def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
@@ -501,7 +503,7 @@ def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
     status, _, _, _ = g_["_do_label_pairs"](
         {"type": "lbl-pair", "pair": "__all__", "sig": g_["_pairs_sig"](shown)}, 0, "all")
     assert status.startswith("Labeled 2 rows (1 pair)")
-    assert [p["amount"] for p in g_["transfer_pairs"](g_["df"])] == [666.66]
+    assert [p["amount"] for p in transfer_pairs(g_["df"])] == [666.66]
 
 
 def test_skipped_files_text(appmod):
