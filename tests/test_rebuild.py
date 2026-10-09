@@ -4,10 +4,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import main
 from main import MASTER_COLUMNS, UNIFIED_COLUMNS, rebuild_master
+from main import main as run_pipeline
 from Modules import safety
-from Modules.safety import backup_master, list_backups
+from Modules.safety import backup_master, list_backups, orphan_count, orphans_path
 
 
 def _combined(rows):
@@ -93,9 +93,6 @@ def test_same_day_repeats_keep_order(master):
     rebuild_master(_combined([ROW, ROW, ROW]), master)
     subs = pd.read_csv(master)["sub_category"].fillna("").tolist()
     assert subs == ["First", "Second", ""]          # third occurrence is new
-
-
-from Modules.safety import orphan_count, orphans_path
 
 
 def test_changed_raw_field_keeps_label(master):
@@ -257,3 +254,14 @@ def test_excel_saved_orphans_still_reattach(master):
     out = pd.read_csv(master).set_index("description")
     assert out.loc["OLD MERCHANT", "sub_category"] == "Gifts"
     assert result["orphaned"] == 0
+
+
+def test_restore_runs_even_when_raw_is_empty(master):
+    # main() returns early with nothing in RAW; the restore must not be skipped
+    _write_master(master, [ROW + ("Expense", "Coffee")])
+    backup_master(master)
+    master.unlink()
+    data_dir = master.parent.parent
+    (data_dir / "RAW").mkdir()
+    run_pipeline(data_dir)
+    assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"

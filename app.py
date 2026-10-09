@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
 from Modules.labels import apply_label_import, read_import_csv
-from Modules.safety import atomic_write_csv, backup_master, orphan_count
+from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count
 from Modules.transforms import (
     load_transactions,
     monthly_expenses,
@@ -52,7 +52,8 @@ GEAR_ICON_URI = "data:image/svg+xml;base64," + base64.b64encode(_GEAR_SVG.encode
 
 def _run_ingest_pipeline(data_dir: Path | None = None) -> None:
     from main import main as run_ingest
-    run_ingest(data_dir)
+    with MASTER_LOCK:
+        run_ingest(data_dir)
 
 
 MASTER_PATH = get_master_path(get_data_dir())
@@ -1107,7 +1108,10 @@ def export_csv(_):
     export["date"] = export["date"].dt.strftime("%Y-%m-%d")
     export["master_category"] = export["master_category"].fillna("")
     export["sub_category"]    = export["sub_category"].fillna("")
-    return dcc.send_data_frame(export.to_csv, "transactions_export.csv", index=False)
+    # UTF-8 with a BOM: without it Excel reads the file as Windows-1252, and
+    # non-ASCII descriptions come back mangled and match nothing on import.
+    # send_bytes, because send_data_frame writes to text and drops the BOM.
+    return dcc.send_bytes(export.to_csv(index=False).encode("utf-8-sig"), "transactions_export.csv")
 
 
 @app.callback(
@@ -1136,12 +1140,13 @@ def import_csv(contents, filename, trigger):
     if not MASTER_PATH or not MASTER_PATH.exists():
         return "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
-        full_df = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
-        full_df, updated, skipped = apply_label_import(full_df, import_df)
-        # Versioned backup, then an atomic write: a bad import can be rolled
-        # back from SORTED/backups/, and a crash never truncates the master
-        backup_master(MASTER_PATH)
-        atomic_write_csv(full_df, MASTER_PATH)
+        with MASTER_LOCK:
+            full_df = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
+            full_df, updated, skipped = apply_label_import(full_df, import_df)
+            # Versioned backup, then an atomic write: a bad import can be rolled
+            # back from SORTED/backups/, and a crash never truncates the master
+            backup_master(MASTER_PATH)
+            atomic_write_csv(full_df, MASTER_PATH)
         global df
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
 
@@ -1170,6 +1175,8 @@ def reload_data(_, trigger):
         _run_ingest_pipeline(MASTER_PATH.parent.parent)
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
         return "✓ Reloaded", (trigger or 0) + 1
+    except PermissionError:
+        return "⚠ A data file is open in another program (Excel?) — close it and reload again.", dash.no_update
     except Exception as e:
         return f"⚠ {e}", dash.no_update
 
