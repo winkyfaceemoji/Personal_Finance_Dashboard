@@ -12,11 +12,11 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ├── app.py                   # Dash dashboard (layout + all callbacks)
 ├── config.py                # Data directory resolution (env var > config.json > Test Data/)
 ├── config.json              # Your saved data folder path — git-ignored, created on first save
-├── rules.csv                # Keyword → category auto-tagging rules
+├── rules.csv                # Keyword → category auto-tagging rules (the labeling panel adds to it)
 ├── Modules/
 │   ├── transforms.py        # Data helpers (load, label, period maths, aggregate)
 │   ├── safety.py            # Backups + atomic writes for the master (your labels)
-│   └── labels.py            # Applies an imported CSV's labels
+│   └── labels.py            # Merchant groups, rule safety, label writes, imported-CSV matcher
 ├── Test Data/               # Anonymized demo data — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
 │   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
@@ -137,7 +137,7 @@ The tests cover the week / month / year maths and run the full ingest on a tempo
 
 ## UI tour
 
-One page, driven by one control. The header shows your sources, how recent your data is (`data through Dec 26, 2025`, plus any account lagging behind), a notice when your newest transaction is over a week old, and a red note with the count and dollar size of unlabeled rows. The settings gear (top right) holds **DATA** (**IMPORT CSV** / **EXPORT CSV** for labeling, **RELOAD DATA** to re-run the ingest), **SOURCE** (**CHANGE DATA FOLDER**), and **THEME**.
+One page, driven by one control. The header shows your sources, how recent your data is (`data through Dec 26, 2025`, plus any account lagging behind), a notice when your newest transaction is over a week old, and a red note with the count and dollar size of unlabeled rows, with a **LABEL THEM →** button beside it. After an import, a second line says what the last import added (`31 new · 27 labeled · 4 need you`) with a **REVIEW →** button. The settings gear (top right) holds **DATA** (**IMPORT CSV** / **EXPORT CSV** for labeling, **RELOAD DATA** to re-run the ingest), **SOURCE** (**CHANGE DATA FOLDER**), and **THEME**.
 
 ### Pick a period
 
@@ -153,11 +153,15 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 | SPEND BY CATEGORY | Sorted bars for the selected period — top 9 categories + Other, with `$ · %`. Click a bar for its top merchants and largest transaction (click again to close) |
 | BY CALENDAR MONTH | One line per year over Jan–Dec, the selected period's year highlighted — spot seasonal spikes. Click a year in the legend to hide it |
 
-> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the header shows how many unlabeled rows (and dollars) are being left out. Label transactions with the Excel workflow or `rules.csv`, and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals. Weekly tracking needs this most: new transactions arrive unlabeled unless a rule matches them.
+> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the header shows how many unlabeled rows (and dollars) are being left out. Label transactions in the labeling panel, with the Excel workflow, or with `rules.csv`, and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals. Weekly tracking needs this most: new transactions arrive unlabeled unless a rule matches them.
+
+### Label transactions
+
+**LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone. A group that looks like a card payment gets a highlighted *suggested* TRANSFER button. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. Each time the panel opens, it saves `SORTED/backups/before-labeling.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Details in [labeling-panel.md](docs/features/labeling-panel.md).
 
 ### Import / export
 
-Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. To inspect individual transactions in the app, click a category bar to open its drilldown.
+Label in the app first: the labeling panel above clears most of a backlog in a few clicks. Use Excel for bulk edits and for changing labels that are already set. Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. To inspect individual transactions in the app, click a category bar to open its drilldown.
 
 ### Theme
 
@@ -183,6 +187,8 @@ Rows tagged `Transfer` are excluded from all income and expense totals — they 
 
 ## Bulk category workflow
 
+For a handful of merchants, the labeling panel is quicker (see above). For a bulk edit:
+
 1. Click **EXPORT CSV** in the settings menu
 2. Open in Excel — fill `master_category` (`Expense`, `Income`, or `Transfer`) and optionally `sub_category` for each row
 3. Save and click **IMPORT CSV** — the app matches rows by description + amount + source + date and writes the values back to the master file
@@ -202,7 +208,7 @@ fidelity,Transfer,
 
 On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the category breakdown. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
 
-Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
+Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The labeling panel also appends rules (with an extra `added` date column, which the loader ignores) when you tick **Remember for future statements**, and its RULES tab can delete those. To make the app use a different rules file (tests and scripted checks do), set `FINANCE_RULES_PATH`. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
 
 ---
 
@@ -227,3 +233,4 @@ Start at the [docs index](docs/README.md), or jump in:
   - [Period view & charts](docs/features/overview-charts.md)
   - [Category breakdown & drilldown](docs/features/category-breakdown.md)
   - [Import / export & labeling](docs/features/import-export.md)
+  - [Labeling panel](docs/features/labeling-panel.md)
