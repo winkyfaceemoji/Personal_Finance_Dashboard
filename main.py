@@ -128,7 +128,8 @@ def load_and_normalize(filepath: Path, input_folder: Path) -> pd.DataFrame | Non
     institution = rel[0] if len(rel) > 1 else ""
     result["institution"] = institution
 
-    # Extract card last-4 from Chase filenames: Chase_XXXX_Activity...
+    # Extract card last-4 from Chase filenames: ChaseXXXX_Activity... (no
+    # separator between "Chase" and the digits — the regex requires that)
     last4 = None
     m = re.search(r"Chase(\d{4})_", filepath.name, re.IGNORECASE)
     if m:

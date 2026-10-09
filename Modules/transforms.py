@@ -115,10 +115,10 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     apply_auto_categories(df, rules_path)
 
     # effective_category: master overrides bank, fallback to Uncategorized
-    df["effective_category"] = df.apply(
-        lambda r: r["master_category"] if r["master_category"] != ""
-                  else (r["original_category"] if r["original_category"] != "" else "Uncategorized"),
-        axis=1,
+    df["effective_category"] = (
+        df["master_category"]
+        .where(df["master_category"] != "", df["original_category"])
+        .replace("", "Uncategorized")
     )
 
     # category_display: the transaction-level category shown in the Transactions
@@ -240,6 +240,176 @@ def expenses_by_category(df: pd.DataFrame, month_str: str = None) -> pd.DataFram
     )
     grouped["total_expenses"] = -grouped["total_expenses"]
     return grouped.sort_values("total_expenses", ascending=False)
+
+
+# ── Periods (week / month / year) ─────────────────────────────────────────────
+# Weeks run Monday → Sunday (ISO). Every period helper below takes one of
+# these names; pandas does the calendar arithmetic via Period objects.
+PERIOD_FREQS = {"week": "W-SUN", "month": "M", "year": "Y"}
+
+# How many earlier periods make up "typical" (their median). Years use every
+# earlier year in the data — there are rarely more than a handful.
+TYPICAL_LOOKBACK = {"week": 12, "month": 12, "year": None}
+
+
+def to_period(ts, freq: str) -> pd.Period:
+    """The week / month / year period containing a timestamp."""
+    return pd.Timestamp(ts).to_period(PERIOD_FREQS[freq])
+
+
+def period_label(p: pd.Period, freq: str) -> str:
+    """Human label for a period: 'Dec 22 – 28, 2025', 'Dec 2025', '2025'."""
+    if freq == "year":
+        return str(p.year)
+    if freq == "month":
+        return p.start_time.strftime("%b %Y")
+    # Day numbers via .day, not %-d — that strftime flag doesn't exist on Windows
+    s, e = p.start_time, p.end_time
+    if s.year != e.year:
+        return f"{s:%b} {s.day}, {s.year} – {e:%b} {e.day}, {e.year}"
+    if s.month != e.month:
+        return f"{s:%b} {s.day} – {e:%b} {e.day}, {e.year}"
+    return f"{s:%b} {s.day} – {e.day}, {e.year}"
+
+
+def period_short_label(p: pd.Period, freq: str) -> str:
+    """Compact axis label: 'Dec 22' (week start), "Dec '25", '2025'."""
+    if freq == "year":
+        return str(p.year)
+    if freq == "month":
+        return p.start_time.strftime("%b '%y")
+    return f"{p.start_time:%b} {p.start_time.day}"
+
+
+def filter_window(df: pd.DataFrame, start, end) -> pd.DataFrame:
+    """Rows whose date falls in [start, end], both days inclusive."""
+    start = pd.Timestamp(start).normalize()
+    end   = pd.Timestamp(end).normalize()
+    return df[(df["date"] >= start) & (df["date"] < end + pd.Timedelta(days=1))]
+
+
+def filter_period(df: pd.DataFrame, p: pd.Period) -> pd.DataFrame:
+    """Rows dated inside a period."""
+    return filter_window(df, p.start_time, p.end_time)
+
+
+def window_totals(df: pd.DataFrame) -> dict:
+    """Label-based income / expenses / net for a slice of rows. Expenses are
+    positive (refunds labeled Expense net against them), like monthly_expenses."""
+    exp = -get_expenses(df)["amount"].sum()
+    inc = get_income(df)["amount"].sum()
+    return {"exp": float(exp), "inc": float(inc), "net": float(inc - exp)}
+
+
+def period_totals(df: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Income / expenses / net for every period from the first to the last
+    transaction date — gap periods included as zeros, so a week with no
+    spending counts toward "typical" instead of silently disappearing.
+    Index: Period. Columns: exp (positive), inc, net.
+    """
+    dates = df["date"].dropna()
+    if dates.empty:
+        return pd.DataFrame(columns=["exp", "inc", "net"],
+                            index=pd.PeriodIndex([], freq=PERIOD_FREQS[freq]))
+    alias = PERIOD_FREQS[freq]
+    idx = pd.period_range(dates.min().to_period(alias), dates.max().to_period(alias), freq=alias)
+
+    def _sum(rows: pd.DataFrame) -> pd.Series:
+        return rows.groupby(rows["date"].dt.to_period(alias))["amount"].sum()
+
+    out = pd.DataFrame(index=idx)
+    out["exp"] = -_sum(get_expenses(df)).reindex(idx, fill_value=0.0)
+    out["inc"] = _sum(get_income(df)).reindex(idx, fill_value=0.0)
+    out = out.fillna(0.0)
+    out["net"] = out["inc"] - out["exp"]
+    return out
+
+
+def previous_periods(p: pd.Period, freq: str, first: pd.Period) -> list[pd.Period]:
+    """The periods "typical" is measured over: up to TYPICAL_LOOKBACK periods
+    immediately before p, never earlier than the first period with data."""
+    n = TYPICAL_LOOKBACK[freq]
+    out, q = [], p - 1
+    while q >= first and (n is None or len(out) < n):
+        out.append(q)
+        q -= 1
+    return out
+
+
+def to_date_totals(df: pd.DataFrame, p: pd.Period, days_elapsed: int) -> dict:
+    """Totals for the first `days_elapsed` days of a period (capped at its end)
+    — the like-for-like comparison for a period that is still in progress."""
+    start = p.start_time.normalize()
+    end   = min(start + pd.Timedelta(days=days_elapsed - 1), p.end_time.normalize())
+    return window_totals(filter_window(df, start, end))
+
+
+def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
+    """
+    Everything the stat cards need for one period:
+
+    - cur: totals for p (to date, if p is still in progress)
+    - partial / days_elapsed / days_total: whether p ends after `as_of`, the
+      latest transaction date, and how far into it the data reaches
+    - prev: the previous period — truncated to the same number of days when
+      p is partial, so a half-finished month isn't compared to a full one
+    - typical: medians over previous_periods(), truncated the same way
+    - typical_full: typical *full*-period totals (the pace target)
+    - rate / prev_rate / typical_rate: savings rate (net ÷ income, %) — None
+      when there's no income to divide by
+
+    prev / typical are None when there is no earlier period in the data.
+    """
+    as_of      = pd.Timestamp(as_of).normalize()
+    start      = p.start_time.normalize()
+    days_total = (p.end_time.normalize() - start).days + 1
+    partial    = start <= as_of < p.end_time.normalize()
+    days       = (as_of - start).days + 1 if partial else days_total
+
+    dates = df["date"].dropna()
+    first = to_period(dates.min(), freq) if not dates.empty else p
+    prevs = previous_periods(p, freq, first)
+
+    def _totals(q: pd.Period) -> dict:
+        return to_date_totals(df, q, days) if partial else window_totals(filter_period(df, q))
+
+    def _rate(t: dict | None):
+        return t["net"] / t["inc"] * 100 if t and t["inc"] > 0 else None
+
+    cur  = _totals(p)
+    prev = _totals(prevs[0]) if prevs else None
+
+    typical = typical_full = typical_rate = None
+    if prevs:
+        hist = pd.DataFrame([_totals(q) for q in prevs])
+        typical = hist.median().to_dict()
+        rates = [r for r in (_rate(t) for t in hist.to_dict("records")) if r is not None]
+        typical_rate = float(pd.Series(rates).median()) if rates else None
+        full = pd.DataFrame([window_totals(filter_period(df, q)) for q in prevs])
+        typical_full = full.median().to_dict()
+
+    return {
+        "cur": cur, "prev": prev, "typical": typical, "typical_full": typical_full,
+        "rate": _rate(cur), "prev_rate": _rate(prev), "typical_rate": typical_rate,
+        "partial": partial, "days_elapsed": days, "days_total": days_total,
+        "prev_period": prevs[0] if prevs else None, "n_typical": len(prevs),
+    }
+
+
+def unlabeled_summary(df: pd.DataFrame) -> dict:
+    """Rows with no valid label (not Expense / Income / Transfer): these are
+    left out of every total, so the header reports their count and size."""
+    rows = df[~df["master_category"].isin(PREDEFINED_CATEGORIES)]
+    return {"count": int(len(rows)), "total": int(len(df)),
+            "amount": float(rows["amount"].abs().sum())}
+
+
+def source_freshness(df: pd.DataFrame) -> pd.Series:
+    """Latest transaction date per source, newest first."""
+    if df.empty:
+        return pd.Series(dtype="datetime64[ns]")
+    return df.groupby("source")["date"].max().sort_values(ascending=False)
 
 
 def get_uncategorized(df: pd.DataFrame) -> pd.DataFrame:
