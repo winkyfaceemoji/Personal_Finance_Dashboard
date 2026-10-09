@@ -3,7 +3,7 @@ type: Feature Doc
 title: Ingest pipeline
 description: Converts raw bank CSVs into a normalized master file — overlapping exports merged by date coverage — rebuilt from RAW each run.
 resource: main.py, config.py
-updated: 2026-07-06
+updated: 2026-10-09
 ---
 
 # Ingest pipeline (`main.py`)
@@ -162,7 +162,11 @@ This means a match key that occurs *more* times in the rebuilt data than it did 
 
 If the master file doesn't exist yet (first run), it's created directly from the combined data with `master_category` and `sub_category` set to `None` — there's nothing to inherit from.
 
-**Backup:** before rebuilding, the existing master file is renamed to `edited_combined_transactions.csv.bak` (overwriting any previous backup). This is a rolling one-generation backup, not a full history. It is **not** a reliable safety net yet: the rename happens before the old master is read, so a run that fails mid-rebuild leaves no master, and the next startup auto-ingest followed by a Reload overwrites the `.bak` with an unlabeled master. Copy the master somewhere safe before experimenting (see the known gaps in [decisions.md](../decisions.md#rebuild-the-master-from-raw-every-run--never-append)).
+**Backups:** before rebuilding, the existing master is *copied* to `SORTED/backups/edited_combined_transactions.<timestamp>.csv`; the newest 10 are kept (a legacy `.csv.bak` from older versions is left alone and used as a last resort). If the master is missing when a rebuild starts — e.g. after a failed run — the newest backup is restored first and the console says so. To deliberately start over, delete both the master and `SORTED/backups/`.
+
+**Fallback match & orphans:** labels the exact `MATCH_COLUMNS` key can't place are tried again by `FALLBACK_COLUMNS` (date, description, amount, source) — so a re-export that changes a bank category, memo, or running balance keeps its labels. Labels neither key places are kept in `SORTED/orphaned_labels.csv`, re-tried on every later rebuild (so they re-attach if the transaction reappears in a new export), counted in the dashboard header, and the file is deleted once it's empty. The orphans file is only written *after* the new master is safely on disk, so a failed master write (e.g. the file is open in Excel) never loses a label that was re-attaching.
+
+The new master is written atomically (temp file + `os.replace`), so a crash mid-write can't truncate it. The file keeps its existing permissions (a new file gets the normal umask default), so a master written from Docker stays usable on the host.
 
 ---
 
@@ -172,6 +176,7 @@ If the master file doesn't exist yet (first run), it's created directly from the
 |------|-----------|---------|
 | `SORTED/combined_transactions.csv` | Every pipeline run (full rebuild) | Not read by the app directly |
 | `SORTED/edited_combined_transactions.csv` | Every pipeline run (full rebuild; categorization carried forward by match key) | `app.py` on startup and after reload |
-| `SORTED/edited_combined_transactions.csv.bak` | Every pipeline run (overwritten each time) | Manual recovery only — not read by the app |
+| `SORTED/backups/edited_combined_transactions.<timestamp>.csv` | Every rebuild and every import (newest 10 kept) | Auto-restore when the master is missing; manual rollback |
+| `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; header note |
 
 Paths are relative to the configured data directory (default: `Test Data/`).

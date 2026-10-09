@@ -21,7 +21,15 @@ RAW exports and the master file (with your labels) live in a `data_dir` resolved
 
 **Why:** adding a source or re-downloading a statement is idempotent — unified columns can't drift or double up, because nothing is appended. The cost — recomputing everything — is trivial at personal scale. See [features/ingest-pipeline.md](features/ingest-pipeline.md).
 
-**Known gaps (not yet fixed):** the *labels* are less safe than the rebuilt data. The rebuild renames the master to a single `.bak` before reading it and rewrites it non-atomically, so a failed run can leave no master and the next startup ingest plus Reload can overwrite the backup; a label is dropped if a re-export changes *any* raw field in its match key; and a late-posting charge can fall on a coverage boundary. Keep your own backup of `SORTED/edited_combined_transactions.csv` until these are addressed.
+**Label safety:** the labels are the one thing RAW can't regenerate, so every write to the master goes through `Modules/safety.py`: the prior master is *copied* to `SORTED/backups/` (newest 10 kept), the new one is written to a temp file and swapped in atomically, and a master missing after a failed run is restored from the newest backup before anything else happens. Labels are carried by the exact match key first, then by a looser date + description + amount + source key; any label neither places is written to `SORTED/orphaned_labels.csv` and flagged in the header — never silently dropped.
+
+**Still open:** a late-posting charge can fall on a coverage boundary, and `card_last4` only comes from Chase filenames (see *Folder-authoritative institution identity*).
+
+## Every master write is a backup + atomic swap
+
+`Modules/safety.py` is the only code that writes the master: `backup_master` (timestamped copy, keep 10), then `atomic_write_csv` (temp file in the same folder, then `os.replace`). Rebuild and Import both use it. The swap keeps the file's existing permissions (a new file gets the normal umask default), so a master written from inside Docker stays usable on the host.
+
+**Why:** the old rebuild renamed the master to a single `.bak` before reading it, so one failed run plus the startup auto-ingest and a Reload could destroy every label. A copy keeps the original in place; the atomic swap means a crash leaves either the old file or the complete new one; ten generations mean one bad import can be rolled back by hand.
 
 ## Folder-authoritative institution identity
 

@@ -33,11 +33,12 @@ This is the recommended workflow for bulk category assignment:
 1. Click **EXPORT CSV** — downloads all transactions with columns: `date`, `description`, `amount`, `institution`, `source`, `card_last4`, `original_category`, `master_category`, `sub_category`. (`institution` is informational — sort by it in Excel; it isn't used to match rows on re-import.)
 2. Open in Excel. Fill in `master_category` (`Expense`, `Income`, or `Transfer`) and optionally `sub_category` for each row you want to categorise.
 3. Save and click **IMPORT CSV** — upload the edited file. The import callback:
-   - Matches rows by `description` + `amount` + `source` + `date` (date matching is used when the import file includes a `date` column; omitting date falls back to the three-field match)
-   - Writes `master_category` and `sub_category` to every matched row in the master CSV
-   - Skips rows where both fields are blank in the import file
-   - Reloads `df` so all charts reflect the new categories immediately
-   - Increments `refresh-trigger` to update the unlabeled-rows note
+   - Reads UTF-8 (with or without BOM) or Windows-1252 — whatever Excel saved
+   - Matches rows by `description` + `amount` + `source`, plus `date` when the file has a date column, plus `card_last4` when the row has one. Excel's reformatting is tolerated: `3/15/2024` dates, `-$1,234.50` / `($1,234.50)` amounts, card `123` for `0123`
+   - A row whose date is blank or unreadable is **skipped**, never applied to every date; rows that match nothing — including rows skipped because their amount or date couldn't be read — are counted (`· 3 row(s) matched nothing`)
+   - Writes `master_category` and `sub_category` to every matched row — after a versioned backup to `SORTED/backups/`, with an atomic write
+   - Skips rows where both label fields are blank
+   - Reloads `df` and increments `refresh-trigger` so every card updates
 
 The import file must contain at minimum: `description`, `amount`, `source`, `master_category`. Extra columns are ignored.
 

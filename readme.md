@@ -14,7 +14,9 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ├── config.json              # Your saved data folder path — git-ignored, created on first save
 ├── rules.csv                # Keyword → category auto-tagging rules
 ├── Modules/
-│   └── transforms.py        # Data helpers (load, label, period maths, aggregate)
+│   ├── transforms.py        # Data helpers (load, label, period maths, aggregate)
+│   ├── safety.py            # Backups + atomic writes for the master (your labels)
+│   └── labels.py            # Applies an imported CSV's labels
 ├── Test Data/               # Anonymized demo data — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
 │   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
@@ -120,7 +122,7 @@ By default the server only accepts connections from this computer, with debug mo
 | `FINANCE_HOST` | `127.0.0.1` | `0.0.0.0` to open the dashboard from another device on your network (anyone on that network can then use it) |
 | `FINANCE_DEBUG` | `0` | `1` for hot reload, Dash dev tools, and error tracebacks while developing |
 
-The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched, and [decisions.md](docs/decisions.md#rebuild-the-master-from-raw-every-run--never-append) for its known gaps (keep a backup of your master file).
+The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched, Every rebuild and import first copies your master to `SORTED/backups/` (newest 10 kept).
 
 ### Tests
 
