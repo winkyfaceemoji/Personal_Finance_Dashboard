@@ -540,3 +540,19 @@ def test_not_a_transfer_stops_the_flag_and_keeps_labels(appmod):
     assert status.startswith("Kept as is")
     assert master.read_bytes() == before
     assert pair["key"] not in {p["key"] for p in g_["_suspects"]()}
+
+
+def test_recurring_view(appmod):
+    view = appmod["recurring_view"]
+    children, sub = view([])
+    assert "No regular charges" in str(children) and sub == ""
+    items = [
+        {"merchant": "RENT CO", "cadence": "monthly", "amount": 1500.0, "yearly": 18000.0, "count": 6,
+         "first": pd.Timestamp("2025-01-01"), "last": pd.Timestamp("2025-06-01"), "active": True},
+        {"merchant": "HULU", "cadence": "monthly", "amount": 7.99, "yearly": 95.88, "count": 5,
+         "first": pd.Timestamp("2024-01-15"), "last": pd.Timestamp("2024-05-15"), "active": False},
+    ]
+    children, sub = view(items)
+    assert sub.startswith("1 active · $18,000 a year")
+    text = str(children)
+    assert "RENT CO" in text and "Stopped (1)" in text and "HULU" in text

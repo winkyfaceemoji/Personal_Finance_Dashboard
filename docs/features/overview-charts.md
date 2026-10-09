@@ -16,7 +16,8 @@ The dashboard answers two questions — **"am I on track?"** and **"where did th
 4. **Pace strip** — spending so far vs a typical period at the same point (in-progress periods only)
 5. **Spending over time** — one bar per week / month / year; click a bar to open that period
 6. **Spend by category** — for the selected period, with a click drilldown (see [category-breakdown.md](category-breakdown.md))
-7. **Seasonality** — same-calendar-month lines, one per year
+7. **Recurring charges** — subscriptions, rent, utilities: what repeats, and what it costs a year
+8. **Seasonality** — same-calendar-month lines, one per year
 
 Each card has its own callback, so changing one control only recomputes what depends on it.
 
@@ -105,6 +106,17 @@ One bar per period at the selected granularity: the latest **26 weeks**, **24 mo
 Gap periods (no labeled transactions) appear as zero bars rather than disappearing, and count toward "typical".
 
 ---
+
+## Recurring charges (`recurring-list`)
+
+Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it (not labeled Transfer or Income):
+
+- at least **3 times**, on a **monthly** (gaps of 20–40 days), **quarterly** (75–105) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
+- at a **steady amount** — at least 75% of charges within 25% of the median, so one price change or odd month doesn't hide it.
+
+Same-day charges from one merchant count as one. Each row shows the merchant, cadence, the **latest** charge (prices change), the yearly cost (latest × charges per year) and the last charge date. A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **Stopped (N)** — worth a glance when something you cancelled may still be billing. The subtitle totals the active ones per year.
+
+The card isn't tied to the period bar: a subscription is a standing commitment, judged over all your history. Yearly charges need three years of data — two similar charges a year apart (the same trip twice) are too often a coincidence.
 
 ## Seasonality (`seasonality-chart`)
 
