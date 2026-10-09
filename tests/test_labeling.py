@@ -1,4 +1,5 @@
 import shutil
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -8,7 +9,7 @@ from main import MASTER_COLUMNS, UNIFIED_COLUMNS, rebuild_master
 from Modules.labels import (
     LAST_IMPORT_NAME, label_rows, last_import_ids, row_id, row_ids, unlabeled_groups,
 )
-from Modules.safety import atomic_write_csv, backup_master, restore_backup
+from Modules.safety import atomic_write_csv, backup_master, restore_backup, restore_if_missing
 from Modules.transforms import load_transactions, period_totals
 
 REPO = Path(__file__).resolve().parent.parent
@@ -69,11 +70,26 @@ def test_snapshot_survives_backup_rotation(tmp_path):
     master.parent.mkdir()
     master.write_text("a\n0\n")
     snap = snapshot_master(master)
+    assert snap.name == f"before-labeling-{date.today().isoformat()}.csv"
     for i in range(1, 13):
         master.write_text(f"a\n{i}\n")
         backup_master(master, keep=3)
     assert snap.exists() and snap.read_text() == "a\n0\n"
     assert snap not in list_backups(master)
+    master.unlink()
+    restore_if_missing(master)                   # restores a rotating backup, never the snapshot
+    assert master.read_text() != "a\n0\n"
+
+
+def test_snapshot_kept_once_per_day(tmp_path):
+    from Modules.safety import snapshot_master
+    master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master.parent.mkdir()
+    master.write_text("a\n0\n")
+    first = snapshot_master(master)
+    master.write_text("a\n1\n")                 # labeled, DONE, reopened the same day
+    second = snapshot_master(master)
+    assert second == first and first.read_text() == "a\n0\n"
 
 
 def _combined(rows):

@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from Modules.safety import atomic_write_csv
-from Modules.transforms import PREDEFINED_CATEGORIES, normalize_description
+from Modules.transforms import PREDEFINED_CATEGORIES, normalize_description, read_rules_csv
 
 
 def read_import_csv(raw: bytes) -> pd.DataFrame:
@@ -232,11 +232,14 @@ MIN_KEYWORD  = 4
 
 
 def read_rules(path) -> pd.DataFrame:
-    """rules.csv as text columns, BOM-tolerant (Excel), RULE_COLUMNS always present."""
+    """rules.csv as text columns, RULE_COLUMNS always present. Tolerates what
+    Excel saves (BOM, Windows-1252) and an empty file (see read_rules_csv)."""
     path = Path(path)
     if not path.exists():
         return pd.DataFrame(columns=RULE_COLUMNS)
-    rules = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    rules = read_rules_csv(path)
+    if rules.columns.empty:                         # zero-byte / headerless file
+        return pd.DataFrame(columns=RULE_COLUMNS)
     if "master_category" not in rules.columns:     # legacy single-column files
         rules["master_category"] = rules["category"] if "category" in rules.columns else ""
     for col in RULE_COLUMNS:
