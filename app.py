@@ -655,6 +655,18 @@ def _pair_card(p: dict):
     ])
 
 
+def _shown_pairs(filt) -> tuple[list[dict], int]:
+    """(the pairs the TRANSFER PAIRS tab shows, how many exist). Opened from
+    REVIEW, only pairs touching the last import's rows; at most LABEL_TOP_N,
+    and LABEL ALL acts on exactly these — never on pairs the user didn't see."""
+    pairs = transfer_pairs(df)
+    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    if only is not None:
+        only = set(only)
+        pairs = [p for p in pairs if p["out"]["row_id"] in only or p["in"]["row_id"] in only]
+    return pairs[:LABEL_TOP_N], len(pairs)
+
+
 def _pairs_sig(pairs: list[dict]) -> str:
     """Signature of the whole pairs list, checked again when LABEL ALL is clicked."""
     return hashlib.sha1("|".join(p["key"] for p in pairs).encode()).hexdigest()[:10]
@@ -669,12 +681,12 @@ def _pairs_view(pairs: list[dict]) -> list:
             html.Span(f"The same amount left one of your accounts and arrived in another within "
                       f"{TRANSFER_PAIR_DAYS} days — a card payment or a move between your own accounts. "
                       f"Only certain matches are shown.", className="hint"),
-            html.Button(f"LABEL ALL {len(pairs)} PAIR{'S' if len(pairs) != 1 else ''}",
+            html.Button(f"LABEL ALL {len(pairs)} SHOWN",
                         id={"type": "lbl-pair", "pair": "__all__", "sig": _pairs_sig(pairs)},
                         n_clicks=0, className="btn-secondary btn-small pairs-all",
-                        title=f"Label all {rows} unlabeled rows shown here as Transfer"),
+                        title=f"Label the {rows} unlabeled rows of the pairs below as Transfer"),
         ]),
-        *[_pair_card(p) for p in pairs[:LABEL_TOP_N]],
+        *[_pair_card(p) for p in pairs],
     ]
 
 
@@ -1641,13 +1653,14 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
         return dash.no_update, dash.no_update
     if tab == "rules":
         return _rules_view(), "Rules label every matching unlabeled row, past and future"
-    pairs = transfer_pairs(df)
+    shown, n_pairs = _shown_pairs(filt)
     if tab == "pairs":
-        summary = (f"{len(pairs)} likely transfer pair{'s' if len(pairs) != 1 else ''} · "
-                   f"{_dollar0(sum(p['amount'] for p in pairs))}")
-        if len(pairs) > LABEL_TOP_N:
-            summary += f" · showing the top {LABEL_TOP_N}"
-        return _pairs_view(pairs), summary
+        summary = f"{n_pairs} likely transfer pair{'s' if n_pairs != 1 else ''}"
+        if filt == "last" and last_import_ids(MASTER_PATH) is not None:
+            summary += " · from the last import"
+        if n_pairs > len(shown):
+            summary += f" · showing the top {len(shown)}"
+        return _pairs_view(shown), summary
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     groups = unlabeled_groups(df, only_row_ids=only)
     n_rows = sum(g["count"] for g in groups)
@@ -1673,8 +1686,8 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
     datalist = html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs])
     if len(groups) > LABEL_TOP_N:
         summary += f" · showing the top {LABEL_TOP_N}"
-    if pairs:
-        summary += f" · {len(pairs)} transfer pair{'s' if len(pairs) != 1 else ''} found (TRANSFER PAIRS tab)"
+    if n_pairs:
+        summary += f" · {n_pairs} transfer pair{'s' if n_pairs != 1 else ''} found (TRANSFER PAIRS tab)"
     return [datalist, *cards], summary
 
 
@@ -1795,14 +1808,14 @@ def _do_undo(undo: dict, version):
     return "Undone.", None, _HIDDEN, (version or 0) + 1
 
 
-def _do_label_pairs(trig: dict, version):
+def _do_label_pairs(trig: dict, version, filt=None):
     """Label one transfer pair (or every pair shown, for "__all__") as Transfer.
     The pair key / list signature must still match what was drawn. Returns
     (status, undo, undo-button style, version), like _do_label."""
     global df
     bumped = (version or 0) + 1
     stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
-    pairs = transfer_pairs(df)
+    pairs, _ = _shown_pairs(filt)
     if trig.get("pair") == "__all__":
         chosen = pairs if pairs and _pairs_sig(pairs) == trig.get("sig") else None
     else:
@@ -1862,12 +1875,13 @@ def label_click(_g, _r, subs, sub_ids, rems, rem_ids, version, filt):
     Output("label-version",  "data",     allow_duplicate=True),
     Input({"type": "lbl-pair", "pair": ALL, "sig": ALL}, "n_clicks"),
     State("label-version", "data"),
+    State("label-filter",  "data"),
     prevent_initial_call=True,
 )
-def pair_click(_clicks, version):
+def pair_click(_clicks, version, filt):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return (dash.no_update,) * 4
-    return _do_label_pairs(dict(ctx.triggered_id), version)
+    return _do_label_pairs(dict(ctx.triggered_id), version, filt)
 
 
 @app.callback(
