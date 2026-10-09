@@ -62,7 +62,7 @@ Plus the `--Dash-*` variables Dash 4 components theme themselves with, mapped on
 - **Labeling panel (`#label-panel`)** — fixed full-screen, `bg` background, scrolls on its own, 32px / 40px padding (20px / 16px under 640px). Content is capped at 1100px (`.label-panel-inner`). Built only from theme tokens and the existing `.app-card`, `.btn-secondary`, `.btn-small`, `.setup-input` and `.pills`. See [features/labeling-panel.md](features/labeling-panel.md).
   - **`.label-group`** — one merchant card (an `.app-card`, 16px / 18px padding, 12px apart). `.lg-main` holds the name block (`.lg-info`) and the `.lg-buttons` row; `.lg-options` holds the subcategory input, the remember checkbox and its note; `.lg-rows` is the expandable row list (`.lg-row`: date, truncated description, right-aligned amount, its own `.lg-buttons`).
   - **`.suggested`** — `.btn-secondary.suggested` gives the TRANSFER button an `accent_weak` fill and `text` colour: a hint that the group looks like a card payment or own-account transfer, never a state. It is subtle by design; it must not read as selected.
-  - **`.lg-badge`** — the `MIXED` tag beside a merchant name: 10px uppercase, 1px `accent2` outline and text. It marks a group with money both in and out, which gets row-by-row buttons only.
+  - **`.lg-badge`** — the `MIXED` tag beside a merchant name: 10px, 1px letter-spacing, 1px `accent2` outline and text. It marks a group with money both in and out, which gets row-by-row buttons only.
 - **Empty states** — `empty_figure(message)` hides the axes and centres a sentence. Never ship Plotly's bare `-1…6` grid.
 
 ## Layering
