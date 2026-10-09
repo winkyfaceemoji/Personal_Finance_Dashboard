@@ -314,3 +314,47 @@ def rule_check(df: pd.DataFrame, rules: pd.DataFrame, group: dict, norm=None) ->
         return out
     out.update(ok=True, blocking=False)
     return out
+
+
+# ── Writing labels; the last import's rows ────────────────────────────────────
+
+LAST_IMPORT_NAME = "last_import.csv"
+
+
+def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str = "") -> tuple[pd.DataFrame, int]:
+    """Label exactly these rows in the master, through the same matcher Excel
+    imports use (date + description + amount + source + card), touching only
+    rows that have no valid label yet. Twin rows are sent once so the count
+    isn't doubled. Returns (master, rows labeled); the caller checks the count
+    against what it expected and writes nothing on a mismatch."""
+    imp = pd.DataFrame([{
+        "date": pd.Timestamp(r["date"]).strftime("%Y-%m-%d"),
+        "description": str(r["description"]),
+        "amount": f"{float(r['amount']):.2f}",
+        "source": str(r["source"]),
+        "card_last4": str(r.get("card_last4", "") or ""),
+        "master_category": category,
+        "sub_category": sub or "",
+    } for r in rows]).drop_duplicates()
+    # Only rows without a valid label are candidates: a hand-labeled twin of an
+    # unlabeled row (same date, description, amount, card) must keep its label
+    master = master.copy()
+    open_ = ~master["master_category"].fillna("").astype(str).str.strip().isin(PREDEFINED_CATEGORIES)
+    part, updated, _ = apply_label_import(master[open_], imp)
+    for col in ("master_category", "sub_category"):
+        master[col] = master[col].fillna("").astype(str)
+        master.loc[part.index, col] = part[col]
+    return master, updated
+
+
+def last_import_ids(master_path) -> list[str] | None:
+    """Row ids the last import added, or None when there's no record."""
+    if not master_path:
+        return None
+    p = Path(master_path).parent / LAST_IMPORT_NAME
+    if not p.exists():
+        return None
+    try:
+        return pd.read_csv(p, dtype=str, keep_default_na=False)["row_id"].tolist()
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, KeyError, OSError):
+        return None

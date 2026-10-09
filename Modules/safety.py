@@ -62,6 +62,25 @@ def _replace_from(src: Path, dest: Path) -> None:
         raise
 
 
+def restore_backup(backup: Path, master: Path) -> None:
+    """Put a backup back over the master, atomically (used by the panel's Undo)."""
+    _replace_from(Path(backup), Path(master))
+
+
+def snapshot_master(master: Path, name: str = "before-labeling") -> Path | None:
+    """A named copy kept OUTSIDE the backup rotation: labeling takes a backup
+    per click, so ten clicks would otherwise prune away the state from before
+    the labeling session — the recovery point that matters most."""
+    master = Path(master)
+    if not master.exists():
+        return None
+    d = _backup_dir(master)
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / f"{name}{master.suffix}"          # outside list_backups' glob
+    _replace_from(master, dest)
+    return dest
+
+
 def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
     """Write df so that `path` is always either the old file or the complete
     new one, never a truncated mix. The temp file lives in the same folder
