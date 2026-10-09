@@ -4,3 +4,8 @@ __pycache__/
 .env
 .venv/
 .git/
+# Never bake personal data or your saved data-folder path into the image
+config.json
+Data/
+Test Data/SORTED/
+.pytest_cache/

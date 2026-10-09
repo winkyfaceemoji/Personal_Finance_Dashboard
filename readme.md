@@ -1,6 +1,6 @@
 # Personal Finance Dashboard
 
-A local Plotly Dash app for tracking personal spending across Chase and Discover accounts. Raw CSV exports from your bank become a unified, category-tagged transaction ledger. A browser dashboard lets you explore spending by month, year, and category.
+A local Plotly Dash app for tracking personal spending across Chase and Discover accounts. Raw CSV exports from your bank become a unified, category-tagged transaction ledger. A browser dashboard answers two questions — **am I on track?** and **where did the money go?** — for any week, month, or year: what you spent and earned, how that compares with the previous period and with a typical one, your pace so far, and which categories and merchants it went to. Everything runs on your machine; no bank logins.
 
 ---
 
@@ -14,17 +14,21 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ├── config.json              # Your saved data folder path — git-ignored, created on first save
 ├── rules.csv                # Keyword → category auto-tagging rules
 ├── Modules/
-│   └── transforms.py        # Data helpers (load, filter, aggregate)
+│   └── transforms.py        # Data helpers (load, label, period maths, aggregate)
 ├── Test Data/               # Anonymized demo data — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
 │   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
 ├── assets/
-│   ├── dropdown_theme.css   # Dash 4 dropdown theme overrides
-│   └── dropdown_theme.js    # Runtime CSS-variable injection for theming
+│   ├── app.css              # All styles — theme tokens only, generated from _CHART in app.py
+│   └── theme_sync.js        # Mirrors the theme class onto <body> for dropdown popups
+├── tests/                   # pytest: period maths + an end-to-end run on Test Data
 ├── docs/
+│   ├── design.md            # UI design system
+│   ├── decisions.md         # Architecture decisions
 │   └── features/            # Per-feature architecture docs
 ├── Dockerfile
-└── requirements.txt
+├── requirements.txt
+└── requirements-dev.txt     # + pytest
 ```
 
 ---
@@ -65,16 +69,18 @@ Run with your local code mounted so file changes reload automatically — no reb
 
 ```cmd
 # CMD (Windows) — run from the project root directory
-docker run -p 8050:8050 -v "%cd%:/app" personal-finance
+docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance
 
 # PowerShell (Windows)
-docker run -p 8050:8050 -v "$($(Get-Location).Path):/app" personal-finance
+docker run -p 127.0.0.1:8050:8050 -v "$($(Get-Location).Path):/app" personal-finance
 
 # bash / macOS / Linux
-docker run -p 8050:8050 -v $(pwd):/app personal-finance
+docker run -p 127.0.0.1:8050:8050 -v $(pwd):/app personal-finance
 ```
 
-The volume mount overlays your local project directory onto `/app` inside the container. Dash's built-in hot-reloader watches `.py` files and restarts the server within a second or two of any save. Your `Data/` folder is also mounted, so the ingest pipeline reads and writes CSV files directly on your machine.
+The volume mount overlays your local project directory onto `/app` inside the container. Dash's built-in hot-reloader watches `.py` files and restarts the server within a second or two of any save. A data folder inside the project (such as `Test Data/`) is mounted along with it, so the ingest pipeline reads and writes CSV files directly on your machine.
+
+`-p 127.0.0.1:8050:8050` publishes the port to this computer only. The dashboard has no login, so don't use a bare `-p 8050:8050`: that would let anyone on your network open it, export your transactions, or change your labels.
 
 ---
 
@@ -82,7 +88,7 @@ The volume mount overlays your local project directory onto `/app` inside the co
 
 On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its anonymized demo transactions, populates and displays immediately. No setup required — just run and open the browser.
 
-To use your own bank data, click **CHANGE DATA FOLDER** in the nav bar at any time. This reopens the setup overlay — prefilled with your current path — where you can browse to a new directory and click **Save & Launch**, or click **Cancel** to close it without changing anything. The chosen path is saved to `config.json` and used on every subsequent start.
+To use your own bank data, open the settings menu (gear icon) and click **CHANGE DATA FOLDER** at any time. This reopens the setup overlay — prefilled with your current path — where you can browse to a new directory and click **Save & Launch**, or click **Cancel** to close it without changing anything. The chosen path is saved to `config.json` and used on every subsequent start.
 
 The overlay only blocks the dashboard automatically if no data directory could be resolved at all (for example, if `Test Data/` is deleted and nothing else is configured).
 
@@ -107,34 +113,53 @@ python main.py
 
 Open `http://localhost:8050` in a browser. To stop: `Ctrl+C`.
 
-The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, deduplicates rows, and merges into `edited_combined_transactions.csv` — preserving any category assignments already present. New transactions are appended; existing ones are untouched.
+By default the server only accepts connections from this computer, with debug mode off. Two environment variables change that:
+
+| Variable | Default | Set it to… |
+|----------|---------|-----------|
+| `FINANCE_HOST` | `127.0.0.1` | `0.0.0.0` to open the dashboard from another device on your network (anyone on that network can then use it) |
+| `FINANCE_DEBUG` | `0` | `1` for hot reload, Dash dev tools, and error tracebacks while developing |
+
+The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched, and [decisions.md](docs/decisions.md#rebuild-the-master-from-raw-every-run--never-append) for its known gaps (keep a backup of your master file).
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The tests cover the week / month / year maths and run the full ingest on a temporary copy of `Test Data/` — they never write into the repo.
 
 ---
 
 ## UI tour
 
-The dashboard is a single page of four cards. The header subtitle lists the data sources and the latest transaction date (e.g. `3 sources: Chase Credit, Chase Debit, Discover Credit · latest transaction Jun 27, 2026`), with a red note beneath it counting any unlabeled rows. The settings gear at the header's top-right corner opens a Settings menu grouped into **DATA** (**IMPORT CSV** / **EXPORT CSV** for the labeling round-trip, and **RELOAD DATA** to re-run the ingest pipeline without leaving the browser), **SOURCE** (**CHANGE DATA FOLDER**, reopens the setup overlay), and **THEME** (light/dark toggle). All menu buttons share one consistent style.
+One page, driven by one control. The header shows your sources, how recent your data is (`data through Dec 26, 2025`, plus any account lagging behind), a notice when your newest transaction is over a week old, and a red note with the count and dollar size of unlabeled rows. The settings gear (top right) holds **DATA** (**IMPORT CSV** / **EXPORT CSV** for labeling, **RELOAD DATA** to re-run the ingest), **SOURCE** (**CHANGE DATA FOLDER**), and **THEME**.
+
+### Pick a period
+
+The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period ›** stepper — chooses what everything below it shows. Weeks run Monday to Sunday. It opens on the period containing your **newest transaction** (not today's date, so stale exports never show an empty page), and **LATEST** jumps back there. Switching between week, month, and year keeps your place, and the bar stays pinned while you scroll.
 
 ### The cards
 
-Each graph carries only its own controls — there is no global filter.
-
 | Card | What it shows |
 |------|---------------|
-| SUMMARY | Four year-to-date stat cards — income, expenses, net, savings rate — each with a delta vs the same period last year (green/red by good-or-bad for that metric, savings rate in percentage points) |
-| CASH FLOW | Monthly bars within a calendar-anchored range (YTD / 1Y / 3Y chips, YTD default); the metric selector on the left (Net Cash Flow / Expenses / Income) doubles as the card title |
-| TRENDS | Same-month year-over-year comparison: one line per year over a Jan–Dec axis (current year bold, older years muted), so Feb '25 vs Feb '26 is a straight vertical read; always all data, no range control |
-| CATEGORIES | Pie of spending by category for one year (year chips, latest year default), top 9 categories + "Other"; click a slice to pop it out and expand a top-merchants breakdown beneath it (click again to deselect) |
+| STAT CARDS | Spent, income, net, and savings rate for the period — each vs the previous period and vs your **typical** period (median of the last 12 weeks/months, or of earlier years). While a period is still in progress they read *so far* and compare against the same number of days of earlier periods |
+| PACE | (in-progress periods) Spending so far against what you typically spend by this point, and a typical full period — `$782 over your typical pace` |
+| SPENDING OVER TIME | A bar per week (last 26), month (last 24), or year (all), with a dashed typical line; the selected period is outlined and an in-progress one hatched. **Click a bar to open that period.** The title dropdown switches Expenses / Income / Net Cash Flow |
+| SPEND BY CATEGORY | Sorted bars for the selected period — top 9 categories + Other, with `$ · %`. Click a bar for its top merchants and largest transaction (click again to close) |
+| BY CALENDAR MONTH | One line per year over Jan–Dec, the selected period's year highlighted — spot seasonal spikes. Click a year in the legend to hide it |
 
-> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; a note in the header shows how many unlabeled rows are being ignored. Use the Excel import workflow to label your transactions and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals.
+> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the header shows how many unlabeled rows (and dollars) are being left out. Label transactions with the Excel workflow or `rules.csv`, and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals. Weekly tracking needs this most: new transactions arrive unlabeled unless a rule matches them.
 
 ### Import / export
 
-Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. A red note in the header counts any rows with no valid label. To inspect individual transactions in the app, click a slice on the Categories pie to open its drilldown.
+Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions for bulk editing in Excel, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. To inspect individual transactions in the app, click a category bar to open its drilldown.
 
 ### Theme
 
-The LIGHT / DARK buttons in the settings menu (gear icon) switch themes. The choice persists in your browser's local storage.
+The LIGHT / DARK buttons in the settings menu switch themes; the active one is highlighted. The choice persists in your browser's local storage, as does your week / month / year choice.
 
 ---
 
@@ -173,7 +198,7 @@ netflix,Expense,Entertainment
 fidelity,Transfer,
 ```
 
-On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the spend pie. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
+On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the category breakdown. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
 
 Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
 
@@ -191,12 +216,12 @@ If you point the app at your own data directory, that folder is entirely outside
 
 Start at the [docs index](docs/README.md), or jump in:
 
-- [UI design system](docs/design.md) — colours, themes, component patterns, CSS gotchas
+- [UI design system](docs/design.md) — theme tokens, component patterns, CSS gotchas
 - [Architecture decisions](docs/decisions.md) — the load-bearing choices and why
 - [Feature overview](docs/features/README.md)
   - [Ingest pipeline](docs/features/ingest-pipeline.md)
   - [Setup screen](docs/features/setup-screen.md)
   - [Data transforms layer](docs/features/transforms.md)
-  - [Overview charts](docs/features/overview-charts.md)
+  - [Period view & charts](docs/features/overview-charts.md)
   - [Category breakdown & drilldown](docs/features/category-breakdown.md)
   - [Import / export & labeling](docs/features/import-export.md)

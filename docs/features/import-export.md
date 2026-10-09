@@ -3,7 +3,7 @@ type: Feature Doc
 title: Import / export & labeling
 description: CSV labeling round-trip, the category system, and transfer handling.
 resource: app.py, Modules/transforms.py
-updated: 2026-07-06
+updated: 2026-10-09
 ---
 
 # Import / export & labeling
@@ -18,7 +18,7 @@ The app is a single page — there is no transactions tab or table. Labeling hap
 
 ### Unlabeled-rows note (`unlabeled-note`)
 
-All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. A red note on its own line in the page header shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app — e.g. `⚠ 40 of 2100 transactions have no valid label…`. Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything is labeled, and refreshes after imports/reloads.
+All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. A red note on its own line in the page header shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app — with their absolute dollar size and how to fix it — e.g. `⚠ 562 of 1,343 transactions ($152,346) have no Expense / Income / Transfer label and aren't counted. Label them with Settings → Export CSV, then Import CSV.` Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything is labeled, and refreshes after imports/reloads.
 
 ---
 

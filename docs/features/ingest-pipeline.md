@@ -1,7 +1,7 @@
 ---
 type: Feature Doc
 title: Ingest pipeline
-description: Converts raw bank CSVs into a normalized, deduplicated master file, rebuilt from RAW each run.
+description: Converts raw bank CSVs into a normalized master file — overlapping exports merged by date coverage — rebuilt from RAW each run.
 resource: main.py, config.py
 updated: 2026-07-06
 ---
@@ -17,8 +17,10 @@ The pipeline converts raw bank CSVs into a single, schema-normalised master file
 | Mode | Command | Hot-reload |
 |------|---------|-----------|
 | venv (local) | `.venv\Scripts\python main.py` | No — restart manually |
-| Docker (dev) | `docker run -p 8050:8050 -v "%cd%:/app" personal-finance` | Yes — Dash reloads on `.py` save |
-| Docker (prod) | `docker run -p 8050:8050 personal-finance` | No — code is baked into image |
+| Docker (dev) | `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` | Yes — Dash reloads on `.py` save |
+| Docker (prod) | `docker run -p 127.0.0.1:8050:8050 personal-finance` | No — code is baked into image. Labels are written inside the container and lost when it's removed, so mount your data folder for real use |
+
+Run directly, the app listens on `127.0.0.1` with debug off; set `FINANCE_HOST=0.0.0.0` to reach it from other devices and `FINANCE_DEBUG=1` for hot reload and tracebacks. The Docker image sets both (a container must listen on all interfaces for port forwarding), which is why the commands publish to `127.0.0.1` only — see [decisions.md](../decisions.md#local-only-and-debug-off-by-default).
 
 In dev Docker mode the local project directory is mounted into the container at `/app`. Dash's built-in reloader watches `.py` files and restarts the server automatically on save. Only rebuild the image (`docker build -t personal-finance .`) when `requirements.txt` changes.
 
@@ -160,7 +162,7 @@ This means a match key that occurs *more* times in the rebuilt data than it did 
 
 If the master file doesn't exist yet (first run), it's created directly from the combined data with `master_category` and `sub_category` set to `None` — there's nothing to inherit from.
 
-**Backup:** before rebuilding, the existing master file is renamed to `edited_combined_transactions.csv.bak` (overwriting any previous backup). This is a rolling one-generation backup, not a full history — enough to recover from a bad run without accumulating files indefinitely.
+**Backup:** before rebuilding, the existing master file is renamed to `edited_combined_transactions.csv.bak` (overwriting any previous backup). This is a rolling one-generation backup, not a full history. It is **not** a reliable safety net yet: the rename happens before the old master is read, so a run that fails mid-rebuild leaves no master, and the next startup auto-ingest followed by a Reload overwrites the `.bak` with an unlabeled master. Copy the master somewhere safe before experimenting (see the known gaps in [decisions.md](../decisions.md#rebuild-the-master-from-raw-every-run--never-append)).
 
 ---
 
