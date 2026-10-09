@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
+from Modules.safety import atomic_write_csv, backup_master, restore_if_missing
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -184,7 +185,7 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
 
 
-def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
+def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     """
     Rebuild edited_combined_transactions.csv from the freshly-merged combined
     data, carrying forward existing master_category / sub_category
@@ -193,11 +194,15 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
 
     Every unified-schema column is regenerated from RAW on every run — only
     the user-assigned categorization is preserved. A match key that occurs
-    more times in the new combined data than in the prior master (e.g. a
-    same-day repeat transaction an older, buggy ingest had collapsed away)
-    inherits the category of an existing occurrence of that key, in order;
-    any occurrence beyond what the prior master had is genuinely new and
-    starts uncategorized.
+    more times in the new combined data than in the prior master inherits
+    the categorization of existing occurrences, in order; any occurrence
+    beyond what the prior master had is genuinely new and starts blank.
+
+    Label safety: the prior master is *copied* to SORTED/backups/ (never
+    renamed away), a master missing after a failed run is restored from the
+    newest backup first, older master schemas are tolerated, and the new
+    master is written atomically — so a crash at any point leaves either
+    the old master or the complete new one.
     """
     combined = combined.copy()
     for col in ["date", "post_date"]:
@@ -208,38 +213,45 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> None:
     def row_key(d: pd.DataFrame) -> pd.Series:
         return d[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
 
+    result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
+
+    restored = restore_if_missing(master_file)
+    if restored:
+        result["restored_from"] = restored
+        print(f"  Master file was missing — restored labels from backup {restored.name}")
+
     if master_file.exists():
-        # Keep a rolling backup — this rebuild replaces the whole file.
-        master_file.replace(master_file.with_suffix(".csv.bak"))
-        old_master = pd.read_csv(master_file.with_suffix(".csv.bak"), dtype={"card_last4": str})
+        backup_master(master_file)
+        old_master = pd.read_csv(master_file, dtype={"card_last4": str})
         if "category" in old_master.columns and "original_category" not in old_master.columns:
             old_master = old_master.rename(columns={"category": "original_category"})
-        for col in ("master_category", "sub_category"):
+        # Masters written by older versions lack newer columns; a missing
+        # column reads as blank rather than aborting the rebuild
+        for col in MASTER_COLUMNS:
             if col not in old_master.columns:
                 old_master[col] = None
         for col in ["date", "post_date"]:
-            if col in old_master.columns:
-                old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
+            old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
         categorization = defaultdict(deque)
         for key, mc, sc in zip(row_key(old_master), old_master["master_category"], old_master["sub_category"]):
             categorization[key].append((mc, sc))
 
-        carried = 0
         for idx, key in zip(combined.index, row_key(combined)):
             bucket = categorization.get(key)
             if bucket:
                 mc, sc = bucket.popleft()
                 combined.at[idx, "master_category"] = mc
                 combined.at[idx, "sub_category"]    = sc
-                carried += 1
-        print(f"  Categorization carried over for {carried}/{len(combined)} row(s)")
+                result["carried"] += 1
+        print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)")
 
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
-    combined.sort_values("date", inplace=True, ignore_index=True)
+    combined.sort_values("date", inplace=True, ignore_index=True, kind="stable")
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
-    combined[MASTER_COLUMNS].to_csv(master_file, index=False)
+    atomic_write_csv(combined[MASTER_COLUMNS], master_file)
     print(f"  Master file rebuilt with {len(combined)} rows -> {master_file}")
+    return result
 
 
 def main(data_dir: Path | None = None):
