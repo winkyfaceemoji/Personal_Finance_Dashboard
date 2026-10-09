@@ -10,7 +10,7 @@ from dash import dcc, html, ctx, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
-from Modules.labels import apply_label_import, read_import_csv
+from Modules.labels import apply_label_import, read_import_csv, row_ids, last_import_ids
 from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count
 from Modules.transforms import (
     load_transactions,
@@ -27,11 +27,14 @@ from Modules.transforms import (
     unlabeled_summary,
     PERIOD_FREQS,
     TYPICAL_LOOKBACK,
+    PREDEFINED_CATEGORIES,
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
-RULES_PATH  = BASE_DIR / "rules.csv"
+# FINANCE_RULES_PATH lets tests and scripted checks use a copy, so they never
+# rewrite the real rules.csv now that the app can add and delete rules
+RULES_PATH  = Path(os.environ.get("FINANCE_RULES_PATH") or BASE_DIR / "rules.csv")
 
 # ── Settings gear icon (Feather "settings" glyph, painted via CSS mask so it
 # picks up the button's currentColor across themes) ───────────────────────────
@@ -202,6 +205,24 @@ def _prev_name(p: pd.Period, freq: str) -> str:
     return period_label(p - 1, freq)
 
 
+def unreviewed_amounts(pdf: pd.DataFrame) -> tuple[float, float]:
+    """Unlabeled money out and money in for a slice of rows — shown on the stat
+    cards so incomplete totals look incomplete instead of quietly short."""
+    un = pdf[~pdf["master_category"].isin(PREDEFINED_CATEGORIES)]
+    return (float(-un.loc[un["amount"] < 0, "amount"].sum()),
+            float(un.loc[un["amount"] > 0, "amount"].sum()))
+
+
+def last_import_text(frame: pd.DataFrame, ids) -> tuple[str, int]:
+    """'Last import: 31 new · 27 labeled · 4 need you', and the need-you count."""
+    if not ids:
+        return "", 0
+    rows = frame[row_ids(frame).isin(set(ids))]
+    labeled = int(rows["master_category"].isin(PREDEFINED_CATEGORIES).sum())
+    need = len(rows) - labeled
+    return f"Last import: {len(ids)} new · {labeled} labeled · {need} need you", need
+
+
 # ── App ────────────────────────────────────────────────────────────────────────
 app = dash.Dash(
     __name__,
@@ -233,6 +254,8 @@ _OVERLAY_HIDDEN  = {"display": "none"}
 _OVERLAY_VISIBLE = {"display": "flex"}
 _MENU_HIDDEN     = {"display": "none"}
 _MENU_VISIBLE    = {"display": "flex"}
+_HIDDEN          = {"display": "none"}
+_SHOWN_INLINE    = {"display": "inline-block"}
 
 _PILL_INPUT = {"display": "none"}
 
@@ -301,8 +324,19 @@ app.layout = html.Div(
             html.P(id="data-updated", className="header-meta"),
             # Shown when the newest transaction is over a week old
             html.P(id="stale-note", className="notice"),
-            # Unlabeled rows are ignored by every total — count and size them
-            html.P(id="unlabeled-note", className="notice warn-text"),
+            # Unlabeled rows are ignored by every total — count, size, and the
+            # way in to label them
+            html.Div(className="notice-row", children=[
+                html.Span(id="unlabeled-note", className="notice warn-text"),
+                html.Button("LABEL THEM →", id="open-label-panel", n_clicks=0,
+                            className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
+            # What the last import added, and how many still need a label
+            html.Div(className="notice-row", children=[
+                html.Span(id="last-import-note", className="notice"),
+                html.Button("REVIEW →", id="open-label-review", n_clicks=0,
+                            className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
             # Labels the last rebuild couldn't place (kept in a side file)
             html.P(id="orphan-note", className="notice warn-text"),
 
@@ -525,7 +559,8 @@ def update_data_note(_refresh):
 
 
 @app.callback(
-    Output("unlabeled-note", "children"),
+    Output("unlabeled-note",   "children"),
+    Output("open-label-panel", "style"),
     Input("refresh-trigger", "data"),
 )
 def update_unlabeled_note(_refresh):
@@ -533,10 +568,19 @@ def update_unlabeled_note(_refresh):
     # reaches a total — Transfer is deliberate, the rest deserve a flag.
     u = unlabeled_summary(df)
     if u["count"] == 0:
-        return ""
-    return (f"⚠ {u['count']:,} of {u['total']:,} transactions ({_dollar0(u['amount'])}) have no "
-            f"Expense / Income / Transfer label and aren't counted. Label them with "
-            f"Settings → Export CSV, then Import CSV.")
+        return "", _HIDDEN
+    return (f"⚠ {u['count']:,} of {u['total']:,} transactions ({_dollar0(u['amount'])}) "
+            f"are unlabeled and not counted."), _SHOWN_INLINE
+
+
+@app.callback(
+    Output("last-import-note",  "children"),
+    Output("open-label-review", "style"),
+    Input("refresh-trigger", "data"),
+)
+def update_last_import_note(_refresh):
+    text, need = last_import_text(df, last_import_ids(MASTER_PATH))
+    return text, (_SHOWN_INLINE if need else _HIDDEN)
 
 
 @app.callback(
@@ -654,7 +698,7 @@ def _stat_card(title, value, lines):
     return html.Div(className="stat-card", children=[
         html.Div(title, className="stat-title"),
         html.Div(value, className="stat-value"),
-        *lines,
+        *[l for l in lines if l is not None],
     ])
 
 
@@ -709,10 +753,18 @@ def update_stats(store, theme, _refresh):
     def _pt(a, b):
         return a - b if a is not None and b is not None else None
 
+    out_unrev, in_unrev = unreviewed_amounts(filter_period(df, p))
+
+    def _unreviewed(amount):
+        if amount < 0.5:
+            return None
+        return html.Div(f"+ {_dollar0(amount)} unreviewed", className="stat-delta unreviewed",
+                        title="Unlabeled transactions in this period — not counted above")
+
     so_far = " SO FAR" if s["partial"] else ""
     cards = [
-        _stat_card("SPENT" + so_far,  _dollar(cur["exp"]), _lines("exp", False)),
-        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), _lines("inc", True)),
+        _stat_card("SPENT" + so_far,  _dollar(cur["exp"]), [*_lines("exp", False), _unreviewed(out_unrev)]),
+        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [*_lines("inc", True), _unreviewed(in_unrev)]),
         _stat_card("NET" + so_far,    _dollar(cur["net"]), _net_lines()),
         # Savings rate is already a percentage: compare in points, not %
         _stat_card("SAVINGS RATE",

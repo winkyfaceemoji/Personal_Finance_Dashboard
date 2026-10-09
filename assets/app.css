@@ -27,6 +27,9 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 .notice { font-size: 12px; margin-top: 4px; color: var(--subtext); }
 .notice:empty { display: none; }
 .warn-text { color: var(--accent2); }
+.notice-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.notice-row .notice { margin: 4px 0 0; }
+.notice-row .btn-small { padding: 3px 10px; font-size: 10px; margin-top: 4px; }
 
 /* ── Period bar (sticky: it drives everything below it) ─────────────────── */
 .period-bar {
@@ -98,6 +101,7 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
     line-height: 1.1; color: var(--text); margin-bottom: 4px;
 }
 .stat-delta { font-size: 11px; color: var(--subtext); }
+.stat-delta.unreviewed { color: var(--subtext); font-style: italic; }
 .delta-good { color: var(--accent3); font-weight: 600; }
 .delta-bad  { color: var(--accent2); font-weight: 600; }
 
