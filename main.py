@@ -215,8 +215,15 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     combined["master_category"] = None
     combined["sub_category"]    = None
 
+    def iso_dates(d: pd.DataFrame) -> None:
+        for col in ["date", "post_date"]:
+            d[col] = pd.to_datetime(d[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
     def row_key(d: pd.DataFrame) -> pd.Series:
         return d[MATCH_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
+
+    def full_key(d: pd.DataFrame) -> pd.Series:
+        return d[MASTER_COLUMNS].fillna("").astype(str).apply(tuple, axis=1)
 
     def fallback_key(d: pd.DataFrame) -> pd.Series:
         amount = pd.to_numeric(d["amount"], errors="coerce").round(2).astype(str)
@@ -245,8 +252,7 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         # Back up only a master that parsed: backing up a torn one on every
         # failed run would rotate the good, labelled backups out
         backup_master(master_file)
-        for col in ["date", "post_date"]:
-            old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
+        iso_dates(old_master)
 
         # Labels orphaned by earlier rebuilds get another chance every run —
         # appended after the master's own rows so those take precedence
@@ -256,6 +262,15 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
             for col in MASTER_COLUMNS:
                 if col not in extra.columns:
                     extra[col] = None
+            # Its own pass: dates parse by the format of their first row, and
+            # an orphan file saved from Excel has M/D/YYYY, not the master's ISO
+            iso_dates(extra)
+            # An orphan identical to a master row, label included, is one that
+            # was placed but whose file couldn't then be updated (open in
+            # Excel). Kept, it would be re-reported forever and hand its label
+            # to the next same-day repeat; the master row already carries it.
+            in_master = set(full_key(old_master))
+            extra = extra[[k not in in_master for k in full_key(extra)]]
             old_master = pd.concat([old_master[MASTER_COLUMNS], extra[MASTER_COLUMNS]],
                                    ignore_index=True)
 
@@ -305,14 +320,21 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     print(f"  Master file rebuilt with {len(combined)} rows -> {master_file}")
 
     # Only now that the new master is safely on disk may the orphan file change:
-    # a failed master write must leave every not-yet-placed label where it was
+    # a failed master write must leave every not-yet-placed label where it was.
+    # Best effort: the master — the part that matters — is already written, so
+    # a locked orphan file (open in Excel) is a warning, not a failed rebuild;
+    # the old file's labels are still offered to the next one.
     if orphans is not None:
-        if orphans.empty:
-            orphans_path(master_file).unlink(missing_ok=True)
-        else:
-            atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
-            print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
-                  f"{orphans_path(master_file)}")
+        try:
+            if orphans.empty:
+                orphans_path(master_file).unlink(missing_ok=True)
+            else:
+                atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
+                print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
+                      f"{orphans_path(master_file)}")
+        except OSError as e:
+            print(f"  ⚠ Could not update {orphans_path(master_file)} ({e}) — "
+                  f"close it (Excel?) and Reload")
     return result
 
 

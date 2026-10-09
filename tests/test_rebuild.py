@@ -207,3 +207,53 @@ def test_unchanged_master_is_not_backed_up_again(master):
     for _ in range(3):                                 # Reload with nothing new
         rebuild_master(_combined([ROW]), master)
     assert len(list_backups(master, include_legacy=False)) == n
+
+
+# ── Orphan file trouble ───────────────────────────────────────────────────────
+# The orphan file is a side report the user is told to open — often in
+# Excel, which locks it on Windows and rewrites its dates as M/D/YYYY.
+
+GONE = ("2025-02-01", "OLD MERCHANT", -20.0, "Shopping")
+
+
+def test_locked_orphan_file_does_not_fail_rebuild(master, monkeypatch, capsys):
+    _write_master(master, [ROW + ("Expense", "Coffee"), GONE + ("Expense", "Gifts")])
+    real_replace = safety.os.replace
+
+    def locked_orphans(src, dst):
+        if Path(dst).name == "orphaned_labels.csv":
+            raise PermissionError("open in Excel")
+        return real_replace(src, dst)
+    monkeypatch.setattr(safety.os, "replace", locked_orphans)
+
+    result = rebuild_master(_combined([ROW]), master)   # returns normally
+    assert result["orphaned"] == 1
+    assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"
+    assert "orphaned_labels.csv" in capsys.readouterr().out
+
+
+def test_stale_orphan_does_not_label_a_new_repeat(master):
+    _write_master(master, [GONE + ("Expense", "Gifts")])
+    rebuild_master(_combined([ROW]), master)          # label orphaned
+    stale = orphans_path(master).read_text()
+    rebuild_master(_combined([ROW, GONE]), master)    # re-attached...
+    orphans_path(master).write_text(stale)            # ...but the file couldn't be removed
+
+    result = rebuild_master(_combined([ROW, GONE]), master)
+    assert result["orphaned"] == 0                    # not re-reported forever
+    rebuild_master(_combined([ROW, GONE, GONE]), master)   # a genuinely new repeat
+    subs = pd.read_csv(master).set_index("description").loc["OLD MERCHANT", "sub_category"]
+    assert subs.fillna("").tolist() == ["Gifts", ""]
+
+
+def test_excel_saved_orphans_still_reattach(master):
+    _write_master(master, [GONE + ("Expense", "Gifts")])
+    rebuild_master(_combined([ROW]), master)          # label orphaned
+    o = pd.read_csv(orphans_path(master))
+    o["date"], o["post_date"] = "2/1/2025", "2/1/2025"  # what Excel saves back
+    o.to_csv(orphans_path(master), index=False)
+
+    result = rebuild_master(_combined([ROW, GONE]), master)
+    out = pd.read_csv(master).set_index("description")
+    assert out.loc["OLD MERCHANT", "sub_category"] == "Gifts"
+    assert result["orphaned"] == 0
