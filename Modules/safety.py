@@ -3,10 +3,11 @@ Crash-safe writes and versioned backups for the master file — the one file
 holding labels that can't be regenerated from RAW. Every write to the master
 goes through here.
 """
+import filecmp
 import os
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -77,19 +78,35 @@ def list_backups(master: Path, include_legacy: bool = True) -> list[Path]:
     return found
 
 
+def _stamp() -> str:
+    # UTC, so names keep sorting chronologically through the repeated hour
+    # when daylight saving ends
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+
+
 def backup_master(master: Path, keep: int = BACKUP_KEEP) -> Path | None:
     """Copy the master into SORTED/backups/ under a timestamped name and keep
     the newest `keep`. A copy, not a rename: if anything after this fails,
-    the master is still in place."""
+    the master is still in place. A master identical to the newest backup
+    isn't copied again (that backup is returned), so Reloads that change
+    nothing don't prune older, different versions away."""
     master = Path(master)
     if not master.exists():
         return None
+    newest = list_backups(master, include_legacy=False)
+    if newest and filecmp.cmp(master, newest[0], shallow=False):
+        return newest[0]
     d = _backup_dir(master)
     d.mkdir(parents=True, exist_ok=True)
-    # Microseconds keep two backups in the same second (double-clicked
-    # Reload) from overwriting each other
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    # The clock can tick as coarsely as ~15 ms (Windows), so a stamp can
+    # repeat: never overwrite, add a counter instead. "_001" sorts after the
+    # bare name ("_" > ".") and zero-padding keeps the counters in order.
+    stamp = _stamp()
     dest = d / f"{master.stem}.{stamp}{master.suffix}"
+    n = 0
+    while dest.exists():
+        n += 1
+        dest = d / f"{master.stem}.{stamp}_{n:03d}{master.suffix}"
     shutil.copy2(master, dest)
     for old in list_backups(master, include_legacy=False)[keep:]:
         old.unlink(missing_ok=True)
@@ -97,11 +114,13 @@ def backup_master(master: Path, keep: int = BACKUP_KEEP) -> Path | None:
 
 
 def restore_if_missing(master: Path) -> Path | None:
-    """If the master is gone but a backup exists, put the newest backup back
-    and return the backup used. Without this, a failed run followed by the
-    startup auto-ingest would write a fresh master with no labels at all."""
+    """If the master is gone (or empty) but a backup exists, put the newest
+    backup back and return the backup used. Without this, a failed run
+    followed by the startup auto-ingest would write a fresh master with no
+    labels at all. A 0-byte master — a save torn by power loss — counts as
+    gone: it holds no labels and can't even be parsed."""
     master = Path(master)
-    if master.exists():
+    if master.exists() and master.stat().st_size > 0:
         return None
     backups = list_backups(master)
     if not backups:

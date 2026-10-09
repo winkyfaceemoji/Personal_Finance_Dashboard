@@ -50,15 +50,36 @@ def test_backup_is_a_copy(tmp_path):
     assert dest.parent.name == "backups"
 
 
-def test_backups_have_unique_names(tmp_path):
+def _edit(path, n):
+    """Change the master so the next backup isn't skipped as identical."""
+    pd.DataFrame({"date": ["2025-01-01"], "master_category": [f"v{n}"]}).to_csv(path, index=False)
+
+
+def test_identical_master_not_backed_up_twice(tmp_path):
     path = _master(tmp_path)
     a, b = backup_master(path), backup_master(path)
-    assert a != b and a.exists() and b.exists()
+    assert a == b and len(list_backups(path)) == 1
+
+
+def test_backups_have_unique_names(tmp_path, monkeypatch):
+    # Windows clocks can tick every ~15 ms, so two backups may get the same
+    # timestamp: they must still be distinct files, listed newest first
+    monkeypatch.setattr(safety, "_stamp", lambda: "20250101-000000-000000")
+    path = _master(tmp_path)
+    made = []
+    for n in range(12):
+        _edit(path, n)
+        made.append(backup_master(path, keep=20))
+    assert len(set(made)) == 12 and all(p.exists() for p in made)
+    assert list_backups(path) == list(reversed(made))
 
 
 def test_backups_pruned_to_keep_newest(tmp_path):
     path = _master(tmp_path)
-    made = [backup_master(path, keep=3) for _ in range(5)]
+    made = []
+    for n in range(5):
+        _edit(path, n)
+        made.append(backup_master(path, keep=3))
     kept = list_backups(path, include_legacy=False)
     assert kept == list(reversed(made))[:3]
 
@@ -67,7 +88,8 @@ def test_legacy_bak_listed_last_and_never_pruned(tmp_path):
     path = _master(tmp_path)
     legacy = path.with_suffix(".csv.bak")
     legacy.write_text("date,master_category\n")
-    for _ in range(4):
+    for n in range(4):
+        _edit(path, n)
         backup_master(path, keep=2)
     backups = list_backups(path)
     assert backups[-1] == legacy and legacy.exists()
