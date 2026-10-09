@@ -1,38 +1,93 @@
 # In-App Labeling — Design
 
-**Date:** 2026-10-09 · **Status:** approved in conversation, awaiting spec review
+**Date:** 2026-10-09 · **Status:** revised after council review; awaiting spec review
 
 ## Why
 
-Every total in the dashboard counts only rows labeled `Expense` / `Income` / `Transfer`. Unlabeled rows are left out of everything — in the demo data 562 of 1,343 rows ($152,346). Today the only way to label is Export → Excel → Import, which is slow enough that it doesn't get done, and weekly tracking makes it worse: every week's new statements arrive unlabeled unless a `rules.csv` keyword happens to match.
+The dashboard is a private, local tool. You download bank and card statements as CSV files, and it answers two questions for any week, month or year: *am I on track?* and *where did the money go?*
 
-**Success:** a user can clear the unlabeled backlog inside the app in a few minutes, one click per merchant, and — by letting the app remember merchants as rules — keep later weeks mostly labeled automatically.
+A bank file can't say what a transaction *means*, so every transaction needs one of three labels:
 
-## Decisions (from the conversation)
+- **Expense:** money left you for someone else.
+- **Income:** money came to you from someone else.
+- **Transfer:** money moved between two of your own accounts, such as paying a credit card from checking.
+
+Only labeled rows are counted. In the demo data, 562 of 1,343 rows ($152,346) are unlabeled and missing from every number. Today the only way to label them is Export → Excel → Import, which is slow enough that it doesn't get done. Weekly tracking makes it worse: each week's statements arrive unlabeled unless a `rules.csv` keyword matches them.
+
+**Success has three parts:**
+1. Anyone can clear the backlog inside the app in one sitting, one click per merchant.
+2. Later weeks stay mostly labeled automatically.
+3. No click or rule can quietly corrupt totals the user never looked at.
+
+## Decisions
 
 | Question | Decision |
 |---|---|
-| Unit of labeling | **By merchant**: unlabeled rows grouped by merchant, one click labels the whole group; a group can be expanded to label single rows |
-| Remember for future statements | **Checkbox per merchant, on by default** — adds a keyword rule to `rules.csv` |
-| Placement | **Full-screen panel opened from the header's unlabeled warning**; closing it refreshes the dashboard |
-| Approach | Plain Dash components with pattern-matching callbacks — no new dependency (`dash_table`'s in-cell dropdowns are clunky to theme; AG Grid is a new dependency for ~100 rows) |
+| Unit of labeling | **By merchant group**, one click for the whole group. A group expands to label single rows, which is the only safe way to split mixed groups such as Zelle or Venmo. |
+| Remember for future statements | A checkbox per group. **It is ticked by default only when the rule is provably safe** (see *Rule safety*); otherwise it starts unticked, with the reason shown. |
+| Placement | A full-screen panel opened from the header's unlabeled warning, and from the new post-import line. |
+| Labels that are already set | Not editable here. Export and Import still cover that. |
+| Unlabeled money in the totals | Still **not** counted, because counting it by sign would double-count card payments. Instead each stat card shows how much is unreviewed. |
+| Built-in transfer rules | **Not added.** On the demo data, card-payment phrases cover 1% of unlabeled dollars, and the council rejected unreviewed rules. Instead, groups that look like card payments get a **suggested** Transfer button (highlighted, never auto-applied). |
+| Approach | Plain Dash components with pattern-matching callbacks. No new dependency. |
 
-**Out of scope:** editing labels that are already set (Export/Import still covers that), suggested/AI labels, multi-step undo.
+**Out of scope:** relabeling, AI suggestions, a starter ruleset, budgets, search, pagination beyond the top 25 groups.
+
+## Measured on the demo data (2026-10-09)
+
+Grouping by the merchant **keyword** gives 209 groups, while grouping by the full description minus digits gives 304, because transaction IDs split one merchant into several groups. With keyword grouping:
+- the **top 25 groups cover 91%** of unlabeled dollars;
+- **175 of 209 groups (67% of dollars) pass the rule-safety check**;
+- of the groups that fail, 29 have a keyword that is too short or matches other merchants, 5 mix money in and out (e.g. Coinbase buys and sells), and 2 are shadowed by an existing rule.
+
+So one sitting of about 25 clicks clears most of the backlog, and "remember" covers most recurring merchants.
+
+## Labeling guide (shown in the panel)
+
+A collapsible **"How to choose"** box at the top of the panel:
+
+> **Ask one question: did money enter or leave *you*, counting all your accounts as one pot?**
+> - **Expense:** it left you for someone else (groceries, rent, a Zelle to a friend for dinner).
+> - **Income:** it came to you from someone else (paycheck, client payment, tax refund).
+> - **Transfer:** it moved between your own accounts (credit-card payment, moving money to savings or investments, Venmo cash-out to your bank). Card purchases were already counted, so the bill payment must not count again.
+>
+> **Tricky cases:**
+> - **Card payment ("AUTOPAY", "PAYMENT THANK YOU"):** Transfer, on both the checking and the card side.
+> - **Refund:** Expense. It shows as a positive amount and reduces your spending.
+> - **A friend paying you back:** Expense, for the same reason.
+> - **Venmo, Zelle, PayPal:** depends on who's on the other end. Expand the group and label row by row.
+> - **ATM cash:** Expense, or Transfer if you track cash separately. Pick one and keep to it.
+> - **Loan or mortgage payment:** Expense.
 
 ## User experience
 
-1. The header's red unlabeled note becomes a button: `⚠ 562 unlabeled ($152,346) · LABEL THEM →`. Hidden when nothing is unlabeled.
-2. It opens the **Label transactions** panel (full-screen overlay, theme tokens, above the dashboard and settings menu, below the setup overlay). Header: `LABEL TRANSACTIONS · 562 rows · $152,346 · 98 merchants`, a search box (filters by merchant or description, case-insensitive), a status line with **UNDO**, and **DONE** to close.
-3. Groups are sorted by absolute dollar total, largest first, **25 at a time** with a **SHOW MORE** button.
-4. Each group row shows:
-   - merchant name (full name on hover), transaction count, net total (`-$87.40`), date range (`Jan 3 – Dec 20, 2025`), one example raw description;
-   - **EXPENSE / INCOME / TRANSFER** buttons;
-   - an optional **category** box (becomes `sub_category`, e.g. "Coffee") with suggestions from categories already in use;
-   - **Remember for future statements** checkbox, on by default, with an editable **keyword** and a hint of how many *other* unlabeled rows it would also label (`also matches 6 other unlabeled rows`);
-   - **▸** to expand the group into its rows (date · description · amount · card), each with its own three buttons. Row clicks use the group's category box.
-5. A click saves immediately. The group (or row) disappears and the status line reads `Labeled 14 STARBUCKS rows as Expense · rule "starbucks" added · UNDO`.
-6. **UNDO** reverts the last action only. It is offered only while nothing else has written the master since.
-7. **DONE** closes the panel and bumps `refresh-trigger`, so every card, the header notes and the period bar recompute.
+1. **Header.** The unlabeled note becomes a button: `⚠ 562 unlabeled ($152,346) · LABEL THEM →`. It is hidden when nothing is unlabeled.
+2. **After each import or Reload,** a second header line appears: `Last import: 31 new · 27 labeled by rules · 4 need you → REVIEW`. **REVIEW** opens the panel filtered to those 4.
+3. **Stat cards** gain one muted line when the period has unlabeled rows: `+ $412 unreviewed`. The numbers are visibly incomplete, not silently incomplete.
+4. **The panel** is a full-screen overlay. Its header reads `LABEL TRANSACTIONS · 562 rows · $152,346 · 209 merchants`, followed by the guide, a status line with **UNDO**, a **Rules** tab, and **DONE**.
+5. **Groups** are sorted by absolute dollars, largest first. Only the **top 25** are shown, and the rest follow in the next session. Each group shows:
+   - the merchant, count, net total, date range, and one example description;
+   - **EXPENSE / INCOME / TRANSFER** buttons, with TRANSFER highlighted as *suggested* when the description matches a card-payment or own-account-transfer phrase;
+   - a **Subcategory** box (optional, e.g. "Coffee") with suggestions from subcategories already in use;
+   - **Remember for future statements**: the checkbox plus `rule "starbucks" · labels 14 rows ($87) now`, or the reason it's off (`also matches PAYPAL *SPOTIFY, PAYPAL *HULU`, `money in and out`, or `an existing rule "venmo" would override it`);
+   - a **mixed** badge when the group has both money in and out;
+   - **▸** to expand the group into rows (date · description · amount · card), each row with its own three buttons.
+6. **A click saves immediately.** The group or row disappears and the status reads `Labeled 14 STARBUCKS rows as Expense · rule "starbucks" added · UNDO`.
+7. **UNDO** reverts the last action only, and only while neither the master nor `rules.csv` has changed since.
+8. **Rules tab:** the rules this panel added (keyword, label, subcategory, date added, rows it labels now), each with **DELETE**. Hand-written rules are listed read-only.
+9. **DONE** closes the panel and refreshes the whole dashboard.
+
+## Rule safety
+
+A rule in `rules.csv` applies to every unlabeled row whose description contains the keyword (case-insensitive), past and future, on every load. The first matching rule wins. Labels saved in the master always win over rules.
+
+"Remember" is **ticked by default only if all of the following hold**. Otherwise it starts unticked and shows the reason. The user can still tick it when only the *mixed sign* condition fails; the others hard-block it.
+1. **Long enough:** the keyword is at least 4 characters.
+2. **This merchant only:** across **all** rows, labeled or not, every row the keyword matches belongs to this merchant group. Otherwise the reason names the other merchants (up to 3).
+3. **One direction:** every row in the group is money out, or every row is money in.
+4. **Not overridden:** no existing rule's keyword matches any description in the group (it would win first match), and no existing rule's keyword contains the new keyword or is contained by it.
+
+The keyword is not editable. It is derived; see `rule_keyword` below.
 
 ## Components
 
@@ -40,76 +95,75 @@ Every total in the dashboard counts only rows labeled `Expense` / `Income` / `Tr
 
 | Function | Contract |
 |---|---|
-| `merchant_key(description) -> str` | Uppercase, strip digits / `#` / `*`, collapse whitespace, trim `-.,/`. Empty → `"UNKNOWN"`. Moved here from the drilldown's private `_merchant` in `app.py`, which then calls this, so grouping is identical in both places. |
-| `rule_keyword(descriptions) -> str` | Suggested rule keyword: the text before the first digit / `#` / `*` of each description, lower-cased and stripped, then the **longest common prefix** of those, trimmed back to a whole word. Guaranteed to be a substring of every description in the group. May be `""`. |
-| `valid_keyword(keyword, descriptions) -> bool` | True when the keyword is ≥ 4 characters after stripping and is a case-insensitive substring of every description in the group. Remember is disabled, with a hint, when the keyword is not valid. |
-| `unlabeled_groups(df) -> list[dict]` | Rows of the loaded frame whose `master_category` is not one of `PREDEFINED_CATEGORIES`, grouped by `merchant_key`. Each dict has `key` (a stable id: short hash of the merchant), `merchant`, `count`, `total` (net), `abs_total`, `first`, `last` (dates), `example`, `keyword` (from `rule_keyword`) and `rows` (records with `row_id`, `date`, `description`, `amount`, `source`, `card_last4`). Sorted by `abs_total`, descending. |
-| `row_id(row) -> str` | Stable id from `date \| description \| amount \| source \| card_last4`. Identical twin rows share an id, matching how the import matcher treats them. |
-| `label_rows(master, rows, category, sub) -> tuple[DataFrame, int]` | Builds an import frame from `rows` (with `date`, `card_last4`) and runs `apply_label_import`. Returns the updated master and the number of master rows labeled. There is one matching path for Excel imports and in-app labeling. |
-| `rule_match_count(df, keyword, exclude_keys) -> int` | How many unlabeled rows *outside* the given group the keyword would also label. Used for the hint. |
-| `add_rule(rules_path, keyword, category, sub) -> bool` | Appends `keyword,category,sub` to `rules.csv` with an atomic write. Returns `False` without writing when the keyword already exists (case-insensitive) or `category` is not a predefined category. A missing file gets the header row. |
+| `merchant_key(description) -> str` | The group key and rule keyword source, in this order: lowercase; collapse whitespace; cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach `; cut at the first digit, `#` or `*`; drop `xx-…` code tokens (e.g. `rtl-tppsgd`); trim ` -.,/`. Empty → `"unknown"`. The drilldown's private `_merchant` in `app.py` is replaced by a display form of this (upper-case), so grouping is the same everywhere. |
+| `rule_keyword(group_descriptions) -> str` | The longest common **word-aligned prefix** of the group's descriptions, lowercased with whitespace collapsed, trimmed of ` -.,/`. It is therefore a real substring of every description in the group, which `merchant_key` isn't always (it drops code tokens). It may be `""`, in which case remember is blocked as too short. Descriptions are compared with whitespace collapsed throughout, and rules match against collapsed descriptions; see the transforms change below. |
+| `rule_check(df, rules, group) -> dict` | Applies the four *Rule safety* conditions. Returns `{"ok": bool, "keyword": str, "reason": str \| None, "blocking": bool, "rows_now": int, "dollars_now": float, "others": [merchant, …]}`. |
+| `unlabeled_groups(df, only_row_ids=None) -> list[dict]` | Unlabeled rows (`master_category` not in `PREDEFINED_CATEGORIES`), grouped by `merchant_key`. Each dict has `key` (a short stable hash), `merchant` (display form), `count`, `total`, `abs_total`, `first`, `last`, `example`, `mixed`, `suggest_transfer` and `rows` (records with `row_id`, `date`, `description`, `amount`, `source`, `card_last4`). Sorted by `abs_total`, descending. `only_row_ids` restricts it to the last import's rows. |
+| `row_id(row) -> str` | Stable id from `date \| description \| amount \| source \| card_last4`. Identical twin rows share an id, consistent with the import matcher. |
+| `looks_like_transfer(description) -> bool` | Matches `payment thank`, `autopay`, `online transfer`, `transfer to`, `transfer from`, `epay`, `card payment`, `directpay` and `internet payment`. Used only to highlight the suggestion. |
+| `label_rows(master, rows, category, sub) -> tuple[DataFrame, int]` | Builds an import frame from `rows` and runs `apply_label_import`. This is the single matching path for Excel and in-app labeling. |
+| `read_rules(path) -> DataFrame` / `add_rule(path, keyword, category, sub) -> bool` / `delete_rule(path, keyword) -> bool` | `rules.csv` I/O. Reads tolerate a BOM. Writes are atomic and correctly quoted. `add_rule` appends the columns `keyword, master_category, sub_category, added`, where `added` is an ISO date; `apply_auto_categories` ignores extra columns. It refuses, returning `False`, when the keyword already exists or the category isn't predefined. `delete_rule` removes exactly the matching keyword row. |
 
-### `Modules/safety.py`
+### `Modules/transforms.py`
 
-- `restore_backup(backup, master) -> None`: public, atomic copy of a backup over the master (wraps the existing `_replace_from`). Used by Undo.
+- `apply_auto_categories` matches keywords against descriptions **with whitespace collapsed**. Bank files pad descriptions (`venmo            payment`), so a keyword derived from collapsed text would otherwise never match. This is a small behaviour change; existing single-word rules are unaffected.
+
+### `main.py` / `Modules/safety.py`
+
+- `rebuild_master` records the last import in `SORTED/last_import.json` (atomic): `{when, new_row_ids: [...]}`. The new rows are those not carried or rescued from the old master. The header line computes "labeled by rules" and "need you" from the loaded frame.
+- `safety.restore_backup(backup, master)`: public atomic restore, used by Undo.
 
 ### `app.py`
 
-- **Header:** `unlabeled-note` becomes a button (`open-label-panel`); the text adds `· LABEL THEM →`.
+- **Header:** the `open-label-panel` button, plus a `last-import-note` line with a **REVIEW** button.
+- **Stat cards:** the `+ $X unreviewed` line, computed from unlabeled rows in the period.
 - **Overlay `label-panel`:** layout as above.
-  - Stores: `label-limit` (25, +25 per SHOW MORE, reset on open), `label-search`, `label-undo` (`{backup, master_mtime_ns, rule}` or None).
-  - Pattern-matching ids: `{"type": "lbl-group", "group": key, "cat": "Expense"|…}`, `{"type": "lbl-row", "row": row_id, "group": key, "cat": …}`, `{"type": "lbl-sub", "group": key}`, `{"type": "lbl-remember", "group": key}`, `{"type": "lbl-keyword", "group": key}`, `{"type": "lbl-expand", "group": key}`.
-- **Callbacks:**
-  - `open/close` panel: closing bumps `refresh-trigger`.
-  - `render_label_list` (groups from the current `df`, search, limit).
-  - `label_click`: one callback for group and row buttons. It ignores re-render triggers whose `n_clicks` is falsy and resolves rows from the current `df` by `group` / `row_id`. It then does the following under `MASTER_LOCK`:
-    1. read the master;
-    2. `label_rows`;
-    3. `backup_master`, keeping the returned path for undo;
-    4. `atomic_write_csv`;
-    5. if remember is on and the keyword is valid, `add_rule`.
-
-    After that it reloads `df`, sets the status line and `label-undo`, and re-renders the list.
-  - `undo_label`: only if the master's `mtime_ns` still equals the recorded value. It restores the backup, removes the rule it added (rewrites `rules.csv` atomically without that line), reloads `df`, and clears `label-undo`.
-- `PermissionError` (master or `rules.csv` open in Excel) gets the same friendly message as Import. The panel stays open, and nothing is half-written: the master write and the rule write are each atomic, and the rule is written only after the master succeeds.
+  - Stores: `label-filter` (all, or last import), `label-undo` (`{backup, master_mtime_ns, rules_mtime_ns, rule_keyword}`).
+  - Pattern-matching ids: `{"type": "lbl-group", "group", "cat"}`, `{"type": "lbl-row", "row", "group", "cat"}`, `{"type": "lbl-sub", "group"}`, `{"type": "lbl-remember", "group"}`, `{"type": "lbl-expand", "group"}`, `{"type": "lbl-rule-del", "keyword"}`.
+- **`label_click`** (group and row buttons):
+  1. Ignore re-render triggers whose `n_clicks` is falsy.
+  2. Resolve the rows from the current `df`.
+  3. Under `MASTER_LOCK`: read the master, run `label_rows`, `backup_master` (keep the path), then `atomic_write_csv`.
+  4. If remember is on and `rule_check` passes, or fails only on a non-blocking condition, run `add_rule`. The rule is written only after the master succeeds.
+  5. Reload `df` and set the status and `label-undo`.
+- **`undo_label`:** only when both mtimes are unchanged. Restore the backup, delete the added rule, then reload.
+- **`delete_rule_click`:** delete the rule, reload, re-render.
+- A `PermissionError` on the master or on `rules.csv` gets the same plain message as Import, and nothing is half-written.
 
 ### `assets/app.css`
 
-The panel uses theme tokens only. It reuses `.app-card`, `.btn-secondary`, `.btn-small`, `.setup-input` and `.pills`. On narrow screens the group rows stack: name and stats, then buttons, then category/remember. z-index: setup 100 > label panel 90 > settings menu 50.
-
-## Data flow
-
-```
-click → resolve rows from df → [MASTER_LOCK: read master → label_rows → backup_master → atomic_write_csv] → add_rule? → reload df → re-render list + status
-DONE  → hide panel → refresh-trigger + 1 → every card recomputes
-UNDO  → mtime check → restore_backup → remove rule → reload df → re-render
-```
+The panel uses theme tokens only and reuses `.app-card`, `.btn-secondary`, `.btn-small`, `.setup-input` and `.pills`. The *suggested* button uses the accent tint, and the *mixed* badge uses `accent2`. z-index: setup 100 > label panel 90 > settings menu 50.
 
 ## Error handling
 
 | Condition | Behaviour |
 |---|---|
-| Master or rules file locked (Excel) | Friendly message in the status line; nothing is changed |
-| Rows no longer present (e.g. a Reload happened elsewhere) | `label_rows` reports 0 labeled → status `Nothing to label — the list was out of date`, and the list re-renders |
-| Keyword invalid / duplicate | Remember is disabled with a hint, or the status notes `rule already exists`; the labels are still saved |
-| Undo after another write | The Undo button is hidden; status explains `can't undo — the data changed since` |
-| No data loaded | The header button is hidden and the panel can't open |
+| Master or `rules.csv` locked (Excel) | A plain message in the status line. Nothing changes. |
+| Rows gone, e.g. a Reload elsewhere | `Nothing to label — the list was out of date`, then the list re-renders. |
+| The rule fails the safety check | Remember is off, with the reason. If the user ticks it on a non-blocking reason, the rule is added; a blocking reason stops that. |
+| Undo after another write | Undo is hidden and the status says `can't undo — the data changed since`. |
+| No data, or nothing unlabeled | The header button is hidden. The panel shows `Everything is labeled`. |
 
 ## Testing
 
-- **Unit (`tests/test_labels.py`, `tests/test_safety.py`):**
-  - `merchant_key` (store numbers stripped, empty → UNKNOWN)
-  - `rule_keyword` (common prefix, word boundary, a substring of all descriptions, `""` when there's nothing in common)
-  - `valid_keyword` (length, substring)
-  - `unlabeled_groups` (grouping, sorting, excludes labeled and Transfer rows, stable `key` / `row_id`)
-  - `label_rows` (labels exactly the group's rows, twins together, card-aware)
-  - `rule_match_count`
-  - `add_rule` (append, header on a new file, duplicate keyword refused, invalid category refused, atomic)
-  - `restore_backup`
-- **End-to-end (temp copy of Test Data):** label a group, then confirm the master changed, a backup exists, the rule was added, and after reload the group is gone and totals rose by the group's amount. Then undo and confirm the master is byte-identical to before and the rule is removed.
-- **UI:** Playwright screenshots of the panel in both themes at 1440 and 390 px. Exercise click, expand, search, show more, undo and close. No console errors.
+- **Unit tests:**
+  - `merchant_key`: the ID and code stripping that turns the five Coinbase variants into one key, whitespace collapse, and `unknown`;
+  - `rule_check`: each of the four conditions, and that it checks labeled rows too;
+  - `unlabeled_groups`: grouping, sort order, the `mixed` flag, `only_row_ids`, and stable ids;
+  - `looks_like_transfer`;
+  - `label_rows`: exactly the group's rows, twins together, card-aware;
+  - `add_rule` / `delete_rule`: append, BOM, quoting, duplicate refused, invalid category refused, extra column ignored by `apply_auto_categories`;
+  - the whitespace-collapsing rule match;
+  - `last_import.json` written by `rebuild_master`;
+  - `restore_backup`.
+- **End-to-end** on a temp copy of Test Data:
+  - Label a group with remember on. Check that the master changed, a backup exists, and the rule was added. After reload, the group is gone, and **every period's expense total rose by exactly the group's labeled amount** (the reconciliation check).
+  - Undo, then check that the master is byte-identical and the rule is gone.
+  - Delete a rule from the Rules tab and check that its rows return to unlabeled unless their labels were saved in the master.
+- **UI:** Playwright at 1440 px in both themes (open, guide, click, expand, suggested Transfer, undo, Rules tab, done), with no console errors.
 
 ## Docs
 
-- New `docs/features/labeling-panel.md`.
-- Update `import-export.md` (in-app labeling first, Excel for bulk edits), `overview-charts.md` (header button), `design.md` (panel component, z-index table), `decisions.md` (ADR: in-app labeling shares the import matcher; labels can become rules), and the readme UI tour.
+- New `docs/features/labeling-panel.md`, including the labeling guide.
+- An ADR in `decisions.md`: in-app labeling shares the import matcher; rules are created only when provably safe; unlabeled money is shown as "unreviewed", not counted.
+- One line each in `overview-charts.md` (the header lines and the unreviewed figure) and in the readme UI tour.
