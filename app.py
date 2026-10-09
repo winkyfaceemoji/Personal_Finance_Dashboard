@@ -10,10 +10,14 @@ from dash import dcc, html, ctx, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
-from Modules.labels import apply_label_import, read_import_csv, row_ids, last_import_ids
-from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count
+from Modules.labels import (
+    apply_label_import, read_import_csv, row_ids, last_import_ids,
+    unlabeled_groups, rule_check, read_rules,
+)
+from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, snapshot_master
 from Modules.transforms import (
     load_transactions,
+    normalize_description,
     monthly_expenses,
     monthly_income,
     expenses_by_category,
@@ -159,6 +163,23 @@ CAT_TOP_N = 9
 # How many bars the spending-over-time chart shows per granularity (None = all).
 CHART_PERIODS = {"week": 26, "month": 24, "year": None}
 
+# The labeling panel shows the biggest merchants only — the top 25 cover ~90%
+# of unlabeled dollars on real data; the rest wait for the next session.
+LABEL_TOP_N = 25
+
+LABEL_GUIDE = """
+**Ask one question: did money enter or leave *you* — all your accounts counted as one pot?**
+
+- **Expense** — it left you for someone else (groceries, rent, a Zelle to a friend for dinner).
+- **Income** — it came to you from someone else (paycheck, client payment, tax refund).
+- **Transfer** — it moved between your own accounts (credit-card payment, savings or investments, Venmo cash-out). Card purchases were already counted, so the bill payment must not count again.
+
+**Tricky cases** — card payment ("AUTOPAY", "PAYMENT THANK YOU"): Transfer, on both sides ·
+refund: Expense (it reduces spending) · friend paying you back: Expense · Venmo / Zelle / PayPal:
+depends who's on the other end — expand and label row by row · ATM cash: Expense ·
+loan or mortgage payment: Expense.
+"""
+
 FREQ_NOUN = {"week": "week", "month": "month", "year": "year"}
 
 
@@ -286,6 +307,12 @@ app.layout = html.Div(
         # clear the selection.
         dcc.Store(id="selected-category"),
 
+        # Labeling panel: which list it shows, the last action (for Undo), and a
+        # counter bumped after every write so the list re-renders
+        dcc.Store(id="label-filter", data="all"),
+        dcc.Store(id="label-undo"),
+        dcc.Store(id="label-version", data=0),
+
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
             id="setup-overlay",
@@ -314,6 +341,31 @@ app.layout = html.Div(
                 html.Div(id="setup-status", className="setup-status"),
             ]),
         ),
+
+        # ── Labeling panel (full-screen; opened from the header) ─────────────
+        html.Div(id="label-panel", style=_HIDDEN, children=html.Div(className="label-panel-inner", children=[
+            html.Div(className="label-head", children=[
+                html.Div([html.Div("LABEL TRANSACTIONS", className="app-label"),
+                          html.Div(id="label-summary", className="hint")]),
+                dcc.RadioItems(
+                    id="label-tab", className="pills", value="todo", inline=True,
+                    inputStyle=_PILL_INPUT,
+                    options=[{"label": "TO LABEL", "value": "todo"},
+                             {"label": "RULES", "value": "rules"}],
+                ),
+                html.Button("DONE", id="close-label-panel", n_clicks=0, className="btn-primary"),
+            ]),
+            html.Details(className="label-guide", children=[
+                html.Summary("How to choose a label"),
+                dcc.Markdown(LABEL_GUIDE),
+            ]),
+            html.Div(className="label-status-row", children=[
+                html.Span(id="label-status", className="settings-status"),
+                html.Button("UNDO", id="label-undo-btn", n_clicks=0,
+                            className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
+            html.Div(id="label-list"),
+        ])),
 
         # Click-catcher behind the open settings menu (closes it)
         html.Div(id="settings-backdrop", n_clicks=0, style=_MENU_HIDDEN),
@@ -473,6 +525,111 @@ app.layout = html.Div(
         ]),
     ]
 )
+
+
+# ── Labeling panel cards ──────────────────────────────────────────────────────
+
+def _span_text(g) -> str:
+    a, b = pd.Timestamp(g["first"]), pd.Timestamp(g["last"])
+    if a.date() == b.date():
+        return f"{a:%b} {a.day}, {a.year}"
+    return f"{a:%b} {a.day}, {a.year} – {b:%b} {b.day}, {b.year}"
+
+
+def _group_card(g: dict, chk: dict):
+    """One merchant group: three label buttons, subcategory, remember, rows."""
+    key = g["key"]
+
+    # Bulk buttons only when one click is safe: never on a nameless (fallback)
+    # group or one with money both in and out — those are labeled row by row
+    bulk = not g["fallback"] and not g["mixed"]
+
+    def _btn(cat, row=None):
+        id_ = ({"type": "lbl-group", "group": key, "sig": g["sig"], "cat": cat} if row is None
+               else {"type": "lbl-row", "group": key, "row": row, "cat": cat})
+        cls = "btn-secondary btn-small"
+        if cat == "Transfer" and g["suggest_transfer"]:
+            cls += " suggested"
+        return html.Button(cat.upper(), id=id_, n_clicks=0, className=cls,
+                           title="Suggested: looks like a card payment or transfer"
+                           if "suggested" in cls else None)
+
+    if chk["ok"]:
+        note = (f'rule "{chk["keyword"]}" ({chk["direction"]}) · labels {chk["rows_now"]} row'
+                f'{"s" if chk["rows_now"] != 1 else ""} ({_dollar0(chk["dollars_now"])}) now')
+    else:
+        note = chk["reason"]
+
+    rows = [html.Div(className="lg-row", children=[
+                html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
+                html.Span(r["description"] + (f"  ×{r['count']}" if r["count"] > 1 else ""),
+                          className="lg-desc", title=r["description"]),
+                html.Span(_dollar(r["amount"]), className="lg-amt"),
+                html.Div(className="lg-buttons", children=[_btn(c, r["row_id"]) for c in PREDEFINED_CATEGORIES]),
+            ]) for r in g["rows"]]
+
+    return html.Div(className="app-card label-group", children=[
+        html.Div(className="lg-main", children=[
+            html.Div(className="lg-info", children=[
+                html.Div([html.Span(g["merchant"], className="lg-name", title=g["example"]),
+                          html.Span("MIXED", className="lg-badge",
+                                    title="Has money in and out — check the rows")
+                          if g["mixed"] else None]),
+                html.Div(f'{g["count"]} txn{"s" if g["count"] != 1 else ""} · '
+                         f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
+                html.Div(g["example"], className="lg-example"),
+            ]),
+            html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
+            else html.Div("Label these one at a time below", className="hint"),
+        ]),
+        html.Div(className="lg-options", children=[
+            dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
+                      className="setup-input lg-sub", list="lbl-sub-options", debounce=False),
+            dcc.Checklist(
+                id={"type": "lbl-remember", "group": key}, className="lg-remember",
+                options=[{"label": " Remember for future statements", "value": "yes",
+                          "disabled": bool(chk["blocking"])}],
+                value=["yes"] if chk["ok"] else [],
+            ),
+            html.Span(note, className="hint"),
+        ]),
+        # Row-by-row groups stay open so each click doesn't re-collapse them
+        html.Details(className="lg-rows", open=not bulk, children=[
+            html.Summary(f"Label rows one at a time ({g['count']})"), *rows,
+        ]),
+    ])
+
+
+def _rules_view():
+    """The Rules tab: rules this panel added (with DELETE), then hand-written ones."""
+    rules = read_rules(RULES_PATH)
+    norm = df["description"].map(normalize_description)
+
+    def _hits(k):
+        k = normalize_description(k)
+        return int(norm.str.contains(k, regex=False).sum()) if k else 0
+
+    def _row(r, deletable):
+        label = r.master_category or "—"
+        if r.sub_category:
+            label += f" · {r.sub_category}"
+        meta = f"{label} · matches {_hits(r.keyword)} rows" + (f" · added {r.added}" if r.added else "")
+        return html.Div(className="rule-row", children=[
+            html.Span(r.keyword, className="lg-name"),
+            html.Span(meta, className="hint"),
+            html.Button("DELETE", id={"type": "lbl-rule-del", "keyword": r.keyword}, n_clicks=0,
+                        className="btn-secondary btn-small") if deletable else None,
+        ])
+
+    added = rules[rules["added"] != ""]
+    manual = rules[rules["added"] == ""]
+    return [
+        html.Div("ADDED FROM THIS PANEL", className="settings-label"),
+        *([_row(r, True) for r in added.itertuples()] or [html.Div("None yet.", className="hint")]),
+        html.Div("IN RULES.CSV (EDIT THE FILE TO CHANGE)", className="settings-label",
+                 style={"marginTop": "20px"}),
+        *[_row(r, False) for r in manual.itertuples()],
+    ]
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────
@@ -1343,6 +1500,65 @@ def save_setup(n_clicks, path, trigger):
 
     # Bump the refresh counter so every card re-renders from the new folder
     return _OVERLAY_HIDDEN, "", (trigger or 0) + 1
+
+
+# ── Labeling panel ────────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("label-panel",     "style"),
+    Output("label-filter",    "data"),
+    Output("label-tab",       "value"),
+    Output("refresh-trigger", "data", allow_duplicate=True),
+    Input("open-label-panel",  "n_clicks"),
+    Input("open-label-review", "n_clicks"),
+    Input("close-label-panel", "n_clicks"),
+    State("refresh-trigger",   "data"),
+    prevent_initial_call=True,
+)
+def toggle_label_panel(_open, _review, _close, trigger):
+    # Closing refreshes every card: labels written while the panel was open
+    # change totals, the header notes and the period bar
+    if ctx.triggered_id == "close-label-panel":
+        return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
+    filt = "last" if ctx.triggered_id == "open-label-review" else "all"
+    # Keep the state from before this labeling session outside the backup
+    # rotation (each click takes a rotating backup)
+    if MASTER_PATH and MASTER_PATH.exists():
+        with MASTER_LOCK:
+            snapshot_master(MASTER_PATH)
+    return {"display": "block"}, filt, "todo", dash.no_update
+
+
+@app.callback(
+    Output("label-list",    "children"),
+    Output("label-summary", "children"),
+    Input("label-panel",   "style"),
+    Input("label-version", "data"),
+    Input("label-tab",     "value"),
+    Input("theme-store",   "data"),
+    State("label-filter",  "data"),
+)
+def render_label_list(style, _version, tab, _theme, filt):
+    if not style or style.get("display") == "none":
+        return dash.no_update, dash.no_update
+    if tab == "rules":
+        return _rules_view(), "Rules label every matching unlabeled row, past and future"
+    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    groups = unlabeled_groups(df, only_row_ids=only)
+    n_rows = sum(g["count"] for g in groups)
+    summary = (f"{n_rows:,} rows · {_dollar0(sum(g['abs_total'] for g in groups))} · "
+               f"{len(groups)} merchants" + (" · from the last import" if only is not None else ""))
+    if not groups:
+        return html.Div("Everything is labeled ✓", className="hint"), summary
+    rules = read_rules(RULES_PATH)
+    norm = df["description"].map(normalize_description)
+    subs = sorted(s for s in df["sub_category"].unique() if s)
+    cards = [_group_card(g, rule_check(df, rules, g, norm=norm)) for g in groups[:LABEL_TOP_N]]
+    datalist = html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs])
+    if len(groups) > LABEL_TOP_N:
+        summary += f" · showing the top {LABEL_TOP_N}"
+    return [datalist, *cards], summary
+
 
 
 if __name__ == "__main__":
