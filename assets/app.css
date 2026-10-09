@@ -242,3 +242,12 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .pair-label.open { color: var(--accent2); }
 .pairs-all { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 640px) { #label-panel { padding: 20px 16px; } .lg-sub { flex-basis: 100%; } }
+
+/* ── Recurring charges ───────────────────────────────────────────────────── */
+.recurring-row { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; flex-wrap: wrap; }
+.rc-name { flex: 1; min-width: 160px; font-weight: 600; }
+.rc-cadence { flex: 0 0 80px; color: var(--subtext); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.rc-amt { flex: 0 0 90px; text-align: right; }
+.rc-year { flex: 0 0 110px; text-align: right; color: var(--subtext); }
+.rc-last { flex: 0 0 130px; text-align: right; color: var(--subtext); font-size: 11px; }
+@media (max-width: 640px) { .rc-amt, .rc-year, .rc-last { flex-basis: auto; text-align: left; } }

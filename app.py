@@ -16,6 +16,7 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     transfer_pairs, TRANSFER_PAIR_DAYS, suspect_transfers, not_transfer_keys, add_not_transfer,
 )
+from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
     snapshot_master,
@@ -250,6 +251,35 @@ def skipped_text(skipped: list[tuple[str, str]]) -> str:
     more = f", and {n - 3} more" if n > 3 else ""
     return (f"⚠ {n} file{'s' if n != 1 else ''} in RAW {'weren' if n != 1 else 'wasn'}'t imported: "
             f"{shown}{more}. Their transactions are missing from every total.")
+
+
+def recurring_view(items: list[dict]) -> tuple[list, str]:
+    """(rows for the RECURRING CHARGES card, its subtitle). Active charges
+    first; ones that stopped are folded away — still worth a glance when a
+    subscription you cancelled is still billing elsewhere."""
+    if not items:
+        return [html.Div("No regular charges found yet — a charge needs to repeat at least 3 times "
+                         "monthly, quarterly or yearly at a steady amount.", className="hint")], ""
+
+    def _row(r):
+        return html.Div(className="recurring-row", children=[
+            html.Span(r["merchant"], className="rc-name", title=f"{r['count']} charges since "
+                      f"{r['first']:%b} {r['first'].day}, {r['first'].year}"),
+            html.Span(r["cadence"], className="rc-cadence"),
+            html.Span(_dollar(r["amount"]), className="rc-amt"),
+            html.Span(f"{_dollar0(r['yearly'])} / yr", className="rc-year"),
+            html.Span(f"last {r['last']:%b} {r['last'].day}, {r['last'].year}", className="rc-last"),
+        ])
+
+    active = [r for r in items if r["active"]]
+    stopped = [r for r in items if not r["active"]]
+    rows = [_row(r) for r in active] or [html.Div("None active right now.", className="hint")]
+    if stopped:
+        rows.append(html.Details(className="lg-rows", children=[
+            html.Summary(f"Stopped ({len(stopped)})"), *[_row(r) for r in stopped]]))
+    sub = (f"{len(active)} active · {_dollar0(sum(r['yearly'] for r in active))} a year · "
+           f"same merchant, steady amount, regular schedule")
+    return rows, sub
 
 
 def last_import_text(frame: pd.DataFrame, ids) -> tuple[str, int]:
@@ -526,6 +556,17 @@ app.layout = html.Div(
             ]),
             dcc.Graph(id="category-chart", config={"displayModeBar": False}),
             html.Div(id="category-drilldown"),
+        ]),
+
+        # ── Recurring charges: subscriptions, rent, utilities ────────────────
+        card([
+            html.Div(className="card-head", children=[
+                html.Div([
+                    html.Div("RECURRING CHARGES", className="app-label"),
+                    html.Div(id="recurring-sub", className="hint"),
+                ]),
+            ]),
+            html.Div(id="recurring-list"),
         ]),
 
         # ── Seasonality: same calendar month, year over year ─────────────────
@@ -1420,6 +1461,19 @@ def category_drilldown(label, _theme, store):
     if cat_txns.empty:
         return []
     return _top_merchants_panel(cat_txns, f"{label.upper()}{scope_lbl}")
+
+
+# ── Recurring charges ─────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("recurring-list", "children"),
+    Output("recurring-sub",  "children"),
+    Input("refresh-trigger", "data"),
+)
+def update_recurring(_refresh):
+    # Not tied to the period bar: a subscription is a standing commitment,
+    # judged over all your history and "active" as of your newest data
+    return recurring_view(recurring_charges(df))
 
 
 # ── Seasonality ───────────────────────────────────────────────────────────────
