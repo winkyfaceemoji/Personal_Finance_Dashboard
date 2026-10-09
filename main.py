@@ -49,6 +49,14 @@ def detect_format(df: pd.DataFrame) -> str | None:
     return None
 
 
+def _text(col: pd.Series) -> pd.Series:
+    """A text column, stripped. A column that is empty in every row (e.g. a
+    statement holding only payments has no Category) is read as float NaN,
+    which the .str accessor rejects — and one such file used to abort the
+    whole import."""
+    return col.map(lambda v: v.strip() if isinstance(v, str) else None)
+
+
 def normalize_chase_debit(df: pd.DataFrame) -> pd.DataFrame:
     """
     Chase Debit columns:
@@ -57,10 +65,10 @@ def normalize_chase_debit(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(columns=UNIFIED_COLUMNS)
     out["date"]          = pd.to_datetime(df["Posting Date"], errors="coerce")
     out["post_date"]     = pd.to_datetime(df["Posting Date"], errors="coerce")
-    out["description"]   = df["Description"].str.strip()
+    out["description"]   = _text(df["Description"])
     out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce")
     out["original_category"] = None
-    out["type"]          = df["Type"].str.strip()
+    out["type"]          = _text(df["Type"])
     out["balance"]       = pd.to_numeric(df["Balance"], errors="coerce")
     out["memo"]          = None
     out["check_or_slip"] = df["Check or Slip #"]
@@ -76,12 +84,12 @@ def normalize_chase_credit(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(columns=UNIFIED_COLUMNS)
     out["date"]          = pd.to_datetime(df["Transaction Date"], errors="coerce")
     out["post_date"]     = pd.to_datetime(df["Post Date"], errors="coerce")
-    out["description"]   = df["Description"].str.strip()
+    out["description"]   = _text(df["Description"])
     out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce")
-    out["original_category"] = df["Category"].str.strip()
-    out["type"]          = df["Type"].str.strip()
+    out["original_category"] = _text(df["Category"])
+    out["type"]          = _text(df["Type"])
     out["balance"]       = None
-    out["memo"]          = df["Memo"].astype(str).str.strip().replace("nan", None)
+    out["memo"]          = _text(df["Memo"])
     out["check_or_slip"] = None
     out["source"]        = "Chase Credit"
     return out
@@ -95,9 +103,9 @@ def normalize_discover_credit(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(columns=UNIFIED_COLUMNS)
     out["date"]          = pd.to_datetime(df["Trans. Date"], errors="coerce")
     out["post_date"]     = pd.to_datetime(df["Post Date"], errors="coerce")
-    out["description"]   = df["Description"].str.strip()
+    out["description"]   = _text(df["Description"])
     out["amount"]        = pd.to_numeric(df["Amount"], errors="coerce") * -1
-    out["original_category"] = df["Category"].str.strip()
+    out["original_category"] = _text(df["Category"])
     out["type"]          = None
     out["balance"]       = None
     out["memo"]          = None
