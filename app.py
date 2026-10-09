@@ -6,15 +6,15 @@ import pandas as pd
 from pathlib import Path
 
 import dash
-from dash import dcc, html, ctx, Input, Output, State, Patch
+from dash import dcc, html, ctx, ALL, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
-    unlabeled_groups, rule_check, read_rules,
+    unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
 )
-from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, snapshot_master
+from Modules.safety import MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, restore_backup, snapshot_master
 from Modules.transforms import (
     load_transactions,
     normalize_description,
@@ -1558,6 +1558,158 @@ def render_label_list(style, _version, tab, _theme, filt):
     if len(groups) > LABEL_TOP_N:
         summary += f" · showing the top {LABEL_TOP_N}"
     return [datalist, *cards], summary
+
+
+_LOCKED_MSG = "⚠ The data file is open in another program (Excel?) — close it and try again."
+
+
+def _is_real_click(triggered) -> bool:
+    """Re-rendering the list adds buttons with n_clicks=0 (or None), which fires
+    pattern-matching callbacks too — only a real click may write anything."""
+    return bool(triggered) and bool(triggered[0].get("value"))
+
+
+def _mtime(path) -> str:
+    """A file's mtime as a string: st_mtime_ns is past 2^53, and the undo record
+    goes through the browser's JSON, which would round an int."""
+    return str(Path(path).stat().st_mtime_ns) if path and Path(path).exists() else "0"
+
+
+def _do_label(trig: dict, sub: str, remember: bool, version, filt):
+    """Label a group (or one row of it): master write under the lock with a
+    backup first, then — only if that succeeded — the rule. Returns
+    (status, undo, undo-button style, version)."""
+    global df
+    bumped = (version or 0) + 1
+    stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
+    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    groups = unlabeled_groups(df, only_row_ids=only)
+    group = next((g for g in groups if g["key"] == trig["group"]), None)
+    if trig["type"] == "lbl-group":
+        if group is None or group["sig"] != trig.get("sig"):
+            return stale                           # never label rows the user didn't see
+        if group["fallback"] or group["mixed"]:
+            return ("Label these one at a time — the rows don't all look alike.",
+                    dash.no_update, dash.no_update, bumped)
+        rows = group["rows"]
+    else:
+        # A row is found by its id anywhere in the list, so it still works after
+        # another click regrouped things
+        row = next((r for g in groups for r in g["rows"] if r["row_id"] == trig.get("row")), None)
+        if row is None:
+            return stale
+        rows, group = [row], group or {"merchant": row["description"]}
+    expected = sum(r["count"] for r in rows)
+    cat = trig["cat"]
+    try:
+        with MASTER_LOCK:
+            master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
+            master, n = label_rows(master, rows, cat, sub)
+            if n != expected:
+                # Something relabeled or removed these rows since the list was
+                # drawn — write nothing rather than a partial label
+                return stale
+            backup = backup_master(MASTER_PATH)
+            atomic_write_csv(master, MASTER_PATH)
+            rule, rule_note = None, ""
+            if remember and trig["type"] == "lbl-group":
+                chk = rule_check(df, read_rules(RULES_PATH), group)
+                try:
+                    if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
+                        rule = chk["keyword"]
+                except PermissionError:
+                    rule_note = " · not remembered: rules.csv is open in another program"
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except PermissionError:
+        return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+    # The master write happened, so Undo must be offered even if the rule failed
+    undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
+            "rules_mtime": _mtime(RULES_PATH), "rule": rule}
+    status = (f"Labeled {n} {group['merchant']} row{'s' if n != 1 else ''} as {cat}"
+              + (f' · rule "{rule}" added' if rule else "") + rule_note)
+    return status, undo, _SHOWN_INLINE, bumped
+
+
+def _do_undo(undo: dict, version):
+    """Revert the last label action — only if nothing has written the master or
+    rules.csv since (otherwise restoring would throw that newer change away)."""
+    global df
+    if not undo:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    if (_mtime(MASTER_PATH) != str(undo["master_mtime"])
+            or _mtime(RULES_PATH) != str(undo["rules_mtime"])):
+        return "Can't undo — the data changed since.", None, _HIDDEN, dash.no_update
+    try:
+        with MASTER_LOCK:
+            restore_backup(Path(undo["backup"]), MASTER_PATH)
+            if undo.get("rule"):
+                delete_rule(RULES_PATH, undo["rule"])
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except PermissionError:
+        return ("⚠ The data or rules file is open in another program (Excel?) — close it and try again.",
+                dash.no_update, dash.no_update, dash.no_update)
+    return "Undone.", None, _HIDDEN, (version or 0) + 1
+
+
+@app.callback(
+    Output("label-status",   "children"),
+    Output("label-undo",     "data"),
+    Output("label-undo-btn", "style"),
+    Output("label-version",  "data"),
+    Input({"type": "lbl-group", "group": ALL, "sig": ALL, "cat": ALL}, "n_clicks"),
+    Input({"type": "lbl-row", "group": ALL, "row": ALL, "cat": ALL}, "n_clicks"),
+    State({"type": "lbl-sub", "group": ALL}, "value"),
+    State({"type": "lbl-sub", "group": ALL}, "id"),
+    State({"type": "lbl-remember", "group": ALL}, "value"),
+    State({"type": "lbl-remember", "group": ALL}, "id"),
+    State("label-version", "data"),
+    State("label-filter",  "data"),
+    prevent_initial_call=True,
+)
+def label_click(_g, _r, subs, sub_ids, rems, rem_ids, version, filt):
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return (dash.no_update,) * 4
+    trig = dict(ctx.triggered_id)
+    key = trig["group"]
+    sub = ({i["group"]: v for i, v in zip(sub_ids, subs)}.get(key) or "").strip()
+    remember = bool({i["group"]: v for i, v in zip(rem_ids, rems)}.get(key))
+    return _do_label(trig, sub, remember, version, filt)
+
+
+@app.callback(
+    Output("label-status",   "children", allow_duplicate=True),
+    Output("label-undo",     "data",     allow_duplicate=True),
+    Output("label-undo-btn", "style",    allow_duplicate=True),
+    Output("label-version",  "data",     allow_duplicate=True),
+    Input("label-undo-btn", "n_clicks"),
+    State("label-undo",     "data"),
+    State("label-version",  "data"),
+    prevent_initial_call=True,
+)
+def undo_label(n_clicks, undo, version):
+    if not n_clicks:
+        return (dash.no_update,) * 4
+    return _do_undo(undo, version)
+
+
+@app.callback(
+    Output("label-status",  "children", allow_duplicate=True),
+    Output("label-version", "data",     allow_duplicate=True),
+    Input({"type": "lbl-rule-del", "keyword": ALL}, "n_clicks"),
+    State("label-version", "data"),
+    prevent_initial_call=True,
+)
+def delete_rule_click(_clicks, version):
+    global df
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return dash.no_update, dash.no_update
+    keyword = ctx.triggered_id["keyword"]
+    try:
+        removed = delete_rule(RULES_PATH, keyword)
+    except PermissionError:
+        return "⚠ rules.csv is open in another program (Excel?) — close it and try again.", dash.no_update
+    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    return (f'Rule "{keyword}" deleted' if removed else "That rule was already gone"), (version or 0) + 1
 
 
 
