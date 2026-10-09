@@ -32,16 +32,18 @@ Bank CSVs (RAW/)
   │  setup overlay  ← auto-ingests Test Data/ on first launch;
   │                    reopen anytime via CHANGE DATA FOLDER
   │  Modules/transforms.py  ← totals, period maths (week/month/year), helpers
-  │  rules.csv              ← keyword auto-categorization rules
+  │  Modules/labels.py      ← merchant groups, rule safety, label writes, Excel import matcher
+  │  rules.csv              ← keyword auto-categorization rules (FINANCE_RULES_PATH overrides the path)
   │
   └─ Single-page dashboard
-       ├─ Header  (data freshness, stale-data notice, unlabeled rows + $)
+       ├─ Header  (data freshness, stale-data notice, unlabeled rows + $ → LABEL THEM, last import → REVIEW)
        ├─ Period bar  (WEEK | MONTH | YEAR · ‹ period › · LATEST) — drives everything below
        ├─ Stat cards  (spent / income / net / savings rate vs previous and typical)
        ├─ Pace strip  (spending so far vs typical by now — in-progress periods)
        ├─ Spending over time  (bar per week/month/year; click to open a period)
        ├─ Categories  (sorted bars for the period + click-to-merchants drilldown)
        ├─ Seasonality  (same-month lines per year, selected year highlighted)
+       ├─ Labeling panel  (full-screen overlay: label unlabeled rows by merchant, Rules tab)
        └─ Settings gear  (import/export CSV, reload, change data folder, theme)
 ```
 
@@ -59,3 +61,4 @@ Each doc declares the source file(s) it documents in its `resource:` frontmatter
 | [overview-charts.md](overview-charts.md) | `app.py`, `Modules/transforms.py` | Period bar, stat cards, pace strip, spending-over-time and seasonality charts, header |
 | [category-breakdown.md](category-breakdown.md) | `app.py` | Category bars for the selected period, click-to-merchants drilldown |
 | [import-export.md](import-export.md) | `app.py`, `Modules/transforms.py` | Import/export in the settings menu: CSV labeling workflow, category system, transfers |
+| [labeling-panel.md](labeling-panel.md) | `app.py`, `Modules/labels.py` | In-app labeling: merchant groups, one-click labels, rule safety, undo, the pre-session snapshot, the Rules tab |

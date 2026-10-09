@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
+from Modules.labels import LAST_IMPORT_NAME, row_id
 from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -234,6 +235,7 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
 
     result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
     orphans = None   # set once a prior master is read; written only after the master is
+    new_ids = None   # rows this import added; set only when a prior master existed
 
     restored = restore_if_missing(master_file)
     if restored:
@@ -300,16 +302,22 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         fallback = defaultdict(deque)
         for i, key in zip(spare.index, fallback_key(spare)):
             fallback[key].append(i)
+        rescued = set()
         rest = combined[~combined.index.isin(matched)]
         for idx, key in zip(rest.index, fallback_key(rest)):
             bucket = fallback.get(key)
             if bucket:
                 _take(idx, bucket.popleft())
+                rescued.add(idx)
                 result["rescued"] += 1
 
         # Whatever's still unplaced is kept and reported, never silently dropped
         orphans = old_master[labeled & ~old_master.index.isin(used)]
         result["orphaned"] = len(orphans)
+        # What this import added: rows neither carried nor rescued from the
+        # old master. Computed before the sort below renumbers the index.
+        fresh = combined.index.difference(list(matched | rescued))
+        new_ids = [row_id(r) for r in combined.loc[fresh].to_dict("records")]
         print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)"
               f"; {result['rescued']} rescued by the fallback match")
 
@@ -335,6 +343,16 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         except OSError as e:
             print(f"  ⚠ Could not update {orphans_path(master_file)} ({e}) — "
                   f"close it (Excel?) and Reload")
+
+    # Record the import's new rows for the dashboard's "N new · K need you"
+    # line — only when this import added any: a Reload that finds nothing new
+    # must not wipe the record of the last real import.
+    if new_ids:
+        try:
+            atomic_write_csv(pd.DataFrame({"row_id": new_ids}),
+                             master_file.parent / LAST_IMPORT_NAME)
+        except OSError as e:
+            print(f"  ⚠ Could not record the last import ({e})")
     return result
 
 
