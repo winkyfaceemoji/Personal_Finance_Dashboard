@@ -122,7 +122,7 @@ By default the server only accepts connections from this computer, with debug mo
 | `FINANCE_HOST` | `127.0.0.1` | `0.0.0.0` to open the dashboard from another device on your network (anyone on that network can then use it) |
 | `FINANCE_DEBUG` | `0` | `1` for hot reload, Dash dev tools, and error tracebacks while developing |
 
-The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched, Every rebuild and import first copies your master to `SORTED/backups/` (newest 10 kept).
+The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched. Every rebuild and import first copies your master to `SORTED/backups/` (newest 10 kept).
 
 ### Tests
 
