@@ -168,8 +168,14 @@ def row_id(row: dict) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
+_ID_COLUMNS = ["date", "description", "amount", "source", "card_last4"]
+
+
 def row_ids(df: pd.DataFrame) -> pd.Series:
-    return pd.Series([row_id(r) for r in df.to_dict("records")], index=df.index, dtype=str)
+    # Only the identity columns: to_dict over the full-width frame is the
+    # slow part, and the panel calls this on every click
+    narrow = df[[c for c in _ID_COLUMNS if c in df.columns]]
+    return pd.Series([row_id(r) for r in narrow.to_dict("records")], index=df.index, dtype=str)
 
 
 def looks_like_transfer(description) -> bool:
@@ -191,12 +197,20 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
     # unrelated rows are never bulk-labeled together
     un["_fb"] = un["_mk"] == ""
     un.loc[un["_fb"], "_mk"] = un.loc[un["_fb"], "description"].map(normalize_description)
+    # One pass over plain records (narrow columns only): a DataFrame groupby
+    # with to_dict per group cost ~1 s on 1.3k rows, paid twice per click
+    cols = ["_mk", "_fb", "_rid", "date", "description", "amount", "source", "card_last4"]
+    recs = un[[c for c in cols if c in un.columns]].to_dict("records")
+    by_key: dict[str, list[dict]] = {}
+    for r in recs:                                  # first-appearance order
+        by_key.setdefault(r["_mk"], []).append(r)
     groups = []
-    for mk, g in un.groupby("_mk", sort=False):
-        amounts = g["amount"]
+    for mk, g in by_key.items():
+        amounts = [float(r["amount"]) for r in g]
+        dates = [r["date"] for r in g]
         rows: dict[str, dict] = {}
         # Identical twins share a row_id and are labeled together: one entry
-        for r in g.sort_values("date", kind="stable").to_dict("records"):
+        for r in sorted(g, key=lambda r: r["date"]):    # stable, like the old sort
             if r["_rid"] in rows:
                 rows[r["_rid"]]["count"] += 1
             else:
@@ -205,21 +219,21 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
                                    "source": r["source"], "card_last4": r.get("card_last4", "") or "",
                                    "count": 1}
         sig_src = "|".join(sorted(f"{k}x{v['count']}" for k, v in rows.items()))
-        fallback = bool(g["_fb"].any())
+        fallback = any(r["_fb"] for r in g)
         groups.append({
             "key": hashlib.sha1(mk.encode()).hexdigest()[:10],
             "mkey": mk,
-            "merchant": (str(g["description"].iloc[0]).strip() if fallback else mk).upper(),
-            "count": int(len(g)),
-            "total": float(amounts.sum()),
-            "abs_total": float(amounts.abs().sum()),
-            "first": g["date"].min(),
-            "last": g["date"].max(),
-            "example": str(g["description"].iloc[0]).strip(),
-            "mixed": bool((amounts > 0).any() and (amounts < 0).any()),
+            "merchant": (str(g[0]["description"]).strip() if fallback else mk).upper(),
+            "count": len(g),
+            "total": float(sum(amounts)),
+            "abs_total": float(sum(abs(a) for a in amounts)),
+            "first": min(dates),
+            "last": max(dates),
+            "example": str(g[0]["description"]).strip(),
+            "mixed": any(a > 0 for a in amounts) and any(a < 0 for a in amounts),
             "fallback": fallback,
             "sig": hashlib.sha1(sig_src.encode()).hexdigest()[:10],
-            "suggest_transfer": bool(g["description"].map(looks_like_transfer).any()),
+            "suggest_transfer": any(looks_like_transfer(r["description"]) for r in g),
             "rows": list(rows.values()),
         })
     return sorted(groups, key=lambda x: x["abs_total"], reverse=True)

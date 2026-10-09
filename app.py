@@ -536,9 +536,12 @@ def _span_text(g) -> str:
     return f"{a:%b} {a.day}, {a.year} – {b:%b} {b.day}, {b.year}"
 
 
-def _group_card(g: dict, chk: dict):
-    """One merchant group: three label buttons, subcategory, remember, rows."""
+def _group_card(g: dict, chk: dict, kept: dict | None = None):
+    """One merchant group: three label buttons, subcategory, remember, rows.
+    kept: what the user had set on this card before the list re-rendered
+    ({"sub", "remember", "open"}), so a click elsewhere doesn't wipe it."""
     key = g["key"]
+    kept = kept or {}
 
     # Bulk buttons only when one click is safe: never on a nameless (fallback)
     # group or one with money both in and out — those are labeled row by row
@@ -548,9 +551,13 @@ def _group_card(g: dict, chk: dict):
         id_ = ({"type": "lbl-group", "group": key, "sig": g["sig"], "cat": cat} if row is None
                else {"type": "lbl-row", "group": key, "row": row, "cat": cat})
         cls = "btn-secondary btn-small"
+        text = cat.upper()
         if cat == "Transfer" and g["suggest_transfer"]:
+            # Filled and starred: every button is already outlined in the
+            # accent, so colour alone didn't stand out
             cls += " suggested"
-        return html.Button(cat.upper(), id=id_, n_clicks=0, className=cls,
+            text = "★ " + text
+        return html.Button(text, id=id_, n_clicks=0, className=cls,
                            title="Suggested: looks like a card payment or transfer"
                            if "suggested" in cls else None)
 
@@ -566,6 +573,9 @@ def _group_card(g: dict, chk: dict):
     # every future match, so it starts unticked there
     can_remember = bulk and not chk["blocking"]
     ticked = can_remember and chk["ok"] and g["count"] >= 2
+    remember = ["yes"] if ticked else []
+    if can_remember and kept.get("remember") is not None:
+        remember = kept["remember"]
 
     rows = [html.Div(className="lg-row", children=[
                 html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
@@ -591,19 +601,24 @@ def _group_card(g: dict, chk: dict):
         ]),
         html.Div(className="lg-options", children=[
             dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
-                      className="setup-input lg-sub", list="lbl-sub-options", debounce=False),
+                      className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
+                      value=kept.get("sub") or ""),
             dcc.Checklist(
                 id={"type": "lbl-remember", "group": key}, className="lg-remember",
                 options=[{"label": " Remember for future statements", "value": "yes",
                           "disabled": not can_remember}],
-                value=["yes"] if ticked else [],
+                value=remember,
             ),
             html.Span(note, className="hint"),
         ]),
-        # Row-by-row groups stay open so each click doesn't re-collapse them
-        html.Details(className="lg-rows", open=not bulk, children=[
-            html.Summary(f"Label rows one at a time ({g['count']})"), *rows,
-        ]),
+        # Row-by-row groups start open; any group the user opened stays open.
+        # Dash doesn't report a <details> toggle, so the summary counts clicks
+        # and render_label_list works out the current state from the parity
+        html.Details(id={"type": "lbl-rows", "group": key}, className="lg-rows",
+                     open=bool(kept["open"]) if kept.get("open") is not None else not bulk,
+                     children=[html.Summary(f"Label rows one at a time ({g['count']})",
+                                            id={"type": "lbl-rows-sum", "group": key}, n_clicks=0),
+                               *rows]),
     ])
 
 
@@ -620,7 +635,9 @@ def _rules_view():
         label = r.master_category or "—"
         if r.sub_category:
             label += f" · {r.sub_category}"
-        meta = f"{label} · matches {_hits(r.keyword)} rows" + (f" · added {r.added}" if r.added else "")
+        n = _hits(r.keyword)
+        meta = (f"{label} · matches {n} row{'s' if n != 1 else ''}"
+                + (f" · added {r.added}" if r.added else ""))
         return html.Div(className="rule-row", children=[
             html.Span(r.keyword, className="lg-name"),
             html.Span(meta, className="hint"),
@@ -1551,10 +1568,19 @@ def _snapshot_before_labeling() -> None:
     Input("label-panel",   "style"),
     Input("label-version", "data"),
     Input("label-tab",     "value"),
-    Input("theme-store",   "data"),
     State("label-filter",  "data"),
+    # What the user set on the cards, carried across the re-render
+    State({"type": "lbl-sub", "group": ALL}, "value"),
+    State({"type": "lbl-sub", "group": ALL}, "id"),
+    State({"type": "lbl-remember", "group": ALL}, "value"),
+    State({"type": "lbl-remember", "group": ALL}, "id"),
+    State({"type": "lbl-rows", "group": ALL}, "open"),
+    State({"type": "lbl-rows", "group": ALL}, "id"),
+    State({"type": "lbl-rows-sum", "group": ALL}, "n_clicks"),
+    State({"type": "lbl-rows-sum", "group": ALL}, "id"),
 )
-def render_label_list(style, _version, tab, _theme, filt):
+def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem_ids,
+                      opens, open_ids, toggles, toggle_ids):
     if not style or style.get("display") == "none":
         return dash.no_update, dash.no_update
     if tab == "rules":
@@ -1569,7 +1595,18 @@ def render_label_list(style, _version, tab, _theme, filt):
     rules = read_rules(RULES_PATH)
     norm = df["description"].map(normalize_description)
     subs = sorted(s for s in df["sub_category"].unique() if s)
-    cards = [_group_card(g, rule_check(df, rules, g, norm=norm)) for g in groups[:LABEL_TOP_N]]
+    kept: dict[str, dict] = {}
+    for field, values, ids in (("sub", subs_in, sub_ids), ("remember", rems_in, rem_ids),
+                               ("open", opens, open_ids)):
+        for i, v in zip(ids or [], values or []):
+            kept.setdefault(i["group"], {})[field] = v
+    # "open" above is what the server last rendered; each summary click flipped it
+    for i, n in zip(toggle_ids or [], toggles or []):
+        k = kept.setdefault(i["group"], {})
+        if n and n % 2 and k.get("open") is not None:
+            k["open"] = not k["open"]
+    cards = [_group_card(g, rule_check(df, rules, g, norm=norm), kept.get(g["key"]))
+             for g in groups[:LABEL_TOP_N]]
     datalist = html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs])
     if len(groups) > LABEL_TOP_N:
         summary += f" · showing the top {LABEL_TOP_N}"
@@ -1747,6 +1784,16 @@ def _do_delete_rule(keyword: str, version):
     df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     return (f'Rule "{keyword}" deleted' if removed else "That rule was already gone"), (version or 0) + 1
 
+
+@app.callback(
+    Output("label-status", "children", allow_duplicate=True),
+    Input("label-tab", "value"),
+    prevent_initial_call=True,
+)
+def clear_label_status(_tab):
+    # A status belongs to the tab it was made on ("Undone." under RULES reads
+    # as if a rule was undone); Undo itself stays available
+    return ""
 
 
 if __name__ == "__main__":
