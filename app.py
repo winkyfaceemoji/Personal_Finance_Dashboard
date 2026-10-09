@@ -10,7 +10,8 @@ from dash import dcc, html, ctx, Input, Output, State, Patch
 import plotly.graph_objects as go
 
 from config import get_data_dir, get_master_path, save_data_dir
-from Modules.safety import orphan_count
+from Modules.labels import apply_label_import, read_import_csv
+from Modules.safety import atomic_write_csv, backup_master, orphan_count
 from Modules.transforms import (
     load_transactions,
     monthly_expenses,
@@ -1121,12 +1122,11 @@ def import_csv(contents, filename, trigger):
     if not contents:
         return "", dash.no_update
 
-    import io
     _, content_string = contents.split(",", 1)
     try:
-        import_df = pd.read_csv(io.StringIO(base64.b64decode(content_string).decode("utf-8")))
+        import_df = read_import_csv(base64.b64decode(content_string))
     except Exception as e:
-        return f"⚠ Could not parse CSV: {e}", dash.no_update
+        return f"⚠ Could not read CSV: {e}", dash.no_update
 
     required = {"description", "amount", "source", "master_category"}
     missing = required - set(import_df.columns)
@@ -1136,43 +1136,19 @@ def import_csv(contents, filename, trigger):
     if not MASTER_PATH or not MASTER_PATH.exists():
         return "⚠ No data directory configured — use the setup screen first.", dash.no_update
     try:
-        has_date    = "date"         in import_df.columns
-        has_sub_cat = "sub_category" in import_df.columns
         full_df = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
-        full_df["master_category"] = full_df["master_category"].fillna("")
-        full_df["sub_category"]    = full_df["sub_category"].fillna("")
-        full_df["card_last4"]      = full_df["card_last4"].fillna("")
-
-        updated = 0
-        full_amounts = pd.to_numeric(full_df["amount"], errors="coerce").round(4)
-        for _, row in import_df.iterrows():
-            cat = str(row["master_category"]).strip() if pd.notna(row["master_category"]) else ""
-            sub = str(row["sub_category"]).strip() if has_sub_cat and pd.notna(row.get("sub_category")) else ""
-            if not cat and not sub:
-                continue
-            try:
-                row_amt = round(float(row["amount"]), 4)
-            except (ValueError, TypeError):
-                continue
-            mask = (
-                (full_df["description"] == str(row["description"])) &
-                (full_amounts == row_amt) &
-                (full_df["source"] == str(row["source"]))
-            )
-            if has_date and pd.notna(row.get("date")):
-                mask = mask & (full_df["date"].astype(str).str[:10] == str(row["date"])[:10])
-            if mask.any():
-                if cat:
-                    full_df.loc[mask, "master_category"] = cat
-                if sub:
-                    full_df.loc[mask, "sub_category"] = sub
-                updated += int(mask.sum())
-
-        full_df.to_csv(MASTER_PATH, index=False)
+        full_df, updated, skipped = apply_label_import(full_df, import_df)
+        # Versioned backup, then an atomic write: a bad import can be rolled
+        # back from SORTED/backups/, and a crash never truncates the master
+        backup_master(MASTER_PATH)
+        atomic_write_csv(full_df, MASTER_PATH)
         global df
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
 
-        return f"Updated {updated} row(s) from {filename}", (trigger or 0) + 1
+        note = f" · {skipped} row(s) matched nothing" if skipped else ""
+        return f"Updated {updated} row(s) from {filename}{note}", (trigger or 0) + 1
+    except PermissionError:
+        return "⚠ The master file is open in another program (Excel?) — close it and import again.", dash.no_update
     except Exception as e:
         return f"Import error: {e}", dash.no_update
 
