@@ -231,10 +231,9 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     restored = restore_if_missing(master_file)
     if restored:
         result["restored_from"] = restored
-        print(f"  Master file was missing — restored labels from backup {restored.name}")
+        print(f"  Master file was missing or empty — restored labels from backup {restored.name}")
 
     if master_file.exists():
-        backup_master(master_file)
         old_master = pd.read_csv(master_file, dtype={"card_last4": str})
         if "category" in old_master.columns and "original_category" not in old_master.columns:
             old_master = old_master.rename(columns={"category": "original_category"})
@@ -243,6 +242,9 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         for col in MASTER_COLUMNS:
             if col not in old_master.columns:
                 old_master[col] = None
+        # Back up only a master that parsed: backing up a torn one on every
+        # failed run would rotate the good, labelled backups out
+        backup_master(master_file)
         for col in ["date", "post_date"]:
             old_master[col] = pd.to_datetime(old_master[col], errors="coerce").dt.strftime("%Y-%m-%d")
 

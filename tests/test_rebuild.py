@@ -174,3 +174,36 @@ def test_failed_master_write_does_not_lose_prior_orphan(master, monkeypatch):
     assert orphans_path(master).read_text() == orphans_before
     assert "Gifts" in orphans_path(master).read_text()
     assert master.read_text() == before
+
+
+# ── Unreadable master ─────────────────────────────────────────────────────────
+# A torn or badly saved master must not be backed up: every failed run would
+# otherwise push one more bad copy in and prune a good, labelled one out.
+
+def test_unreadable_master_never_evicts_labelled_backups(master):
+    _write_master(master, [ROW + ("Expense", "Coffee")])
+    rebuild_master(_combined([ROW]), master)          # good, labelled backup
+    master.write_text('date,description\n"torn')       # unparseable (EOF in quotes)
+    for _ in range(12):                                # e.g. a dozen Reload clicks
+        with pytest.raises(Exception):
+            rebuild_master(_combined([ROW]), master)
+    assert any("Coffee" in b.read_text() for b in list_backups(master))
+
+
+def test_empty_master_restored_from_backup(master):
+    _write_master(master, [ROW + ("Expense", "Coffee")])
+    rebuild_master(_combined([ROW]), master)
+    master.write_text("")                              # power loss mid-save
+    result = rebuild_master(_combined([ROW]), master)
+    assert result["restored_from"] is not None
+    assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"
+
+
+def test_unchanged_master_is_not_backed_up_again(master):
+    _write_master(master, [ROW + ("Expense", "Coffee")])
+    rebuild_master(_combined([ROW]), master)
+    rebuild_master(_combined([ROW]), master)
+    n = len(list_backups(master, include_legacy=False))
+    for _ in range(3):                                 # Reload with nothing new
+        rebuild_master(_combined([ROW]), master)
+    assert len(list_backups(master, include_legacy=False)) == n
