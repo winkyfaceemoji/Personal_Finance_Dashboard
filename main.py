@@ -226,6 +226,7 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
                          index=d.index)
 
     result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
+    orphans = None   # set once a prior master is read; written only after the master is
 
     restored = restore_if_missing(master_file)
     if restored:
@@ -292,21 +293,24 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         # Whatever's still unplaced is kept and reported, never silently dropped
         orphans = old_master[labeled & ~old_master.index.isin(used)]
         result["orphaned"] = len(orphans)
-        if orphans.empty:
-            orphans_path(master_file).unlink(missing_ok=True)
-        else:
-            atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
         print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)"
               f"; {result['rescued']} rescued by the fallback match")
-        if result["orphaned"]:
-            print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
-                  f"{orphans_path(master_file)}")
 
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     combined.sort_values("date", inplace=True, ignore_index=True, kind="stable")
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
     atomic_write_csv(combined[MASTER_COLUMNS], master_file)
     print(f"  Master file rebuilt with {len(combined)} rows -> {master_file}")
+
+    # Only now that the new master is safely on disk may the orphan file change:
+    # a failed master write must leave every not-yet-placed label where it was
+    if orphans is not None:
+        if orphans.empty:
+            orphans_path(master_file).unlink(missing_ok=True)
+        else:
+            atomic_write_csv(orphans[MASTER_COLUMNS], orphans_path(master_file))
+            print(f"  ⚠ {result['orphaned']} label(s) matched no transaction — saved to "
+                  f"{orphans_path(master_file)}")
     return result
 
 
