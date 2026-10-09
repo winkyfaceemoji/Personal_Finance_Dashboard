@@ -244,3 +244,25 @@ def test_label_survives_rules_file_locked(appmod, monkeypatch):
     assert status.startswith("Labeled") and "not remembered" in status
     assert undo and undo["rule"] is None          # the label still has an undo
     assert master.read_bytes() != before
+
+
+def test_label_refreshes_when_master_changed_underneath(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    master = g_["MASTER_PATH"]
+    grp = _bulk_group(g_)
+    first = grp["rows"][0]
+    # Something outside the app labels one of this group's rows
+    raw = pd.read_csv(master, dtype=str, keep_default_na=False)
+    hit = ((raw["description"] == first["description"])
+           & (pd.to_datetime(raw["date"]) == pd.Timestamp(first["date"]))
+           & (raw["amount"].astype(float).round(2) == round(float(first["amount"]), 2)))
+    assert hit.any()
+    raw.loc[hit, "master_category"] = "Expense"
+    raw.to_csv(master, index=False)
+    before = master.read_bytes()
+    status, undo, _, version = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
+    assert status.startswith("The list changed") and version == 1
+    assert master.read_bytes() == before                      # nothing written
+    df = g_["df"]                                             # reloaded: the list can now be redrawn correctly
+    assert (df.loc[row_ids(df) == first["row_id"], "master_category"] == "Expense").all()
