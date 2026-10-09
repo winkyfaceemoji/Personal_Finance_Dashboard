@@ -1607,7 +1607,9 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
             master, n = label_rows(master, rows, cat, sub)
             if n != expected:
                 # Something relabeled or removed these rows since the list was
-                # drawn — write nothing rather than a partial label
+                # drawn — write nothing rather than a partial label, and reload
+                # so the next draw (and click) sees what is on disk now
+                df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
                 return stale
             backup = backup_master(MASTER_PATH)
             atomic_write_csv(master, MASTER_PATH)
