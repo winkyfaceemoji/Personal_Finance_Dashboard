@@ -267,7 +267,6 @@ def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list
     d["card_last4"] = d["card_last4"].fillna("").astype(str)
     # Anything that isn't a valid label counts as unlabeled, as everywhere else
     d["master_category"] = d["master_category"].where(d["master_category"].isin(PREDEFINED_CATEGORIES), "")
-    d["_rid"] = row_ids(d)
     d["_acct"] = d["source"].astype(str) + "|" + d["card_last4"]
     d["_cents"] = (d["amount"].astype(float) * 100).round().astype("int64")
     d["_pos"] = range(len(d))
@@ -285,7 +284,9 @@ def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list
     m = m[unique]   # identical twins land here too: each gives the other side two candidates
 
     def _side(r, sfx) -> dict:
-        return {"row_id": r[f"_rid{sfx}"], "date": r[f"date{sfx}"],
+        # row ids only for the few rows that pair, not the whole frame
+        rid = row_id({c: r[f"{c}{sfx}"] for c in _ID_COLUMNS})
+        return {"row_id": rid, "date": r[f"date{sfx}"],
                 "description": r[f"description{sfx}"], "amount": float(r[f"amount{sfx}"]),
                 "source": r[f"source{sfx}"], "card_last4": r[f"card_last4{sfx}"],
                 "count": 1, "label": r[f"master_category{sfx}"]}

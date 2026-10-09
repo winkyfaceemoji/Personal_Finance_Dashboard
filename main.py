@@ -54,7 +54,9 @@ def _text(col: pd.Series) -> pd.Series:
     statement holding only payments has no Category) is read as float NaN,
     which the .str accessor rejects — and one such file used to abort the
     whole import."""
-    return col.map(lambda v: v.strip() if isinstance(v, str) else None)
+    # str(v): a column of digits only (e.g. a numeric Memo) is read as numbers;
+    # blanks stay NaN, as .str.strip() left them
+    return col.map(lambda v: v if pd.isna(v) else str(v).strip())
 
 
 def normalize_chase_debit(df: pd.DataFrame) -> pd.DataFrame:

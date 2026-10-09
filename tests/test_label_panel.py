@@ -484,3 +484,18 @@ def test_label_all_pairs_refuses_a_stale_list(appmod):
     sig = g_["_pairs_sig"](g_["transfer_pairs"](g_["df"]))
     status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": sig}, 0)
     assert status.startswith("Labeled") and g_["transfer_pairs"](g_["df"]) == []
+
+
+def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
+    # The tab shows at most LABEL_TOP_N pairs; LABEL ALL must never reach the
+    # unseen ones (a coincidental "pair" would silently leave every total)
+    g_ = _live(appmod)
+    _add_transfer_pair(g_, cents=99999)
+    _add_transfer_pair(g_, cents=66666)
+    monkeypatch.setitem(g_, "LABEL_TOP_N", 1)
+    shown, total = g_["_shown_pairs"]("all")
+    assert total == 2 and [p["amount"] for p in shown] == [999.99]
+    status, _, _, _ = g_["_do_label_pairs"](
+        {"type": "lbl-pair", "pair": "__all__", "sig": g_["_pairs_sig"](shown)}, 0, "all")
+    assert status.startswith("Labeled 2 rows (1 pair)")
+    assert [p["amount"] for p in g_["transfer_pairs"](g_["df"])] == [666.66]
