@@ -38,6 +38,7 @@ A period is **in progress** when it contains the newest transaction date and run
 - **Data line** (`data-updated`) — the sources, the newest transaction date (`data through Dec 26, 2025`), and any source lagging the newest by more than 7 days (`behind: Discover Credit through Nov 26`) — its recent transactions are missing, so recent totals undercount.
 - **Stale notice** (`stale-note`) — when the newest transaction is more than 7 days before today: *"No transactions in the last N days. Download newer statements…"*. Weekly tracking only works with fresh exports; this says so instead of showing an empty week.
 - **Unlabeled note** (`unlabeled-note`, red) — count **and dollar size** of rows with no valid label, which every total ignores, plus how to fix it (Export → label → Import). See [import-export.md](import-export.md).
+- **Orphan note** (`orphan-note`, red) — shown while some of your labels match no transaction; they're kept in `SORTED/orphaned_labels.csv` and re-attach automatically if the transactions return. See [ingest-pipeline.md](ingest-pipeline.md).
 
 ---
 

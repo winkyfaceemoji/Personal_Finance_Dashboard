@@ -10,6 +10,8 @@ updated: 2026-10-09
 
 Data loading, labeling, and the money maths live here: totals, period windows, "typical" medians, and pace. `app.py` calls these and keeps only presentation-level grouping — the merchant rollup and the top-N category split in the drilldown. The period helpers are pure functions covered by `tests/test_periods.py`.
 
+Two sibling modules sit beside it: `Modules/safety.py` (backups, atomic writes, restore — the only code that writes the master) and `Modules/labels.py` (applying an imported CSV's labels). See [ingest-pipeline.md](ingest-pipeline.md) and [import-export.md](import-export.md).
+
 ---
 
 ## Category constants
