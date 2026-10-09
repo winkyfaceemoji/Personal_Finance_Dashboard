@@ -224,9 +224,10 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-badge { margin-left: 8px; font-size: 10px; letter-spacing: 1px; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 4px; padding: 1px 6px; }
 .lg-example { font-size: 11px; color: var(--subtext); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lg-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
-.btn-secondary.suggested { background: var(--accent-weak); color: var(--text); }
+/* Suggested: filled and starred — plain buttons are already accent-outlined */
+.btn-secondary.suggested { background: var(--accent-weak); color: var(--text); font-weight: 700; }
 .lg-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.lg-sub { flex: 0 0 200px; padding: 6px 10px; font-size: 12px; }
+.lg-sub { flex: 0 0 230px; padding: 6px 10px; font-size: 12px; }
 .lg-remember { font-size: 12px; }
 .lg-rows summary { cursor: pointer; font-size: 11px; color: var(--subtext); margin-top: 10px; }
 .lg-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
