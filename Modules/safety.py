@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -60,6 +60,31 @@ def _replace_from(src: Path, dest: Path) -> None:
     except BaseException:
         _discard(tmp)
         raise
+
+
+def restore_backup(backup: Path, master: Path) -> None:
+    """Put a backup back over the master, atomically (used by the panel's Undo)."""
+    _replace_from(Path(backup), Path(master))
+
+
+def snapshot_master(master: Path, name: str = "before-labeling") -> Path | None:
+    """A dated copy (`before-labeling-YYYY-MM-DD.csv`, local date) kept OUTSIDE
+    the backup rotation: labeling takes a backup per click, so ten clicks would
+    otherwise prune away the state from before the labeling session — the
+    recovery point that matters most. Written once per day: opening the panel
+    again after DONE must not replace the true pre-session state with a
+    half-labeled one. Returns the snapshot, existing or new."""
+    master = Path(master)
+    if not master.exists():
+        return None
+    d = _backup_dir(master)
+    d.mkdir(parents=True, exist_ok=True)
+    # Outside list_backups' glob (it doesn't start with the master's stem),
+    # so it is never pruned and restore_if_missing never picks it
+    dest = d / f"{name}-{date.today().isoformat()}{master.suffix}"
+    if not dest.exists():
+        _replace_from(master, dest)
+    return dest
 
 
 def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:

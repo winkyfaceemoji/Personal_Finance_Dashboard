@@ -10,7 +10,7 @@ updated: 2026-10-09
 
 The dashboard answers two questions — **"am I on track?"** and **"where did the money go?"** — for a week, a month, or a year. One control, the **period bar**, picks the period, and everything beneath it follows. Top to bottom:
 
-1. **Header** — wordmark, data freshness, stale-data notice, unlabeled-rows note, settings gear
+1. **Header** — wordmark, data freshness, stale-data notice, unlabeled-rows note (with `LABEL THEM →`), last-import line (with `REVIEW →`), settings gear
 2. **Period bar** — `WEEK | MONTH | YEAR` pills and a `‹ period ›` stepper (sticky while scrolling)
 3. **Stat cards** — spent, income, net, savings rate for the selected period
 4. **Pace strip** — spending so far vs a typical period at the same point (in-progress periods only)
@@ -37,7 +37,8 @@ A period is **in progress** when it contains the newest transaction date and run
 - **Wordmark** — `FINANCE` in text colour, `DASHBOARD` in the accent.
 - **Data line** (`data-updated`) — the sources, the newest transaction date (`data through Dec 26, 2025`), and any source lagging the newest by more than 7 days (`behind: Discover Credit through Nov 26`) — its recent transactions are missing, so recent totals undercount.
 - **Stale notice** (`stale-note`) — when the newest transaction is more than 7 days before today: *"No transactions in the last N days. Download newer statements…"*. Weekly tracking only works with fresh exports; this says so instead of showing an empty week.
-- **Unlabeled note** (`unlabeled-note`, red) — count **and dollar size** of rows with no valid label, which every total ignores, plus how to fix it (Export → label → Import). See [import-export.md](import-export.md).
+- **Unlabeled note** (`unlabeled-note`, red) — count **and dollar size** of rows with no valid label, which every total ignores (`⚠ 562 of 1,343 transactions ($152,346) are unlabeled and not counted.`). Beside it, the **`LABEL THEM →`** button (`open-label-panel`) opens the [labeling panel](labeling-panel.md); it hides when nothing is unlabeled. Labeling in bulk with Export → Excel → Import still works. See [import-export.md](import-export.md).
+- **Last-import line** (`last-import-note`) — what the most recent import added and how much of it still needs you: `Last import: 31 new · 27 labeled · 4 need you`, from `SORTED/last_import.csv`. The **`REVIEW →`** button (`open-label-review`) opens the panel filtered to those rows and shows only while some are unlabeled. Empty when no import has recorded new rows. See [labeling-panel.md](labeling-panel.md#the-last-import-last_importcsv).
 - **Orphan note** (`orphan-note`, red) — shown while some of your labels match no transaction; they're kept in `SORTED/orphaned_labels.csv` and re-attach automatically if the transactions return. See [ingest-pipeline.md](ingest-pipeline.md).
 
 ---
@@ -68,6 +69,8 @@ Four cards for the selected period. Each shows the value and two comparisons:
 
 - **vs previous** — the period before (`vs Nov 2025`, `vs last week`, `vs 2024`).
 - **vs typical** — the **median** of up to the previous 12 weeks or months, or of every earlier year (`TYPICAL_LOOKBACK`). A median, so one huge month doesn't define "normal". Hover the line for exactly what it was measured over.
+
+**Unreviewed line.** The Spent and Income cards add a muted italic line, `+ $292 unreviewed` (`unreviewed_amounts`): the unlabeled money out (Spent) or in (Income) in the selected period. It is **not** included in the value above it, since counting unlabeled rows by sign would double-count card payments; it only makes an incomplete total look incomplete. It is hidden under $0.50 and absent from the Net and Savings-rate cards. Hover for the explanation.
 
 **In-progress periods compare like-for-like.** On day 26 of December the cards read `SPENT SO FAR`, and both comparisons use the *first 26 days* of each earlier period (`vs same point in Nov 2025`, `vs typical by now`) — a part-finished month is never compared to whole ones.
 
@@ -116,7 +119,7 @@ A cumulative "pace" variant of this chart was tried and reverted — the monthly
 
 ## Label-based totals
 
-All numbers everywhere are **label-based**: expenses are rows with `master_category == "Expense"` (refunds labeled Expense net against them), income is `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total; the header's unlabeled note shows what's being left out.
+All numbers everywhere are **label-based**: expenses are rows with `master_category == "Expense"` (refunds labeled Expense net against them), income is `master_category == "Income"`. `Transfer` rows and unlabeled rows never appear in any total; the header's unlabeled note and the stat cards' `unreviewed` line show what's being left out.
 
 ## Theme
 

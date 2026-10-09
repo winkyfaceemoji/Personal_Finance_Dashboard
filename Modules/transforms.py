@@ -1,3 +1,6 @@
+import io
+import re
+
 import pandas as pd
 from pathlib import Path
 
@@ -8,6 +11,31 @@ PREDEFINED_CATEGORIES = [
     "Income",
     "Transfer",
 ]
+
+
+def normalize_description(text) -> str:
+    """The one form rule keywords and descriptions are compared in: lower-case,
+    '*' and '#' as spaces, whitespace collapsed. Bank exports pad descriptions
+    ('venmo            payment') and glue processors to merchants
+    ('PAYPAL *NETFLIX'), so raw substring matching misses or over-matches."""
+    return re.sub(r"\s+", " ", re.sub(r"[*#]", " ", str(text).lower())).strip()
+
+
+def read_rules_csv(path: Path | str) -> pd.DataFrame:
+    """rules.csv as text columns, blanks as ''. Excel saves it as UTF-8 with a
+    BOM (which would otherwise hide the keyword column) or, with a plain "CSV"
+    save on Windows, as Windows-1252. A zero-byte or headerless file is no
+    rules, not an error. Shared by the loader and the labeling panel."""
+    raw = Path(path).read_bytes()
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            text = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if not text.strip():
+            return pd.DataFrame()
+        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False).fillna("")
+    raise ValueError("rules.csv isn't UTF-8 or Windows-1252 text")
 
 
 def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd.DataFrame:
@@ -31,13 +59,15 @@ def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd
       matching row; they exist for descriptions like "venmo payment" that are
       too ambiguous to master-label but still deserve a display category.
 
+    Keywords and descriptions are compared after `normalize_description`.
+
     Everything is applied in-memory on every load and never written to the
     master file, so editing rules.csv retroactively re-labels all history.
     """
     if not rules_path or not Path(rules_path).exists():
         return df
     try:
-        rules = pd.read_csv(rules_path).fillna("")
+        rules = read_rules_csv(rules_path)
     except Exception:
         return df
     if rules.empty or "keyword" not in rules.columns:
@@ -47,10 +77,10 @@ def apply_auto_categories(df: pd.DataFrame, rules_path: Path | str | None) -> pd
     if "sub_category" not in rules.columns:
         rules["sub_category"] = ""
 
-    desc      = df["description"].str.lower()
+    desc      = df["description"].map(normalize_description)
     unlabeled = df["master_category"] == ""
     for _, rule in rules.iterrows():
-        keyword = str(rule["keyword"]).strip().lower()
+        keyword = normalize_description(rule["keyword"])
         mc      = str(rule["master_category"]).strip()
         sc      = str(rule["sub_category"]).strip()
         if not keyword or (mc and mc not in PREDEFINED_CATEGORIES) or (not mc and not sc):
