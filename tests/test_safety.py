@@ -94,3 +94,28 @@ def test_orphan_count(tmp_path):
     assert orphan_count(path) == 0
     pd.DataFrame({"x": [1, 2]}).to_csv(orphans_path(path), index=False)
     assert orphan_count(path) == 2
+
+
+# ── File permissions (POSIX only) ─────────────────────────────────────────────
+# mkstemp creates temp files 0600 and os.replace carries that mode to the
+# master, which would lock the host user out of a Docker bind-mounted file.
+
+def _umask():
+    old = os.umask(0)
+    os.umask(old)
+    return old
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_new_file_gets_umask_default_mode(tmp_path):
+    path = tmp_path / "SORTED" / "new.csv"
+    atomic_write_csv(pd.DataFrame({"a": [1]}), path)
+    assert path.stat().st_mode & 0o777 == 0o666 & ~_umask()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_overwrite_keeps_existing_mode(tmp_path):
+    path = _master(tmp_path)
+    os.chmod(path, 0o640)
+    atomic_write_csv(pd.DataFrame({"a": [1]}), path)
+    assert path.stat().st_mode & 0o777 == 0o640
