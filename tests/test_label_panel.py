@@ -431,3 +431,56 @@ def test_snapshot_failure_does_not_block_panel(appmod, monkeypatch):
         raise OSError("disk full")
     monkeypatch.setitem(g_, "snapshot_master", full)
     g_["_snapshot_before_labeling"]()            # must not raise
+
+
+def _add_transfer_pair(g_, cents=77777):
+    """Append a certain card-payment pair to the temp master and reload df."""
+    master = g_["MASTER_PATH"]
+    m = pd.read_csv(master, dtype=str, keep_default_na=False)
+    amt = f"{cents / 100:.2f}"
+    base = {c: "" for c in m.columns}
+    out_row = {**base, "date": "2026-01-05", "post_date": "2026-01-05", "source": "Chase Debit",
+               "description": "ACME SAVINGS XFER OUT 4823", "amount": f"-{amt}",
+               "card_last4": "4823"}
+    in_row = {**base, "date": "2026-01-06", "post_date": "2026-01-06", "source": "Chase Credit",
+              "description": "ACME SAVINGS XFER IN 3094", "amount": amt, "card_last4": "3094"}
+    m = pd.concat([m, pd.DataFrame([out_row, in_row])], ignore_index=True)
+    m.to_csv(master, index=False)
+    g_["df"] = g_["load_transactions"](master, rules_path=g_["RULES_PATH"])
+    return next(p for p in g_["transfer_pairs"](g_["df"]) if p["amount"] == cents / 100)
+
+
+def test_pairs_tab_lists_and_labels_a_pair(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    pair = _add_transfer_pair(g_)
+    children, summary = g_["render_label_list"]({"display": "block"}, 0, "pairs", "all",
+                                                [], [], [], [], [], [], [], [])
+    assert "likely transfer pair" in summary
+    ids = [i for i in _ids(children) if isinstance(i, dict) and i.get("type") == "lbl-pair"]
+    assert {"type": "lbl-pair", "pair": pair["key"], "sig": pair["key"]} in ids
+    assert any(i["pair"] == "__all__" for i in ids)
+
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, _ = g_["_do_label_pairs"](
+        {"type": "lbl-pair", "pair": pair["key"], "sig": pair["key"]}, 0)
+    assert status.startswith("Labeled 2 rows (1 pair) as Transfer")
+    df = g_["df"]
+    both = row_ids(df).isin({pair["out"]["row_id"], pair["in"]["row_id"]})
+    assert both.sum() == 2 and (df.loc[both, "master_category"] == "Transfer").all()
+    assert pair["key"] not in {p["key"] for p in g_["transfer_pairs"](df)}
+    status, _, _, _ = g_["_do_undo"](undo, 1)
+    assert status == "Undone." and master.read_bytes() == before
+
+
+def test_label_all_pairs_refuses_a_stale_list(appmod):
+    g_ = _live(appmod)
+    _add_transfer_pair(g_, cents=88888)
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": "0000000000"}, 0)
+    assert status.startswith("The list changed") and master.read_bytes() == before
+    sig = g_["_pairs_sig"](g_["transfer_pairs"](g_["df"]))
+    status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": sig}, 0)
+    assert status.startswith("Labeled") and g_["transfer_pairs"](g_["df"]) == []

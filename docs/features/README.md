@@ -61,4 +61,4 @@ Each doc declares the source file(s) it documents in its `resource:` frontmatter
 | [overview-charts.md](overview-charts.md) | `app.py`, `Modules/transforms.py` | Period bar, stat cards, pace strip, spending-over-time and seasonality charts, header |
 | [category-breakdown.md](category-breakdown.md) | `app.py` | Category bars for the selected period, click-to-merchants drilldown |
 | [import-export.md](import-export.md) | `app.py`, `Modules/transforms.py` | Import/export in the settings menu: CSV labeling workflow, category system, transfers |
-| [labeling-panel.md](labeling-panel.md) | `app.py`, `Modules/labels.py` | In-app labeling: merchant groups, one-click labels, rule safety, undo, the pre-session snapshot, the Rules tab |
+| [labeling-panel.md](labeling-panel.md) | `app.py`, `Modules/labels.py` | In-app labeling: merchant groups, one-click labels, transfer pairs, rule safety, undo, the pre-session snapshot, the Rules tab |

@@ -235,4 +235,10 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-desc { flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lg-amt { flex: 0 0 90px; text-align: right; }
 .rule-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+/* Transfer pairs: the OUT and IN rows of one move between your accounts */
+.pair-dir { flex: 0 0 32px; font-size: 10px; letter-spacing: 1px; color: var(--subtext); }
+.pair-acct { flex: 0 0 150px; color: var(--subtext); }
+.pair-label { flex: 0 0 80px; font-size: 11px; color: var(--subtext); }
+.pair-label.open { color: var(--accent2); }
+.pairs-all { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 640px) { #label-panel { padding: 20px 16px; } .lg-sub { flex-basis: 100%; } }
