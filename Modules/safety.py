@@ -16,6 +16,7 @@ import pandas as pd
 BACKUP_DIRNAME = "backups"
 BACKUP_KEEP    = 10
 ORPHANS_NAME   = "orphaned_labels.csv"
+SKIPPED_NAME   = "skipped_files.csv"
 
 # Dash's dev server runs callbacks on threads: a Reload rebuilding the master
 # while an Import rewrites it would let one overwrite the other's labels. Every
@@ -172,6 +173,36 @@ def restore_if_missing(master: Path) -> Path | None:
 
 def orphans_path(master: Path) -> Path:
     return Path(master).parent / ORPHANS_NAME
+
+
+def skipped_path(master: Path) -> Path:
+    return Path(master).parent / SKIPPED_NAME
+
+
+def write_skipped(master: Path, skipped: list[tuple[str, str]]) -> None:
+    """Record the RAW files the last import couldn't use, (path under RAW,
+    reason), for the dashboard's header; no file when nothing was skipped.
+    Best effort: a locked file (Excel) only costs the warning."""
+    p = skipped_path(master)
+    try:
+        if skipped:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_csv(pd.DataFrame(skipped, columns=["file", "reason"]), p)
+        else:
+            p.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"  ⚠ Could not update {p} ({e})")
+
+
+def read_skipped(master: Path) -> list[tuple[str, str]]:
+    p = skipped_path(master)
+    if not p.exists():
+        return []
+    try:
+        d = pd.read_csv(p, dtype=str, keep_default_na=False)
+        return list(zip(d["file"], d["reason"]))
+    except Exception:
+        return []
 
 
 def orphan_count(master: Path) -> int:
