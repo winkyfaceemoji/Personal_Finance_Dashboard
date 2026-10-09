@@ -9,3 +9,4 @@ Test Data/SORTED/
 # hold real bank data on machines that used the app before this feature.
 Data/
 .pytest_cache/
+.superpowers/
