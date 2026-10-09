@@ -42,6 +42,23 @@ def test_failed_replace_leaves_original_and_no_temp(tmp_path, monkeypatch):
     assert [p.name for p in path.parent.iterdir()] == [path.name]
 
 
+def test_failed_temp_cleanup_keeps_original_error(tmp_path, monkeypatch):
+    # e.g. a read-only temp file on Windows: the user must still see why the
+    # write failed, not that the cleanup did
+    path = _master(tmp_path)
+
+    def locked(*_):
+        raise PermissionError("file is open in Excel")
+
+    def stuck(*_, **__):
+        raise OSError("temp file is read-only")
+    monkeypatch.setattr(safety.os, "replace", locked)
+    monkeypatch.setattr(safety.Path, "unlink", stuck)
+
+    with pytest.raises(PermissionError, match="open in Excel"):
+        atomic_write_csv(pd.DataFrame({"a": [1]}), path)
+
+
 def test_backup_is_a_copy(tmp_path):
     path = _master(tmp_path)
     dest = backup_master(path)

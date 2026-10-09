@@ -7,6 +7,7 @@ import filecmp
 import os
 import shutil
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,11 @@ import pandas as pd
 BACKUP_DIRNAME = "backups"
 BACKUP_KEEP    = 10
 ORPHANS_NAME   = "orphaned_labels.csv"
+
+# Dash's dev server runs callbacks on threads: a Reload rebuilding the master
+# while an Import rewrites it would let one overwrite the other's labels. Every
+# read-modify-write of the master in the app holds this lock.
+MASTER_LOCK = threading.Lock()
 
 
 def _backup_dir(master: Path) -> Path:
@@ -34,6 +40,15 @@ def _match_mode(tmp: str, dest: Path) -> None:
         os.chmod(tmp, 0o666 & ~old)
 
 
+def _discard(tmp: str) -> None:
+    """Remove a leftover temp file, but never let a failed cleanup (e.g. a
+    read-only temp on Windows) replace the error the user needs to see."""
+    try:
+        Path(tmp).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _replace_from(src: Path, dest: Path) -> None:
     """Copy src over dest atomically: temp file beside dest, then os.replace."""
     fd, tmp = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent)
@@ -43,7 +58,7 @@ def _replace_from(src: Path, dest: Path) -> None:
         _match_mode(tmp, dest)
         os.replace(tmp, dest)
     except BaseException:
-        Path(tmp).unlink(missing_ok=True)
+        _discard(tmp)
         raise
 
 
@@ -61,7 +76,7 @@ def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
         _match_mode(tmp, path)
         os.replace(tmp, path)
     except BaseException:
-        Path(tmp).unlink(missing_ok=True)
+        _discard(tmp)
         raise
 
 

@@ -348,6 +348,12 @@ def main(data_dir: Path | None = None):
     output_file  = data_dir / "SORTED" / "combined_transactions.csv"
     master_file  = get_master_path(data_dir)
 
+    # Restore a lost master before anything can return early: with RAW empty
+    # the rebuild (which also restores) never runs
+    restored = restore_if_missing(master_file)
+    if restored:
+        print(f"Master file was missing or empty — restored labels from backup {restored.name}")
+
     csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
     if not csv_files:
         print(f"No CSV files found in {input_folder}")
