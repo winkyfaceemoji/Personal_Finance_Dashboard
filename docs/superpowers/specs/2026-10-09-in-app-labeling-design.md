@@ -95,7 +95,7 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
 
 | Function | Contract |
 |---|---|
-| `merchant_key(description) -> str` | The group key and rule keyword source, in this order: lowercase; collapse whitespace; cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach `; cut at the first digit, `#` or `*`; drop `xx-…` code tokens (e.g. `rtl-tppsgd`); trim ` -.,/`. Empty → `"unknown"`. The drilldown's private `_merchant` in `app.py` is replaced by a display form of this (upper-case), so grouping is the same everywhere. |
+| `merchant_key(description) -> str` | The group key and rule keyword source, in this order: `normalize_description` (lowercase, `*` and `#` become spaces, whitespace collapsed); cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach `; cut at the first digit; drop `xx-…` code tokens (e.g. `rtl-tppsgd`); trim ` -.,/`. Empty → `"unknown"`. The drilldown's private `_merchant` in `app.py` is replaced by a display form of this (upper-case), so grouping is the same everywhere. |
 | `rule_keyword(group_descriptions) -> str` | The longest common **word-aligned prefix** of the group's descriptions, lowercased with whitespace collapsed, trimmed of ` -.,/`. It is therefore a real substring of every description in the group, which `merchant_key` isn't always (it drops code tokens). It may be `""`, in which case remember is blocked as too short. Descriptions are compared with whitespace collapsed throughout, and rules match against collapsed descriptions; see the transforms change below. |
 | `rule_check(df, rules, group) -> dict` | Applies the four *Rule safety* conditions. Returns `{"ok": bool, "keyword": str, "reason": str \| None, "blocking": bool, "rows_now": int, "dollars_now": float, "others": [merchant, …]}`. |
 | `unlabeled_groups(df, only_row_ids=None) -> list[dict]` | Unlabeled rows (`master_category` not in `PREDEFINED_CATEGORIES`), grouped by `merchant_key`. Each dict has `key` (a short stable hash), `merchant` (display form), `count`, `total`, `abs_total`, `first`, `last`, `example`, `mixed`, `suggest_transfer` and `rows` (records with `row_id`, `date`, `description`, `amount`, `source`, `card_last4`). Sorted by `abs_total`, descending. `only_row_ids` restricts it to the last import's rows. |
@@ -106,11 +106,11 @@ The keyword is not editable. It is derived; see `rule_keyword` below.
 
 ### `Modules/transforms.py`
 
-- `apply_auto_categories` matches keywords against descriptions **with whitespace collapsed**. Bank files pad descriptions (`venmo            payment`), so a keyword derived from collapsed text would otherwise never match. This is a small behaviour change; existing single-word rules are unaffected.
+- New `normalize_description(text)`: lowercase, `*` and `#` become spaces, whitespace collapsed. `apply_auto_categories` compares **normalized keywords against normalized descriptions** and reads `rules.csv` BOM-tolerantly. Bank files pad descriptions (`venmo            payment`) and glue processors to merchants (`PAYPAL *NETFLIX`), so this keeps `PAYPAL *NETFLIX` and `PAYPAL *SPOTIFY` apart. Existing keywords such as `mta*nyct paygo` keep matching, because both sides are normalized the same way.
 
 ### `main.py` / `Modules/safety.py`
 
-- `rebuild_master` records the last import in `SORTED/last_import.json` (atomic): `{when, new_row_ids: [...]}`. The new rows are those not carried or rescued from the old master. The header line computes "labeled by rules" and "need you" from the loaded frame.
+- `rebuild_master` records the last import in `SORTED/last_import.csv` (one `row_id` column, written atomically; its file time is the import time). The new rows are those not carried or rescued from the old master. Nothing is written on the very first import, when every row is new. The header line computes "labeled by rules" and "need you" from the loaded frame.
 - `safety.restore_backup(backup, master)`: public atomic restore, used by Undo.
 
 ### `app.py`
@@ -154,7 +154,7 @@ The panel uses theme tokens only and reuses `.app-card`, `.btn-secondary`, `.btn
   - `label_rows`: exactly the group's rows, twins together, card-aware;
   - `add_rule` / `delete_rule`: append, BOM, quoting, duplicate refused, invalid category refused, extra column ignored by `apply_auto_categories`;
   - the whitespace-collapsing rule match;
-  - `last_import.json` written by `rebuild_master`;
+  - `last_import.csv` written by `rebuild_master`;
   - `restore_backup`.
 - **End-to-end** on a temp copy of Test Data:
   - Label a group with remember on. Check that the master changed, a backup exists, and the rule was added. After reload, the group is gone, and **every period's expense total rose by exactly the group's labeled amount** (the reconciliation check).
