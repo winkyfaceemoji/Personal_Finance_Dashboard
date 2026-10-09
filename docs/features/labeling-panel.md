@@ -144,6 +144,11 @@ A card payment shows up twice: money out of checking ("Payment to Chase card end
 
 A pair with a side already labeled **Expense or Income** is left alone (that was your call); a pair labeled Transfer on both sides has nothing to do. A pair with one side already Transfer offers **LABEL AS TRANSFER** for the other. Each card shows both rows (date, OUT/IN, account, description, current label, amount) with **LABEL BOTH TRANSFER**; **LABEL ALL N SHOWN** labels exactly the pairs on screen (at most 25; never pairs you haven't seen) in one write. Opened from **REVIEW →**, the tab and the TO LABEL hint count only pairs touching the last import's rows. Clicks are checked against the pair key (or, for LABEL ALL, a signature of the pairs shown) and go through the same locked write as every other label (`_write_labels`: count check, backup, atomic write) with the same **UNDO**. The TO LABEL summary says how many pairs were found.
 
+**Likely transfers labeled Expense or Income** (`suspect_transfers`). The same certain matches, but with a side labeled Expense or Income — most often a card payment labeled Expense, which counts every purchase on that card twice. They're listed first on the tab under **CHECK THESE**, and the header warns about them (`transfer-check-note`: *"⚠ 2 likely transfers between your accounts are labeled Expense or Income — $1,850 counted that probably shouldn't be."*) with **CHECK →**, which opens the panel on this tab. Each card offers:
+
+- **RELABEL AS TRANSFER** — overwrites every side not already Transfer (`label_rows(…, relabel=True)`: the one place the panel changes an existing label, and only on this explicit click), through the same locked write and **UNDO**;
+- **NOT A TRANSFER** — keeps your labels and stops flagging the pair: its key goes into `SORTED/not_transfers.csv` (delete the file to see dismissed pairs again).
+
 Your existing rules may already cover the common card payments (`payment thank you`, `automatic payment`, `payment to chase card`); pairs then catch the rest — moves to savings, other banks, wallets.
 
 ## The Rules tab

@@ -14,7 +14,7 @@ from config import get_data_dir, get_master_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
-    transfer_pairs, TRANSFER_PAIR_DAYS,
+    transfer_pairs, TRANSFER_PAIR_DAYS, suspect_transfers, not_transfer_keys, add_not_transfer,
 )
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
@@ -408,6 +408,12 @@ app.layout = html.Div(
                 html.Button("REVIEW →", id="open-label-review", n_clicks=0,
                             className="btn-secondary btn-small", style=_HIDDEN),
             ]),
+            # Likely transfers labeled Expense / Income — counted when they shouldn't be
+            html.Div(className="notice-row", children=[
+                html.Span(id="transfer-check-note", className="notice warn-text"),
+                html.Button("CHECK →", id="open-transfer-check", n_clicks=0,
+                            className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
             # Labels the last rebuild couldn't place (kept in a side file)
             html.P(id="orphan-note", className="notice warn-text"),
             # RAW files the last import couldn't use — their money is missing
@@ -685,16 +691,72 @@ def _shown_pairs(filt) -> tuple[list[dict], int]:
     return pairs[:LABEL_TOP_N], len(pairs)
 
 
+def _suspects(filt=None) -> list[dict]:
+    """Likely transfers labeled Expense/Income that the user hasn't dismissed
+    (REVIEW: only those touching the last import), biggest first."""
+    dismissed = not_transfer_keys(MASTER_PATH) if MASTER_PATH else set()
+    out = [p for p in suspect_transfers(df) if p["key"] not in dismissed]
+    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    if only is not None:
+        only = set(only)
+        out = [p for p in out if p["out"]["row_id"] in only or p["in"]["row_id"] in only]
+    return out
+
+
+def transfer_check_text(suspects: list[dict]) -> str:
+    """Header warning: money counted as spending or income that most likely
+    just moved between your own accounts."""
+    if not suspects:
+        return ""
+    n = len(suspects)
+    return (f"⚠ {n} likely transfer{'s' if n != 1 else ''} between your accounts "
+            f"{'are' if n != 1 else 'is'} labeled Expense or Income — "
+            f"{_dollar0(sum(p['counted'] for p in suspects))} counted that probably shouldn't be.")
+
+
+def _suspect_card(p: dict):
+    """A likely transfer labeled Expense/Income: fix it, or say it isn't one."""
+    return html.Div(className="app-card label-group", children=[
+        html.Div(className="lg-main", children=[
+            html.Div(className="lg-info", children=[
+                html.Span(f"{_dollar(p['amount'])} moved between your accounts?", className="lg-name"),
+                html.Div(f"{p['gap']} day{'s' if p['gap'] != 1 else ''} apart · "
+                         f"{_dollar0(p['counted'])} of it is in your totals", className="hint"),
+            ]),
+            html.Div(className="lg-buttons", children=[
+                html.Button("RELABEL AS TRANSFER",
+                            id={"type": "lbl-fix", "pair": p["key"], "act": "fix"}, n_clicks=0,
+                            className="btn-secondary btn-small suggested"),
+                html.Button("NOT A TRANSFER",
+                            id={"type": "lbl-fix", "pair": p["key"], "act": "dismiss"}, n_clicks=0,
+                            className="btn-secondary btn-small",
+                            title="Keep the labels and stop flagging this pair"),
+            ]),
+        ]),
+        _pair_side(p["out"], "OUT"),
+        _pair_side(p["in"], "IN"),
+    ])
+
+
 def _pairs_sig(pairs: list[dict]) -> str:
     """Signature of the whole pairs list, checked again when LABEL ALL is clicked."""
     return hashlib.sha1("|".join(p["key"] for p in pairs).encode()).hexdigest()[:10]
 
 
-def _pairs_view(pairs: list[dict]) -> list:
+def _pairs_view(pairs: list[dict], suspects: list[dict] | None = None) -> list:
+    suspects = suspects or []
+    check = [
+        html.Div("CHECK THESE — LABELED EXPENSE OR INCOME", className="settings-label"),
+        html.Div("Same amount out of one account and into another, but counted as spending or "
+                 "income. A card payment labeled Expense counts that card's purchases twice.",
+                 className="hint"),
+        *[_suspect_card(p) for p in suspects[:LABEL_TOP_N]],
+        html.Div("TO LABEL", className="settings-label", style={"marginTop": "20px"}),
+    ] if suspects else []
     if not pairs:
-        return [html.Div("No likely transfer pairs to label ✓", className="hint")]
+        return [*check, html.Div("No likely transfer pairs to label ✓", className="hint")]
     rows = sum(len(p["to_label"]) for p in pairs)
-    return [
+    return [*check,
         html.Div(className="label-status-row", children=[
             html.Span(f"The same amount left one of your accounts and arrived in another within "
                       f"{TRANSFER_PAIR_DAYS} days — a card payment or a move between your own accounts. "
@@ -1629,18 +1691,20 @@ def save_setup(n_clicks, path, trigger):
     Output("refresh-trigger", "data", allow_duplicate=True),
     Input("open-label-panel",  "n_clicks"),
     Input("open-label-review", "n_clicks"),
+    Input("open-transfer-check", "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _close, trigger):
+def toggle_label_panel(_open, _review, _check, _close, trigger):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
         return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
     filt = "last" if ctx.triggered_id == "open-label-review" else "all"
+    tab = "pairs" if ctx.triggered_id == "open-transfer-check" else "todo"
     _snapshot_before_labeling()
-    return {"display": "block"}, filt, "todo", dash.no_update
+    return {"display": "block"}, filt, tab, dash.no_update
 
 
 def _snapshot_before_labeling() -> None:
@@ -1686,7 +1750,10 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             summary += " · from the last import"
         if n_pairs > len(shown):
             summary += f" · showing the top {len(shown)}"
-        return _pairs_view(shown), summary
+        suspects = _suspects(filt)
+        if suspects:
+            summary += f" · {len(suspects)} to check"
+        return _pairs_view(shown, suspects), summary
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     groups = unlabeled_groups(df, only_row_ids=only)
     n_rows = sum(g["count"] for g in groups)
@@ -1732,7 +1799,7 @@ def _mtime(path) -> str:
     return str(Path(path).stat().st_mtime_ns) if path and Path(path).exists() else "0"
 
 
-def _write_labels(rows: list[dict], cat: str, sub: str = ""):
+def _write_labels(rows: list[dict], cat: str, sub: str = "", relabel: bool = False):
     """The master write every label action shares; call it holding MASTER_LOCK.
     Labels exactly these rows (unlabeled ones only), backup first, atomic
     write. Returns (rows labeled, backup), or None — with nothing written and
@@ -1741,7 +1808,7 @@ def _write_labels(rows: list[dict], cat: str, sub: str = ""):
     global df
     expected = sum(r["count"] for r in rows)
     master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
-    master, n = label_rows(master, rows, cat, sub)
+    master, n = label_rows(master, rows, cat, sub, relabel=relabel)
     if n != expected:
         # Something relabeled or removed these rows since the list was drawn —
         # write nothing rather than a partial label, and reload so the next
@@ -1908,6 +1975,70 @@ def pair_click(_clicks, version, filt):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return (dash.no_update,) * 4
     return _do_label_pairs(dict(ctx.triggered_id), version, filt)
+
+
+def _do_fix_suspect(trig: dict, version, filt=None):
+    """RELABEL AS TRANSFER: overwrite the Expense/Income side(s) of one likely
+    transfer — an explicit fix, so labeled rows are touched (relabel). NOT A
+    TRANSFER: remember the pair and stop flagging it; labels untouched.
+    Returns (status, undo, undo-button style, version), like _do_label."""
+    global df
+    bumped = (version or 0) + 1
+    stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
+    pair = next((p for p in _suspects(filt) if p["key"] == trig.get("pair")), None)
+    if pair is None:
+        return stale
+    if trig.get("act") == "dismiss":
+        try:
+            with MASTER_LOCK:
+                add_not_transfer(MASTER_PATH, pair["key"])
+        except PermissionError:
+            return ("⚠ SORTED/not_transfers.csv is open in another program (Excel?) — close it and try again.",
+                    dash.no_update, dash.no_update, dash.no_update)
+        return "Kept as is — this pair won't be flagged again.", dash.no_update, dash.no_update, bumped
+    with MASTER_LOCK:
+        try:
+            written = _write_labels(pair["to_fix"], "Transfer", relabel=True)
+        except PermissionError:
+            return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+        if written is None:
+            return stale
+        n, backup = written
+        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
+                "rules_mtime": _mtime(RULES_PATH), "rule": None}
+    note = ""
+    try:
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except Exception:
+        note = " · couldn't reload the data — use RELOAD DATA"
+    return (f"Relabeled {n} row{'s' if n != 1 else ''} as Transfer "
+            f"({_dollar0(pair['counted'])} no longer counted)" + note, undo, _SHOWN_INLINE, bumped)
+
+
+@app.callback(
+    Output("label-status",   "children", allow_duplicate=True),
+    Output("label-undo",     "data",     allow_duplicate=True),
+    Output("label-undo-btn", "style",    allow_duplicate=True),
+    Output("label-version",  "data",     allow_duplicate=True),
+    Input({"type": "lbl-fix", "pair": ALL, "act": ALL}, "n_clicks"),
+    State("label-version", "data"),
+    State("label-filter",  "data"),
+    prevent_initial_call=True,
+)
+def fix_click(_clicks, version, filt):
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return (dash.no_update,) * 4
+    return _do_fix_suspect(dict(ctx.triggered_id), version, filt)
+
+
+@app.callback(
+    Output("transfer-check-note", "children"),
+    Output("open-transfer-check", "style"),
+    Input("refresh-trigger", "data"),
+)
+def update_transfer_check_note(_refresh):
+    text = transfer_check_text(_suspects())
+    return text, (_SHOWN_INLINE if text else _HIDDEN)
 
 
 @app.callback(
