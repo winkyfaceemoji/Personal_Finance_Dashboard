@@ -30,7 +30,7 @@ Note that **exports include rule-applied labels** (the export reads the loaded f
 
 This is the recommended workflow for bulk category assignment:
 
-1. Click **EXPORT CSV** — downloads all transactions with columns: `date`, `description`, `amount`, `institution`, `source`, `card_last4`, `original_category`, `master_category`, `sub_category`. (`institution` is informational — sort by it in Excel; it isn't used to match rows on re-import.)
+1. Click **EXPORT CSV** — downloads all transactions (UTF-8 with a BOM, so Excel keeps non-ASCII descriptions intact and they still match on re-import) with columns: `date`, `description`, `amount`, `institution`, `source`, `card_last4`, `original_category`, `master_category`, `sub_category`. (`institution` is informational — sort by it in Excel; it isn't used to match rows on re-import.)
 2. Open in Excel. Fill in `master_category` (`Expense`, `Income`, or `Transfer`) and optionally `sub_category` for each row you want to categorise.
 3. Save and click **IMPORT CSV** — upload the edited file. The import callback:
    - Reads UTF-8 (with or without BOM) or Windows-1252 — whatever Excel saved
