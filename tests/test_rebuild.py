@@ -265,3 +265,17 @@ def test_restore_runs_even_when_raw_is_empty(master):
     (data_dir / "RAW").mkdir()
     run_pipeline(data_dir)
     assert pd.read_csv(master).loc[0, "sub_category"] == "Coffee"
+
+
+def test_statement_with_an_empty_column_still_imports(tmp_path):
+    # A Chase card statement holding only payments has no Category in any row;
+    # pandas reads that column as float NaN, which used to abort the whole import
+    raw = tmp_path / "RAW" / "Chase"
+    raw.mkdir(parents=True)
+    (raw / "Chase3094_Activity_20260110.CSV").write_text(
+        "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
+        "01/06/2026,01/06/2026,AUTOMATIC PAYMENT - THANK,,Payment,1250.00,\n")
+    run_pipeline(tmp_path)
+    master = pd.read_csv(tmp_path / "SORTED" / "edited_combined_transactions.csv")
+    assert master["description"].tolist() == ["AUTOMATIC PAYMENT - THANK"]
+    assert master["amount"].tolist() == [1250.0]
