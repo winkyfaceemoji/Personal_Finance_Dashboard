@@ -150,7 +150,7 @@ The panel uses theme tokens only and reuses `.app-card`, `.btn-secondary`, `.btn
 |---|---|
 | Master or `rules.csv` locked (Excel) | A plain message in the status line. Nothing changes, except that a locked or unreadable `rules.csv` after a successful master write leaves the labels (and Undo) in place and the status says the rule wasn't remembered. |
 | Rows gone or changed, e.g. a Reload elsewhere or a count mismatch | `The list changed — it has been refreshed.` Nothing is written, and the list re-renders. |
-| The rule fails the safety check | Remember is off, with the reason. A blocking reason also disables the checkbox. The non-blocking reason (mixed sign) can be ticked, but mixed groups only offer row buttons, which never add rules. |
+| The rule fails the safety check | Remember is off, with the reason. A blocking reason disables the checkbox, and so does a card without group buttons (mixed or fallback groups — row buttons never add rules). |
 | Undo after another write | Undo is hidden and the status says `Can't undo — the data changed since.` |
 | No data, or nothing unlabeled | The header button is hidden. The panel shows `Everything is labeled ✓`. |
 

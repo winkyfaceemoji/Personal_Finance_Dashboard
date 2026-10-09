@@ -158,10 +158,44 @@ def test_two_row_ok_group_starts_ticked(appmod):
     assert "only one transaction" not in note
 
 
+def _render(appmod, kept_sub=None, kept_rem=None, kept_open=None, toggles=None):
+    """render_label_list with optional card state as the browser would send it:
+    each kept_* is {group_key: value}; toggles is {group_key: summary n_clicks}."""
+    def _state(kind, kept):
+        kept = kept or {}
+        return list(kept.values()), [{"type": kind, "group": k} for k in kept]
+    return appmod["render_label_list"]({"display": "block"}, 0, "todo", "all",
+                                       *_state("lbl-sub", kept_sub),
+                                       *_state("lbl-remember", kept_rem),
+                                       *_state("lbl-rows", kept_open),
+                                       *_state("lbl-rows-sum", toggles))
+
+
 def test_render_label_list_top_n(appmod):
-    children, summary = appmod["render_label_list"]({"display": "block"}, 0, "todo", "dark", "all")
+    children, summary = _render(appmod)
     assert 0 < len(children) <= appmod["LABEL_TOP_N"] + 1     # + the subcategory datalist
     assert "merchants" in summary
+
+
+def test_render_keeps_what_the_user_set_on_cards(appmod):
+    # Labeling one group re-renders the list; typed subcategories, Remember
+    # choices and opened row lists on the other cards must survive it
+    from Modules.labels import unlabeled_groups
+    g = next(x for x in unlabeled_groups(_live(appmod)["df"]) if not x["fallback"] and not x["mixed"])
+    # rendered closed, then the user clicked its summary once: now open
+    children, _ = _render(appmod, kept_sub={g["key"]: "Coffee"}, kept_rem={g["key"]: []},
+                          kept_open={g["key"]: False}, toggles={g["key"]: 1})
+    by_id = {str(c.id): c for c in _walk(children) if getattr(c, "id", None) is not None}
+    assert by_id[str({"type": "lbl-sub", "group": g["key"]})].value == "Coffee"
+    rem = by_id[str({"type": "lbl-remember", "group": g["key"]})]
+    assert rem.value == [] or rem.options[0]["disabled"]
+    assert by_id[str({"type": "lbl-rows", "group": g["key"]})].open is True
+
+
+def test_rules_view_pluralizes_matches(appmod):
+    texts = [c.children for c in _walk(appmod["_rules_view"]())
+             if isinstance(getattr(c, "children", None), str)]
+    assert not any("matches 1 rows" in t for t in texts)
 
 
 def _live(appmod):
