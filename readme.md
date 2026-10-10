@@ -137,7 +137,7 @@ The tests cover the week / month / year maths and run the full ingest on a tempo
 
 ## UI tour
 
-One page, driven by one control. The header shows your sources, how recent your data is (`data through Dec 26, 2025`, plus any account lagging behind), a notice when your newest transaction is over a week old, and a red note with the count and dollar size of unlabeled rows, with a **LABEL THEM →** button beside it. After an import, a second line says what the last import added (`31 new · 27 labeled · 4 need you`) with a **REVIEW →** button. The settings gear (top right) holds **DATA** (**IMPORT CSV** / **EXPORT CSV** for labeling, **RELOAD DATA** to re-run the ingest), **SOURCE** (**CHANGE DATA FOLDER**), and **THEME**.
+One page, driven by one control. The header shows your sources, how recent your data is (`data through Dec 26, 2025`, plus any account lagging behind), a notice when your newest transaction is over a week old, and a red note with the count and dollar size of unlabeled rows, with a **LABEL THEM →** button beside it. After an import, a second line says what the last import added (`31 new · 27 labeled · 4 need you`) with a **REVIEW →** button. The settings gear (top right) holds **DATA** (**IMPORT CSV** / **EXPORT CSV** for labeling, **RELOAD DATA** to re-run the ingest), **BUDGET** (one overall cap per month and/or per week), **SOURCE** (**CHANGE DATA FOLDER**), and **THEME**.
 
 ### Pick a period
 
@@ -149,6 +149,7 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 |------|---------------|
 | STAT CARDS | Spent, income, net, and savings rate for the period — each vs the previous period and vs your **typical** period (median of the last 12 weeks/months, or of earlier years). While a period is still in progress they read *so far* and compare against the same number of days of earlier periods |
 | PACE | (in-progress periods) Spending so far against what you typically spend by this point, and a typical full period — `$782 over your typical pace` |
+| BUDGET | (when set in Settings) Spending against your weekly or monthly cap — `$2,180 left · $436/day for 5 days`, or how far ahead of an even pace / over budget you are. The year view uses 12 × monthly |
 | SPENDING OVER TIME | A bar per week (last 26), month (last 24), or year (all), with a dashed typical line; the selected period is outlined and an in-progress one hatched. **Click a bar to open that period.** The title dropdown switches Expenses / Income / Net Cash Flow |
 | SPEND BY CATEGORY | Sorted bars for the selected period — top 9 categories + Other, with `$ · %`. Click a bar for its top merchants and largest transaction (click again to close) |
 | RECURRING CHARGES | Subscriptions, rent, utilities — merchants charging a steady amount monthly, quarterly or yearly (3+ times), with the latest charge and its cost per year. Stopped ones fold away under *Stopped* |

@@ -2,7 +2,7 @@
 type: Feature Doc
 title: Period view & charts
 description: The week / month / year period bar, stat cards, pace strip, spending-over-time chart, recurring charges, seasonality chart, and the page header.
-resource: app.py, Modules/transforms.py, Modules/recurring.py
+resource: app.py, Modules/transforms.py, Modules/recurring.py, Modules/budget.py
 updated: 2026-10-09
 ---
 
@@ -14,6 +14,7 @@ The dashboard answers two questions — **"am I on track?"** and **"where did th
 2. **Period bar** — `WEEK | MONTH | YEAR` pills and a `‹ period ›` stepper (sticky while scrolling)
 3. **Stat cards** — spent, income, net, savings rate for the selected period
 4. **Pace strip** — spending so far vs a typical period at the same point (in-progress periods only)
+   **Budget** — spending against your weekly / monthly cap (when one is set)
 5. **Spending over time** — one bar per week / month / year; click a bar to open that period
 6. **Spend by category** — for the selected period, with a click drilldown (see [category-breakdown.md](category-breakdown.md))
 7. **Recurring charges** — subscriptions, rent, utilities: what repeats, and what it costs a year
@@ -80,6 +81,18 @@ Four cards for the selected period. Each shows the value and two comparisons:
 **Delta colour means good or bad for that metric**, not merely up or down — more income is green, more spending is red. The % divides by `|prior|` so the arrow stays correct when the prior value was negative. A comparison shows `—` when either side is $0 (a ▲/▼100% against nothing describes missing data, not your money). Changes over +1000% are written as a multiple (`▲21×`).
 
 ---
+
+## Budget (`budget-strip`)
+
+One overall spending cap — no per-category budgets — set in **Settings ⚙ → BUDGET**: **PER MONTH $** and **PER WEEK $** (either may be left blank), **SAVE BUDGET**. They're stored in `SORTED/budget.json` next to the master, so they travel with the data folder; an unreadable file reads as "no budget". The **year** view uses 12 × the monthly budget.
+
+For the selected period, the card shows spent (Expense-labeled, the same number as the SPENT card) against the cap:
+
+- **in progress** — the marker is where an even pace through the period would be by today (`budget × days elapsed ÷ days in the period`); the status reads `$2,180 left · $436/day for 5 days`, or `$X ahead of budget pace` in red when spending is past the marker;
+- **finished** — `$X left` or `$X over budget`;
+- the card is hidden for a granularity with no budget.
+
+Budget logic lives in `Modules/budget.py` (`read_budget`, `save_budget`, `budget_for`, `budget_status`; tests in `tests/test_budget.py`).
 
 ## Pace strip (`pace-strip`)
 

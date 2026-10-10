@@ -558,3 +558,14 @@ def test_recurring_view(appmod):
     assert sub.startswith("1 active · $18,000 a year")
     text = str(children)
     assert "RENT CO" in text and "Stopped (1)" in text and "HULU" in text
+
+
+def test_budget_strip(appmod):
+    strip = appmod["budget_strip"]
+    c = appmod["_CHART"]["dark"]
+    s = {"cur": {"exp": 800.0}, "partial": True, "days_elapsed": 10, "days_total": 30}
+    assert strip(None, s, "month", c) == []                       # no budget, no card
+    text = str(strip(3000.0, s, "month", c))
+    assert "BUDGET" in text and "$2,200 left" in text and "/day" in text
+    s_over = {"cur": {"exp": 3200.0}, "partial": False, "days_elapsed": 30, "days_total": 30}
+    assert "$200 over budget" in str(strip(3000.0, s_over, "month", c))

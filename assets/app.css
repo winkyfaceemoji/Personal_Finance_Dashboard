@@ -251,3 +251,8 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .rc-year { flex: 0 0 110px; text-align: right; color: var(--subtext); }
 .rc-last { flex: 0 0 130px; text-align: right; color: var(--subtext); font-size: 11px; }
 @media (max-width: 640px) { .rc-amt, .rc-year, .rc-last { flex-basis: auto; text-align: left; } }
+
+/* ── Budget inputs (settings menu) ──────────────────────────────────────── */
+.budget-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.budget-field .hint { font-size: 9px; letter-spacing: 1px; }
+.budget-input { width: 100%; box-sizing: border-box; padding: 6px 10px; font-size: 12px; }
