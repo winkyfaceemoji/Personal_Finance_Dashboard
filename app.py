@@ -16,6 +16,7 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
+from Modules.budget import budget_for, budget_status, read_budget, save_budget
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
@@ -253,6 +254,47 @@ def skipped_text(skipped: list[tuple[str, str]]) -> str:
             f"{shown}{more}. Their transactions are missing from every total.")
 
 
+def budget_strip(budget: float | None, s: dict, freq: str, c: dict) -> list:
+    """The budget card for the selected period: spent against the cap, and —
+    while the period is in progress — against an even pace through it (the
+    marker), with what's left per remaining day. Nothing without a budget."""
+    if not budget:
+        return []
+    b = budget_status(s["cur"]["exp"], budget, s["days_elapsed"], s["days_total"], s["partial"])
+    noun = FREQ_NOUN[freq]
+    if b["over"]:
+        status, bad = f"{_dollar0(-b['left'])} over budget", True
+    elif b["over_pace"]:
+        status, bad = (f"{_dollar0(b['spent'] - b['by_now'])} ahead of budget pace · "
+                       f"{_dollar0(b['left'])} left"), True
+    else:
+        status, bad = f"{_dollar0(b['left'])} left", False
+        if b["per_day_left"] is not None:
+            status += (f" · {_dollar0(b['per_day_left'])}/day for {b['days_left']} "
+                       f"day{'s' if b['days_left'] != 1 else ''}")
+    colour = c["accent2"] if bad else c["accent3"]
+    scale = max(budget, b["spent"]) or 1
+    track = [html.Div(className="pace-fill",
+                      style={"width": f"{min(b['spent'] / scale, 1) * 100:.1f}%", "background": colour})]
+    legend = [html.Span(f"Spent {_dollar0(b['spent'])}")]
+    if b["by_now"] is not None:
+        track.append(html.Div(className="pace-marker", title="Budget used by now at an even pace",
+                              style={"left": f"{min(b['by_now'] / scale, 1) * 100:.1f}%"}))
+        legend.append(html.Span(f"│ even pace by now {_dollar0(b['by_now'])}"))
+    legend.append(html.Span(f"{noun} budget {_dollar0(budget)}"
+                            + (" (12 × monthly)" if freq == "year" else "")))
+    return [
+        html.Div(className="pace-head", children=[
+            html.Div([html.Div(f"BUDGET · {noun.upper()}", className="app-label"),
+                      html.Div("spending this period against your cap — set it in Settings ⚙",
+                               className="hint")]),
+            html.Div(status, className="pace-status", style={"color": colour}),
+        ]),
+        html.Div(className="pace-track", children=track),
+        html.Div(className="pace-legend", children=legend),
+    ]
+
+
 def recurring_view(items: list[dict]) -> tuple[list, str]:
     """(rows for the RECURRING CHARGES card, its subtitle). Active charges
     first; ones that stopped are folded away — still worth a glance when a
@@ -467,6 +509,22 @@ app.layout = html.Div(
                     dcc.Download(id="export-csv-download"),
                     _settings_button("RELOAD DATA", "reload-data-btn"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
+                    html.Div("BUDGET", className="settings-label"),
+                    html.Div(className="settings-row", children=[
+                        html.Label(className="budget-field", children=[
+                            html.Span("PER MONTH $", className="hint"),
+                            dcc.Input(id="budget-month", type="number", min=0, step=1, debounce=False,
+                                      placeholder="none", className="setup-input budget-input"),
+                        ]),
+                        html.Label(className="budget-field", children=[
+                            html.Span("PER WEEK $", className="hint"),
+                            dcc.Input(id="budget-week", type="number", min=0, step=1, debounce=False,
+                                      placeholder="none", className="setup-input budget-input"),
+                        ]),
+                    ]),
+                    _settings_button("SAVE BUDGET", "save-budget-btn"),
+                    html.Span(id="budget-save-status", className="settings-status"),
+                    html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
@@ -523,6 +581,8 @@ app.layout = html.Div(
 
         # Pace: spending so far vs typical by this point (in-progress periods only)
         html.Div(id="pace-strip", className="app-card pace-card"),
+        # ── Budget: one overall cap for the week / month (year = 12 months) ──
+        html.Div(id="budget-strip", className="app-card pace-card"),
 
         # ── Spending over time: one bar per week / month / year ───────────────
         card([
@@ -985,6 +1045,45 @@ def update_skipped_note(_refresh):
     return skipped_text(read_skipped(MASTER_PATH)) if MASTER_PATH else ""
 
 
+# ── Budget settings ───────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("budget-month", "value"),
+    Output("budget-week",  "value"),
+    Input("refresh-trigger", "data"),
+)
+def load_budget_inputs(_refresh):
+    b = read_budget(MASTER_PATH) if MASTER_PATH else {"week": None, "month": None}
+    return b["month"], b["week"]
+
+
+@app.callback(
+    Output("budget-save-status", "children"),
+    Output("refresh-trigger",    "data", allow_duplicate=True),
+    Input("save-budget-btn", "n_clicks"),
+    State("budget-month", "value"),
+    State("budget-week",  "value"),
+    State("refresh-trigger", "data"),
+    prevent_initial_call=True,
+)
+def save_budget_click(n_clicks, month, week, trigger):
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+    if not MASTER_PATH:
+        return "⚠ Choose a data folder first.", dash.no_update
+    try:
+        save_budget(MASTER_PATH, week=week, month=month)
+    except ValueError:
+        return "⚠ A budget must be a positive amount (leave it blank for none).", dash.no_update
+    except OSError as e:
+        return f"⚠ Couldn't save the budget ({e}).", dash.no_update
+    b = read_budget(MASTER_PATH)
+    parts = [f"{_dollar0(b['month'])}/month" if b["month"] else None,
+             f"{_dollar0(b['week'])}/week" if b["week"] else None]
+    saved = " · ".join(p for p in parts if p) or "no budget"
+    return f"Budget saved: {saved}", (trigger or 0) + 1
+
+
 # ── Period navigation ─────────────────────────────────────────────────────────
 
 @app.callback(
@@ -1094,6 +1193,7 @@ def _stat_card(title, value, lines):
 @app.callback(
     Output("period-stats", "children"),
     Output("pace-strip",   "children"),
+    Output("budget-strip", "children"),
     Input("period-store",  "data"),
     Input("theme-store",   "data"),
     Input("refresh-trigger", "data"),
@@ -1203,7 +1303,8 @@ def update_stats(store, theme, _refresh):
                 html.Div(f"PACE · DAY {s['days_elapsed']} OF {s['days_total']}", className="app-label"),
                 html.Div(f"Not enough history yet to compare this {noun} against.", className="hint"),
             ])]
-    return cards, pace
+    budget = budget_for(read_budget(MASTER_PATH), freq) if MASTER_PATH else None
+    return cards, pace, budget_strip(budget, s, freq, c)
 
 
 # ── Spending over time ────────────────────────────────────────────────────────
