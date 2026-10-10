@@ -16,9 +16,9 @@ The app is a single page — there is no transactions tab or table. Unlabeled ro
 
 **IMPORT CSV** and **EXPORT CSV** live in the settings menu (gear icon), under the **DATA** section alongside **RELOAD DATA**. An import status message appears at the bottom of the menu after an upload.
 
-### Unlabeled-rows note (`unlabeled-note`)
+### Unlabeled rows in the attention line (`att-unlabeled`)
 
-All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. A red note on its own line in the page header shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app — with their absolute dollar size and how to fix it — e.g. `⚠ 562 of 1,343 transactions ($152,346) are unlabeled and not counted.` The **LABEL THEM →** button beside it opens the [labeling panel](labeling-panel.md), the quickest way to clear them; Export CSV → Import CSV remains for bulk edits. Transfer rows are not counted here since ignoring them is intentional. The note hides itself when everything is labeled, and refreshes after imports/reloads.
+All totals are label-based: a row only counts as an expense or income if its `master_category` is `Expense` or `Income`. The header's red attention line shows how many rows in the whole dataset have no valid label (blank or anything outside `Expense` / `Income` / `Transfer`) and are therefore ignored by every number in the app, with their absolute dollar size — e.g. `⚠ 562 unlabeled ($152,346) not counted`. The **LABEL →** button beside it opens the [labeling panel](labeling-panel.md), the quickest way to clear them; Export CSV → Import CSV remains for bulk edits. Transfer rows are not counted here since ignoring them is intentional. The item hides itself when everything is labeled, and refreshes after imports/reloads.
 
 ---
 

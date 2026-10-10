@@ -110,4 +110,10 @@ The TRANSFER PAIRS tab pairs an exact opposite amount on another account within 
 
 **Why:** a wrong pair mislabels real spending as Transfer, which silently removes it from every total — worse than leaving it unlabeled, where it is at least counted as unreviewed. Exact amounts, different accounts and a short window make coincidences rare; refusing ambiguous matches removes the rest. The cost is that some real transfers (two equal payments the same week) stay for the merchant list. The same certain matches with a side already labeled Expense or Income are *flagged*, never changed: relabeling one is an explicit click (the only place the panel overwrites a label), and NOT A TRANSFER silences a pair for good.
 
+## One high-level page: spending vs typical, no budget
+
+The page answers one question at the top — this period's spending against a typical one — then shows spent / income / net, the spending-over-time and category charts, and folds recurring charges under **More**. Warnings collapse into one red attention line that only appears when something fires. The headline says **Can't say yet** instead of a verdict when the period holds data over 14 days old or over 10% of its money out is unlabeled. Budget tracking, the savings-rate card, the vs-previous comparisons and the seasonality chart were removed.
+
+**Why:** chosen by the user after a council review of a simplification plan. Two strips that disagreed (red "over your typical pace", green "on track for budget") made the page say two things at once; the user tracks budgets on their own and wants the dashboard to show total spending, so "typical" is the only reference. A verdict over stale or largely unlabeled data is confidently wrong, so it is blocked rather than flagged — the trade-off is that a messy ledger shows *Can't say yet* often until it is labeled. Seasonality was cut for simplicity; note that "typical" is a 12-period median, so a month that is always expensive (December) will read as over typical.
+
 > New load-bearing decision? Add it here with the *why* — future-you will want the reasoning, not just the outcome.

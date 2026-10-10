@@ -24,12 +24,15 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 }
 .wordmark .accent { color: var(--accent); }
 .header-meta { color: var(--subtext); font-size: 12px; margin-top: 8px; }
-.notice { font-size: 12px; margin-top: 4px; color: var(--subtext); }
-.notice:empty { display: none; }
+/* The attention line: everything that needs you, in red, one line that wraps */
+.attention {
+    flex-wrap: wrap; align-items: center; gap: 6px 18px;
+    font-size: 12px; margin-top: 8px; color: var(--accent2);
+}
+.attention-item::before { content: "⚠ "; }
+.attention-item:empty { display: none; }
+.attention .btn-small { padding: 2px 8px; font-size: 10px; margin-left: 8px; }
 .warn-text { color: var(--accent2); }
-.notice-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.notice-row .notice { margin: 4px 0 0; }
-.notice-row .btn-small { padding: 3px 10px; font-size: 10px; margin-top: 4px; }
 
 /* ── Period bar (sticky: it drives everything below it) ─────────────────── */
 .period-bar {
@@ -105,11 +108,13 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 .delta-good { color: var(--accent3); font-weight: 600; }
 .delta-bad  { color: var(--accent2); font-weight: 600; }
 
-/* ── Pace strip (shown while the selected period is still in progress) ──── */
-.pace-card { padding: 18px 20px; margin-bottom: 24px; }
-.pace-card:empty { display: none; }
-.pace-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.pace-status { font-size: 13px; font-weight: 600; }
+/* ── Headline: this period's spending against a typical one ────────────── */
+.pace-card { padding: 18px 20px; margin-bottom: 16px; }
+.headline-status {
+    font-family: "Syne", sans-serif; font-size: clamp(20px, 4vw, 26px); font-weight: 700;
+    line-height: 1.2; margin: 6px 0 10px;
+}
+.pace-card .btn-small { margin-top: 10px; }
 .pace-track { position: relative; height: 10px; border-radius: 5px; background: var(--border); margin: 6px 0 8px; }
 .pace-fill { height: 10px; border-radius: 5px; }
 .pace-marker {
@@ -252,7 +257,8 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .rc-last { flex: 0 0 130px; text-align: right; color: var(--subtext); font-size: 11px; }
 @media (max-width: 640px) { .rc-amt, .rc-year, .rc-last { flex-basis: auto; text-align: left; } }
 
-/* ── Budget inputs (settings menu) ──────────────────────────────────────── */
-.budget-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.budget-field .hint { font-size: 9px; letter-spacing: 1px; }
-.budget-input { width: 100%; box-sizing: border-box; padding: 6px 10px; font-size: 12px; }
+/* ── More (folded detail) ───────────────────────────────────────────────── */
+.more > summary {
+    cursor: pointer; font-size: 11px; letter-spacing: 2px; font-weight: 600; color: var(--label);
+}
+.more[open] > summary { margin-bottom: 16px; }
