@@ -569,3 +569,9 @@ def test_budget_strip(appmod):
     assert "BUDGET" in text and "$2,200 left" in text and "/day" in text
     s_over = {"cur": {"exp": 3200.0}, "partial": False, "days_elapsed": 30, "days_total": 30}
     assert "$200 over budget" in str(strip(3000.0, s_over, "month", c))
+
+
+def test_dollar_formatting_never_shows_negative_zero(appmod):
+    d, d0 = appmod["_dollar"], appmod["_dollar0"]
+    assert d(-0.0) == "$0.00" and d(-0.001) == "$0.00" and d0(-0.0) == "$0" and d0(-0.4) == "$0"
+    assert d(-12.5) == "-$12.50" and d0(-1234.6) == "-$1,235" and d(1234.5) == "$1,234.50"

@@ -195,10 +195,14 @@ def card(children, **kwargs):
 
 
 def _dollar(v: float) -> str:
+    # Round first (+ 0.0 turns -0.0 into 0.0): an empty period's spending is
+    # -0.0, and -0.001 rounds to zero — both must read "$0.00", not "$-0.00"
+    v = round(float(v), 2) + 0.0
     return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
 
 
 def _dollar0(v: float) -> str:
+    v = round(float(v)) + 0.0
     return f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
 
 
