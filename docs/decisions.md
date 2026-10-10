@@ -106,8 +106,8 @@ While a period is in progress (day 26 of 31), its comparisons use the same numbe
 
 ## Transfer pairs are suggested only when the match is certain
 
-The TRANSFER PAIRS tab pairs an exact opposite amount on another account within 5 days, and shows a pair only when neither row has any other candidate. Sides labeled Expense or Income are never touched; nothing is labeled without a click, and LABEL ALL covers only the pairs on screen.
+The TRANSFER PAIRS tab pairs an exact opposite amount on another account within 5 days, and shows a pair only when neither row has any other candidate. Sides labeled Expense or Income are never changed automatically; nothing is labeled without a click, and LABEL ALL covers only the pairs on screen.
 
-**Why:** a wrong pair mislabels real spending as Transfer, which silently removes it from every total — worse than leaving it unlabeled, where it is at least counted as unreviewed. Exact amounts, different accounts and a short window make coincidences rare; refusing ambiguous matches removes the rest. The cost is that some real transfers (two equal payments the same week) stay for the merchant list.
+**Why:** a wrong pair mislabels real spending as Transfer, which silently removes it from every total — worse than leaving it unlabeled, where it is at least counted as unreviewed. Exact amounts, different accounts and a short window make coincidences rare; refusing ambiguous matches removes the rest. The cost is that some real transfers (two equal payments the same week) stay for the merchant list. The same certain matches with a side already labeled Expense or Income are *flagged*, never changed: relabeling one is an explicit click (the only place the panel overwrites a label), and NOT A TRANSFER silences a pair for good.
 
 > New load-bearing decision? Add it here with the *why* — future-you will want the reasoning, not just the outcome.

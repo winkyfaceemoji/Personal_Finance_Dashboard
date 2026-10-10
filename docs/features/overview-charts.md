@@ -1,8 +1,8 @@
 ---
 type: Feature Doc
 title: Period view & charts
-description: The week / month / year period bar, stat cards, pace strip, spending-over-time chart, seasonality chart, and the page header.
-resource: app.py, Modules/transforms.py
+description: The week / month / year period bar, stat cards, pace strip, spending-over-time chart, recurring charges, seasonality chart, and the page header.
+resource: app.py, Modules/transforms.py, Modules/recurring.py, Modules/budget.py
 updated: 2026-10-09
 ---
 
@@ -14,9 +14,11 @@ The dashboard answers two questions — **"am I on track?"** and **"where did th
 2. **Period bar** — `WEEK | MONTH | YEAR` pills and a `‹ period ›` stepper (sticky while scrolling)
 3. **Stat cards** — spent, income, net, savings rate for the selected period
 4. **Pace strip** — spending so far vs a typical period at the same point (in-progress periods only)
+   **Budget** — spending against your weekly / monthly cap (when one is set)
 5. **Spending over time** — one bar per week / month / year; click a bar to open that period
 6. **Spend by category** — for the selected period, with a click drilldown (see [category-breakdown.md](category-breakdown.md))
-7. **Seasonality** — same-calendar-month lines, one per year
+7. **Recurring charges** — subscriptions, rent, utilities: what repeats, and what it costs a year
+8. **Seasonality** — same-calendar-month lines, one per year
 
 Each card has its own callback, so changing one control only recomputes what depends on it.
 
@@ -39,6 +41,7 @@ A period is **in progress** when it contains the newest transaction date and run
 - **Stale notice** (`stale-note`) — when the newest transaction is more than 7 days before today: *"No transactions in the last N days. Download newer statements…"*. Weekly tracking only works with fresh exports; this says so instead of showing an empty week.
 - **Unlabeled note** (`unlabeled-note`, red) — count **and dollar size** of rows with no valid label, which every total ignores (`⚠ 562 of 1,343 transactions ($152,346) are unlabeled and not counted.`). Beside it, the **`LABEL THEM →`** button (`open-label-panel`) opens the [labeling panel](labeling-panel.md); it hides when nothing is unlabeled. Labeling in bulk with Export → Excel → Import still works. See [import-export.md](import-export.md).
 - **Last-import line** (`last-import-note`) — what the most recent import added and how much of it still needs you: `Last import: 31 new · 27 labeled · 4 need you`, from `SORTED/last_import.csv`. The **`REVIEW →`** button (`open-label-review`) opens the panel filtered to those rows and shows only while some are unlabeled. Empty when no import has recorded new rows. See [labeling-panel.md](labeling-panel.md#the-last-import-last_importcsv).
+- **Transfer-check note** (`transfer-check-note`, red) — likely transfers between your own accounts labeled Expense or Income, and the dollars they wrongly add to totals; **CHECK →** opens the labeling panel's TRANSFER PAIRS tab. See [labeling-panel.md](labeling-panel.md#transfer-pairs).
 - **Skipped-files note** (`skipped-note`, red) — RAW files the last import couldn't use (unrecognised format, unreadable, malformed), with the reason; their transactions are missing from every total. Read from `SORTED/skipped_files.csv`. See [ingest-pipeline.md](ingest-pipeline.md).
 - **Orphan note** (`orphan-note`, red) — shown while some of your labels match no transaction; they're kept in `SORTED/orphaned_labels.csv` and re-attach automatically if the transactions return. See [ingest-pipeline.md](ingest-pipeline.md).
 
@@ -79,6 +82,18 @@ Four cards for the selected period. Each shows the value and two comparisons:
 
 ---
 
+## Budget (`budget-strip`)
+
+One overall spending cap — no per-category budgets — set in **Settings ⚙ → BUDGET**: **PER MONTH $** and **PER WEEK $** (either may be left blank), **SAVE BUDGET**. They're stored in `SORTED/budget.json` next to the master, so they travel with the data folder; an unreadable file reads as "no budget". The **year** view uses 12 × the monthly budget.
+
+For the selected period, the card shows spent (Expense-labeled, the same number as the SPENT card) against the cap:
+
+- **in progress** — the marker is where an even pace through the period would be by today (`budget × days elapsed ÷ days in the period`); the status reads `$2,180 left · $436/day for 5 days`, or `$X ahead of budget pace` in red when spending is past the marker;
+- **finished** — `$X left` or `$X over budget`;
+- the card is hidden for a granularity with no budget.
+
+Budget logic lives in `Modules/budget.py` (`read_budget`, `save_budget`, `budget_for`, `budget_status`; tests in `tests/test_budget.py`).
+
 ## Pace strip (`pace-strip`)
 
 Shown only while the selected period is in progress. One bar:
@@ -104,6 +119,21 @@ One bar per period at the selected granularity: the latest **26 weeks**, **24 mo
 Gap periods (no labeled transactions) appear as zero bars rather than disappearing, and count toward "typical".
 
 ---
+
+## Recurring charges (`recurring-list`)
+
+Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it:
+
+- on **3 or more days**, on a **monthly** (gaps of 20–40 days), **every 2 months** (50–70), **quarterly** (75–105), **every 6 months** (160–200) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
+- at a **steady amount** — at least 75% of charges within 25% of the median, so one price change or odd month doesn't hide it.
+
+Labeled **Expense** and **unlabeled** money out both count — except transfers: rows labeled Transfer or Income, unlabeled rows with transfer wording ("online transfer", "autopay", …), and either side of a likely transfer pair (a fixed monthly move to savings is not a subscription).
+
+Each row shows the merchant, cadence, the **latest charge near the typical amount** (prices change, but a one-off fee or prorated charge from the same payee isn't the subscription), the yearly cost (that × charges per year) and the last charge date. A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **Stopped (N)** — worth a glance when something you cancelled may still be billing. The subtitle totals the active ones per year.
+
+The card isn't tied to the period bar: a subscription is a standing commitment, judged over all your history. Yearly charges need three charges (about two years apart end to end) — two similar charges a year apart (the same trip twice) are too often a coincidence.
+
+**Known limits:** several subscriptions billed under one merchant name (Apple, Google, PayPal at different amounts and days) don't look steady or regular together, so they aren't found; neither is a subscription whose price jumped by more than 25% for half its history (an intro price ending).
 
 ## Seasonality (`seasonality-chart`)
 

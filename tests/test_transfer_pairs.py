@@ -1,6 +1,6 @@
 import pandas as pd
 
-from Modules.labels import TRANSFER_PAIR_DAYS, row_ids, transfer_pairs
+from Modules.labels import TRANSFER_PAIR_DAYS, label_rows, row_ids, suspect_transfers, transfer_pairs
 
 
 def _df(rows):
@@ -75,3 +75,80 @@ def test_biggest_first():
 
 def test_empty():
     assert transfer_pairs(_df([])) == []
+
+
+# ── Likely transfers labeled Expense / Income ─────────────────────────────────
+
+
+def test_card_payment_labeled_expense_is_suspect():
+    # The payment out of checking labeled Expense counts the card's purchases twice
+    df = _df([PAY_OUT[:5] + ("Expense",), PAY_IN[:5] + ("Transfer",)])
+    assert transfer_pairs(df) == []
+    s = suspect_transfers(df)
+    assert len(s) == 1
+    p = s[0]
+    assert p["out"]["label"] == "Expense" and p["in"]["label"] == "Transfer"
+    assert [r["row_id"] for r in p["to_fix"]] == [row_ids(df).iloc[0]]
+    assert p["counted"] == 500.0                     # dollars wrongly in totals
+
+
+def test_suspect_fixes_every_non_transfer_side():
+    df = _df([PAY_OUT[:5] + ("Expense",), PAY_IN[:5] + ("Income",)])
+    p = suspect_transfers(df)[0]
+    assert len(p["to_fix"]) == 2 and p["counted"] == 1000.0
+
+
+def test_suspects_need_a_labeled_side_and_a_certain_match():
+    assert suspect_transfers(_df([PAY_OUT, PAY_IN])) == []                     # plain pair, not suspect
+    assert suspect_transfers(_df([PAY_OUT[:5] + ("Transfer",), PAY_IN[:5] + ("Transfer",)])) == []
+    other_in = ("2025-03-05", "PAYMENT THANK YOU", 500.00, "Discover Credit", "", "")
+    assert suspect_transfers(_df([PAY_OUT[:5] + ("Expense",), PAY_IN, other_in])) == []   # ambiguous
+
+
+def test_label_rows_relabel_overwrites_only_the_named_row():
+    master = pd.DataFrame({
+        "date": ["2025-03-03", "2025-03-04"], "description": [PAY_OUT[1], "CAFE"],
+        "amount": [-500.0, -4.5], "source": ["Chase Debit", "Chase Debit"],
+        "card_last4": ["4823", "4823"], "master_category": ["Expense", "Expense"],
+        "sub_category": ["", ""],
+    })
+    row = {"date": pd.Timestamp("2025-03-03"), "description": PAY_OUT[1], "amount": -500.0,
+           "source": "Chase Debit", "card_last4": "4823", "count": 1}
+    _, n = label_rows(master, [row], "Transfer")                  # default: labeled rows are safe
+    assert n == 0
+    _, n = label_rows(master, [row], "Transfer", relabel_from={"Income"})   # label changed since
+    assert n == 0
+    out, n = label_rows(master, [row], "Transfer", relabel_from={"Expense"})
+    assert n == 1 and out["master_category"].tolist() == ["Transfer", "Expense"]
+
+
+def test_pair_lists_matches_the_separate_calls():
+    from Modules.labels import pair_lists
+    df = _df([PAY_OUT[:5] + ("Expense",), PAY_IN,
+              ("2025-04-01", "Payment to card", -20.0, "Chase Debit", "4823", ""),
+              ("2025-04-02", "PAYMENT THANK YOU", 20.0, "Discover Credit", "", "")])
+    assert pair_lists(df) == (transfer_pairs(df), suspect_transfers(df))
+
+
+def test_unreadable_dismissals_are_never_overwritten(tmp_path):
+    import pytest
+    from Modules.labels import add_not_transfer, not_transfer_keys
+    master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master.parent.mkdir()
+    bad = master.parent / "not_transfers.csv"
+    bad.write_text("Pair Key\nabc\n")                  # header changed by hand
+    assert not_transfer_keys(master) == set()
+    with pytest.raises(KeyError):
+        add_not_transfer(master, "new0000000")
+    assert bad.read_text() == "Pair Key\nabc\n"
+
+
+def test_not_a_transfer_is_remembered(tmp_path):
+    from Modules.labels import add_not_transfer, not_transfer_keys
+    master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master.parent.mkdir()
+    assert not_transfer_keys(master) == set()
+    add_not_transfer(master, "abc123def0")
+    add_not_transfer(master, "abc123def0")             # idempotent
+    add_not_transfer(master, "ffff000011")
+    assert not_transfer_keys(master) == {"abc123def0", "ffff000011"}
