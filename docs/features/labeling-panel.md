@@ -18,10 +18,11 @@ The decision record is in [decisions.md](../decisions.md#label-in-the-app-throug
 
 | Where | Button | Opens |
 |-------|--------|-------|
-| Header, next to the unlabeled note (`unlabeled-note`) | `LABEL THEM →` (`open-label-panel`) | every unlabeled row. Hidden when nothing is unlabeled |
-| Header, next to the last-import line (`last-import-note`) | `REVIEW →` (`open-label-review`) | only the rows the last import added (the summary adds `· from the last import`). Hidden unless some of those rows are still unlabeled |
+| Attention line, unlabeled item (`att-unlabeled`) | `LABEL →` (`open-label-panel`) | every unlabeled row. Hidden when nothing is unlabeled |
+| Headline, when *Can't say yet* is about unlabeled money | `LABEL THEM →` (`headline-label`) | every unlabeled row |
+| Attention line, last-import item (`att-review`) | `REVIEW →` (`open-label-review`) | only the rows the last import added (the summary adds `· from the last import`). Hidden unless some of those rows are still unlabeled |
 
-Both always open on the **TO LABEL** tab. **DONE** (`close-label-panel`) closes the panel and bumps `refresh-trigger`, so the stat cards, the header notes and every chart pick up what was labeled while it was open. The panel is `#label-panel`, fixed full-screen at z-index 90 (see [design.md](../design.md#layering)).
+These open on the **TO LABEL** tab (**CHECK →** opens TRANSFER PAIRS). **DONE** (`close-label-panel`) closes the panel and bumps `refresh-trigger`, so the headline, stat cards, attention line and every chart pick up what was labeled while it was open. The panel is `#label-panel`, fixed full-screen at z-index 90 (see [design.md](../design.md#layering)).
 
 The stat cards show what is still unlabeled in the period (`+ $292 unreviewed` under SPENT and INCOME) so the totals look incomplete rather than quietly short; see [overview-charts.md](overview-charts.md#stat-cards-period-stats).
 
@@ -144,7 +145,7 @@ A card payment shows up twice: money out of checking ("Payment to Chase card end
 
 A pair with a side already labeled **Expense or Income** isn't offered here — it's listed under **CHECK THESE** (below); a pair labeled Transfer on both sides has nothing to do. A pair with one side already Transfer offers **LABEL AS TRANSFER** for the other. Each card shows both rows (date, OUT/IN, account, description, current label, amount) with **LABEL BOTH TRANSFER**; **LABEL ALL N SHOWN** labels exactly the pairs on screen (at most 25; never pairs you haven't seen) in one write. Opened from **REVIEW →**, the tab and the TO LABEL hint count only pairs touching the last import's rows. Clicks are checked against the pair key (or, for LABEL ALL, a signature of the pairs shown) and go through the same locked write as every other label (`_write_labels`: count check, backup, atomic write) with the same **UNDO**. The TO LABEL summary says how many pairs were found.
 
-**Likely transfers labeled Expense or Income** (`suspect_transfers`). The same certain matches, but with a side labeled Expense or Income — most often a card payment labeled Expense, which counts every purchase on that card twice. They're listed first on the tab under **CHECK THESE**, and the header warns about them (`transfer-check-note`: *"⚠ 2 likely transfers between your accounts are labeled Expense or Income — $1,850 counted that probably shouldn't be."*) with **CHECK →**, which opens the panel on this tab. Each card offers:
+**Likely transfers labeled Expense or Income** (`suspect_transfers`). The same certain matches, but with a side labeled Expense or Income — most often a card payment labeled Expense, which counts every purchase on that card twice. They're listed first on the tab under **CHECK THESE**, and the header's attention line warns about them (`att-transfers`: *"⚠ 2 likely transfers between your accounts are labeled Expense or Income — $1,850 counted that probably shouldn't be."*) with **CHECK →**, which opens the panel on this tab. Each card offers:
 
 - **RELABEL AS TRANSFER** — overwrites every side not already Transfer (`label_rows(…, relabel_from={label shown})`, row by row: the one place the panel changes an existing label, only on this explicit click, and only if the label on disk is still the one on the card), through the same locked write and **UNDO**;
 - **NOT A TRANSFER** — keeps your labels and stops flagging the pair: its key goes into `SORTED/not_transfers.csv` (delete the file to see dismissed pairs again; a file that can't be read is never overwritten — the click says so). If the Expense label came from a `rules.csv` rule, relabeling fixes this row only; the rule will label the next statement's payment Expense again — check the RULES tab.

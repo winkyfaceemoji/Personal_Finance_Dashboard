@@ -16,7 +16,6 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
-from Modules.budget import budget_for, budget_status, read_budget, save_budget
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
@@ -25,8 +24,6 @@ from Modules.safety import (
 from Modules.transforms import (
     load_transactions,
     normalize_description,
-    monthly_expenses,
-    monthly_income,
     expenses_by_category,
     filter_period,
     period_label,
@@ -99,7 +96,7 @@ _CHART = {
         "text": "#ffffff", "subtext": "#8a8fa8", "label": "#e0e2f0",
         "accent": "#6c8aff", "accent2": "#ff6c8a", "accent3": "#6cffd4",
         "accent_weak": "rgba(108,138,255,0.18)", "on_accent": "#0a0a0f",
-        "muted_line": "#4a4f63", "overlay": "rgba(10,10,15,0.9)",
+        "overlay": "rgba(10,10,15,0.9)",
         "text_weak": "#c8cadb", "stroke_weak": "rgba(255,255,255,0.05)", "fill_active": "#2a2e3a",
         "shade_strong": "rgba(0,0,0,0.5)", "shade_weak": "rgba(0,0,0,0.3)",
     },
@@ -108,7 +105,7 @@ _CHART = {
         "text": "#0a0a0f", "subtext": "#5c5f72", "label": "#5c5f72",
         "accent": "#3d5bd9", "accent2": "#c42a4f", "accent3": "#067a58",
         "accent_weak": "rgba(61,91,217,0.12)", "on_accent": "#ffffff",
-        "muted_line": "#c3c7d6", "overlay": "rgba(255,255,255,0.9)",
+        "overlay": "rgba(255,255,255,0.9)",
         "text_weak": "#5c5f72", "stroke_weak": "rgba(0,0,0,0.05)", "fill_active": "#d0d2e0",
         "shade_strong": "rgba(0,0,0,0.2)", "shade_weak": "rgba(0,0,0,0.1)",
     },
@@ -189,6 +186,16 @@ loan or mortgage payment: Expense.
 
 FREQ_NOUN = {"week": "week", "month": "month", "year": "year"}
 
+# The headline won't call a period when the newest data is over STALE_DAYS
+# old (for the period holding it) or over UNLABELED_BLOCK of its money out is
+# unlabeled; nor before EARLY_SHARE of an in-progress period has passed, when
+# "typical by now" is a day or two of spending. Within IN_LINE_SHARE of
+# typical reads as in line.
+STALE_DAYS      = 14
+UNLABELED_BLOCK = 0.10
+EARLY_SHARE     = 0.15
+IN_LINE_SHARE   = 0.05
+
 
 def card(children, **kwargs):
     return html.Div(children, className="app-card", **kwargs)
@@ -230,13 +237,6 @@ def _selected_period(store) -> tuple[str, pd.Period]:
     return freq, (to_period(start, freq) if start else _period_bounds(freq)[1])
 
 
-def _prev_name(p: pd.Period, freq: str) -> str:
-    """How the previous period is named in a delta line."""
-    if freq == "week":
-        return "last week"
-    return period_label(p - 1, freq)
-
-
 def unreviewed_amounts(pdf: pd.DataFrame) -> tuple[float, float]:
     """Unlabeled money out and money in for a slice of rows — shown on the stat
     cards so incomplete totals look incomplete instead of quietly short."""
@@ -246,57 +246,132 @@ def unreviewed_amounts(pdf: pd.DataFrame) -> tuple[float, float]:
 
 
 def skipped_text(skipped: list[tuple[str, str]]) -> str:
-    """Header warning for RAW files the last import skipped. A new bank format
-    (or a changed export) is otherwise only a console line, while a whole
-    account's spending quietly drops out of every total."""
+    """Attention-line item for RAW files the last import skipped. A new bank
+    format (or a changed export) is otherwise only a console line, while a
+    whole account's spending quietly drops out of every total."""
     if not skipped:
         return ""
     n = len(skipped)
     shown = ", ".join(f"{f} ({why})" for f, why in skipped[:3])
     more = f", and {n - 3} more" if n > 3 else ""
-    return (f"⚠ {n} file{'s' if n != 1 else ''} in RAW {'weren' if n != 1 else 'wasn'}'t imported: "
-            f"{shown}{more}. Their transactions are missing from every total.")
+    return f"{n} RAW file{'s' if n != 1 else ''} not imported: {shown}{more}"
 
 
-def budget_strip(budget: float | None, s: dict, freq: str, c: dict) -> list:
-    """The budget card for the selected period: spent against the cap, and —
-    while the period is in progress — against an even pace through it (the
-    marker), with what's left per remaining day. Nothing without a budget."""
-    if not budget:
-        return []
-    b = budget_status(s["cur"]["exp"], budget, s["days_elapsed"], s["days_total"], s["partial"])
+def data_age(frame: pd.DataFrame, today=None) -> int | None:
+    """Days from the newest transaction to today (None without data)."""
+    dates = frame["date"].dropna()
+    if dates.empty:
+        return None
+    today = pd.Timestamp(today if today is not None else pd.Timestamp.today()).normalize()
+    return (today - dates.max().normalize()).days
+
+
+def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
+                    skipped: list[tuple[str, str]], today=None) -> dict[str, str]:
+    """
+    The header's one attention line, item by item — each "" when it doesn't
+    fire, so a healthy dashboard shows no line at all. unlabeled / review /
+    transfers each come with a button; other is what has no in-app fix.
+    """
+    u = unlabeled_summary(frame)
+    unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
+                 if u["count"] else "")
+    _, need = last_import_text(frame, import_ids)
+    review = f"{need} new from the last import need a label" if need else ""
+
+    other = []
+    age = data_age(frame, today)
+    if age is not None and age > STALE_DAYS:
+        other.append(f"no transactions in {age} days — add newer statements and reload")
+    if not frame.empty:
+        newest = frame["date"].max().normalize()
+        # A source lagging the newest by over a week: its recent spending is missing
+        other += [f"{src} only through {d:%b} {d.day}" for src, d in source_freshness(frame).items()
+                  if (newest - d.normalize()).days > 7]
+    if orphans:
+        other.append(f"{orphans} label{'s' if orphans != 1 else ''} match no transaction "
+                     f"(kept in SORTED/orphaned_labels.csv)")
+    if skipped:
+        other.append(skipped_text(skipped))
+    return {"unlabeled": unlabeled, "review": review,
+            "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
+
+
+def _track(spent: float, ref: float, colour: str, marker_title: str) -> html.Div:
+    """Spending as a bar, with the typical level as a marker. Refunds can push
+    a period's spending below zero; the bar then stays empty."""
+    scale = max(spent, ref, 0) * 1.05 or 1
+
+    def _pct(v):
+        return f"{min(max(v / scale, 0), 1) * 100:.1f}%"
+
+    return html.Div(className="pace-track", children=[
+        html.Div(className="pace-fill", style={"width": _pct(spent), "background": colour}),
+        html.Div(className="pace-marker", title=marker_title, style={"left": _pct(ref)}),
+    ])
+
+
+def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool]:
+    """
+    The one answer at the top: this period's spending against a typical one
+    (the median of earlier periods; while in progress, at the same point).
+
+    It refuses to answer when the data can't support one — the period holds
+    the newest data and that's over STALE_DAYS old, or over UNLABELED_BLOCK
+    of the money out is unlabeled. A confident verdict over missing data is
+    worse than none. health: {"current", "age", "as_of", "unlabeled_out",
+    "unlabeled_n"}. Returns (children, whether labeling is the fix).
+    """
     noun = FREQ_NOUN[freq]
-    if b["over"]:
-        status, bad = f"{_dollar0(-b['left'])} over budget", True
-    elif b["over_pace"]:
-        status, bad = (f"{_dollar0(b['spent'] - b['by_now'])} ahead of budget pace · "
-                       f"{_dollar0(b['left'])} left"), True
+    spent = s["cur"]["exp"]
+    title = (f"SPENDING · DAY {s['days_elapsed']} OF {s['days_total']}" if s["partial"]
+             else "SPENDING")
+
+    def _view(status, colour, legend, track=None):
+        return [
+            html.Div(title, className="app-label"),
+            html.Div(status, className="headline-status", style={"color": colour}),
+            track,
+            html.Div(className="pace-legend", children=[html.Span(t) for t in legend]),
+        ]
+
+    reasons = []
+    if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
+        d = health["as_of"]
+        reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
+    out_total = spent + health["unlabeled_out"]
+    unlabeled = out_total > 0 and health["unlabeled_out"] / out_total > UNLABELED_BLOCK
+    if unlabeled:
+        n = health["unlabeled_n"]
+        reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {noun}'s money out "
+                       f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
+    if reasons:
+        return _view("Can't say yet", c["accent2"], ["; ".join(reasons)]), unlabeled
+
+    typ, full = s["typical"], s["typical_full"]
+    if not typ or not full:
+        return _view(f"{_dollar0(spent)} spent", c["text"],
+                     [f"No earlier {noun}s to compare against yet"]), False
+    if s["partial"] and s["days_elapsed"] / s["days_total"] < EARLY_SHARE:
+        return _view(f"Too early to call — {_dollar0(spent)} so far", c["text"],
+                     [f"typical full {noun} {_dollar0(full['exp'])}"]), False
+
+    ref = typ["exp"]                   # the same point in a typical period, or a full one
+    diff = spent - ref
+    if abs(diff) <= max(1.0, IN_LINE_SHARE * ref):
+        status, colour = f"In line with a typical {noun}", c["accent3"]
     else:
-        status, bad = f"{_dollar0(b['left'])} left", False
-        if b["per_day_left"] is not None:
-            status += (f" · {_dollar0(b['per_day_left'])}/day for {b['days_left']} "
-                       f"day{'s' if b['days_left'] != 1 else ''}")
-    colour = c["accent2"] if bad else c["accent3"]
-    scale = max(budget, b["spent"]) or 1
-    track = [html.Div(className="pace-fill",
-                      style={"width": f"{min(b['spent'] / scale, 1) * 100:.1f}%", "background": colour})]
-    legend = [html.Span(f"Spent {_dollar0(b['spent'])}")]
-    if b["by_now"] is not None:
-        track.append(html.Div(className="pace-marker", title="Budget used by now at an even pace",
-                              style={"left": f"{min(b['by_now'] / scale, 1) * 100:.1f}%"}))
-        legend.append(html.Span(f"│ even pace by now {_dollar0(b['by_now'])}"))
-    legend.append(html.Span(f"{noun} budget {_dollar0(budget)}"
-                            + (" (12 × monthly)" if freq == "year" else "")))
-    return [
-        html.Div(className="pace-head", children=[
-            html.Div([html.Div(f"BUDGET · {noun.upper()}", className="app-label"),
-                      html.Div("spending this period against your cap — set it in Settings ⚙",
-                               className="hint")]),
-            html.Div(status, className="pace-status", style={"color": colour}),
-        ]),
-        html.Div(className="pace-track", children=track),
-        html.Div(className="pace-legend", children=legend),
-    ]
+        where = "your typical pace" if s["partial"] else f"a typical {noun}"
+        status = f"{_dollar0(abs(diff))} {'over' if diff > 0 else 'under'} {where}"
+        colour = c["accent2"] if diff > 0 else c["accent3"]
+    if s["partial"]:
+        legend = [f"Spent {_dollar0(spent)}", f"│ typical by now {_dollar0(ref)}",
+                  f"typical full {noun} {_dollar0(full['exp'])}"]
+        marker = "Typical spending by now"
+    else:
+        legend = [f"Spent {_dollar0(spent)}", f"│ typical {noun} {_dollar0(ref)}"]
+        marker = f"Typical {noun}"
+    return _view(status, colour, legend, _track(spent, ref, colour, marker)), False
 
 
 def recurring_view(items: list[dict]) -> tuple[list, str]:
@@ -323,8 +398,7 @@ def recurring_view(items: list[dict]) -> tuple[list, str]:
     if stopped:
         rows.append(html.Details(className="lg-rows", children=[
             html.Summary(f"Stopped ({len(stopped)})"), *[_row(r) for r in stopped]]))
-    sub = (f"{len(active)} active · {_dollar0(sum(r['yearly'] for r in active))} a year · "
-           f"same merchant, steady amount, regular schedule")
+    sub = f"{len(active)} active · {_dollar0(sum(r['yearly'] for r in active))} a year"
     return rows, sub
 
 
@@ -373,6 +447,13 @@ _HIDDEN          = {"display": "none"}
 _SHOWN_INLINE    = {"display": "inline-block"}
 
 _PILL_INPUT = {"display": "none"}
+
+
+def _attention_item(id_, button, button_id):
+    return html.Span(id=f"{id_}-item", className="attention-item", style=_HIDDEN, children=[
+        html.Span(id=id_),
+        html.Button(button, id=button_id, n_clicks=0, className="btn-secondary btn-small"),
+    ])
 
 
 def _settings_button(label, id_, **kwargs):
@@ -465,35 +546,19 @@ app.layout = html.Div(
         # Click-catcher behind the open settings menu (closes it)
         html.Div(id="settings-backdrop", n_clicks=0, style=_MENU_HIDDEN),
 
-        # ── Header: wordmark, data freshness, unlabeled note; gear top-right ──
+        # ── Header: wordmark, data freshness, attention line; gear top-right ──
         html.Div(className="app-header", children=[
             html.H1(["FINANCE ", html.Span("DASHBOARD", className="accent")], className="wordmark"),
             html.P(id="data-updated", className="header-meta"),
-            # Shown when the newest transaction is over a week old
-            html.P(id="stale-note", className="notice"),
-            # Unlabeled rows are ignored by every total — count, size, and the
-            # way in to label them
-            html.Div(className="notice-row", children=[
-                html.Span(id="unlabeled-note", className="notice warn-text"),
-                html.Button("LABEL THEM →", id="open-label-panel", n_clicks=0,
-                            className="btn-secondary btn-small", style=_HIDDEN),
+            # One red line for everything that needs you — shown only when
+            # something fires. Buttons stay in the layout (callbacks listen to
+            # them) and hide with their item.
+            html.Div(id="attention", className="attention", style=_HIDDEN, children=[
+                _attention_item("att-unlabeled", "LABEL →", "open-label-panel"),
+                _attention_item("att-review", "REVIEW →", "open-label-review"),
+                _attention_item("att-transfers", "CHECK →", "open-transfer-check"),
+                html.Span(id="att-other", className="attention-item"),
             ]),
-            # What the last import added, and how many still need a label
-            html.Div(className="notice-row", children=[
-                html.Span(id="last-import-note", className="notice"),
-                html.Button("REVIEW →", id="open-label-review", n_clicks=0,
-                            className="btn-secondary btn-small", style=_HIDDEN),
-            ]),
-            # Likely transfers labeled Expense / Income — counted when they shouldn't be
-            html.Div(className="notice-row", children=[
-                html.Span(id="transfer-check-note", className="notice warn-text"),
-                html.Button("CHECK →", id="open-transfer-check", n_clicks=0,
-                            className="btn-secondary btn-small", style=_HIDDEN),
-            ]),
-            # Labels the last rebuild couldn't place (kept in a side file)
-            html.P(id="orphan-note", className="notice warn-text"),
-            # RAW files the last import couldn't use — their money is missing
-            html.P(id="skipped-note", className="notice warn-text"),
 
             html.Div(id="settings-menu-wrapper", children=[
                 html.Button(html.Span(className="gear-icon"), id="settings-menu-btn",
@@ -512,22 +577,6 @@ app.layout = html.Div(
                     ]),
                     dcc.Download(id="export-csv-download"),
                     _settings_button("RELOAD DATA", "reload-data-btn"),
-                    html.Div(className="divider", style={"margin": "4px 0"}),
-                    html.Div("BUDGET", className="settings-label"),
-                    html.Div(className="settings-row", children=[
-                        html.Label(className="budget-field", children=[
-                            html.Span("PER MONTH $", className="hint"),
-                            dcc.Input(id="budget-month", type="number", min=0, step=1, debounce=False,
-                                      placeholder="none", className="setup-input budget-input"),
-                        ]),
-                        html.Label(className="budget-field", children=[
-                            html.Span("PER WEEK $", className="hint"),
-                            dcc.Input(id="budget-week", type="number", min=0, step=1, debounce=False,
-                                      placeholder="none", className="setup-input budget-input"),
-                        ]),
-                    ]),
-                    _settings_button("SAVE BUDGET", "save-budget-btn"),
-                    html.Span(id="budget-save-status", className="settings-status"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
@@ -580,13 +629,16 @@ app.layout = html.Div(
             ]),
         ]),
 
-        # ── Stat cards for the selected period ───────────────────────────────
-        html.Div(id="period-stats", className="stats-grid"),
 
-        # Pace: spending so far vs typical by this point (in-progress periods only)
-        html.Div(id="pace-strip", className="app-card pace-card"),
-        # ── Budget: one overall cap for the week / month (year = 12 months) ──
-        html.Div(id="budget-strip", className="app-card pace-card"),
+        # ── Headline: this period's spending against a typical one ───────────
+        html.Div(className="app-card pace-card", children=[
+            html.Div(id="headline"),
+            html.Button("LABEL THEM →", id="headline-label", n_clicks=0,
+                        className="btn-secondary btn-small", style=_HIDDEN),
+        ]),
+
+        # ── Spent / income / net for the selected period ─────────────────────
+        html.Div(id="period-stats", className="stats-grid"),
 
         # ── Spending over time: one bar per week / month / year ───────────────
         card([
@@ -605,7 +657,6 @@ app.layout = html.Div(
                     searchable=False,
                     style={"width": "190px"},
                 ),
-                html.Div(id="period-chart-range", className="hint"),
             ]),
             dcc.Graph(id="period-chart", config={"displayModeBar": False}),
         ]),
@@ -613,17 +664,15 @@ app.layout = html.Div(
         # ── Categories for the selected period, with click drilldown ─────────
         card([
             html.Div(className="card-head", children=[
-                html.Div([
-                    html.Div(id="category-title", className="app-label"),
-                    html.Div("click a bar to see its top merchants", className="hint"),
-                ]),
+                html.Div(id="category-title", className="app-label"),
             ]),
             dcc.Graph(id="category-chart", config={"displayModeBar": False}),
             html.Div(id="category-drilldown"),
         ]),
 
-        # ── Recurring charges: subscriptions, rent, utilities ────────────────
-        card([
+        # ── More: detail that isn't the high-level answer, folded away ───────
+        html.Details(className="app-card more", children=[
+            html.Summary("MORE"),
             html.Div(className="card-head", children=[
                 html.Div([
                     html.Div("RECURRING CHARGES", className="app-label"),
@@ -631,29 +680,6 @@ app.layout = html.Div(
                 ]),
             ]),
             html.Div(id="recurring-list"),
-        ]),
-
-        # ── Seasonality: same calendar month, year over year ─────────────────
-        card([
-            html.Div(className="card-head", children=[
-                html.Div([
-                    html.Div(id="seasonality-title", className="app-label"),
-                    html.Div("each line is a year · click a year in the legend to hide or show it",
-                             className="hint"),
-                ]),
-                dcc.RadioItems(
-                    id="seasonality-metric",
-                    className="pills",
-                    options=[
-                        {"label": "EXPENSES", "value": "expenses"},
-                        {"label": "INCOME",   "value": "income"},
-                    ],
-                    value="expenses",
-                    inline=True,
-                    inputStyle=_PILL_INPUT,
-                ),
-            ]),
-            dcc.Graph(id="seasonality-chart", config={"displayModeBar": False}),
         ]),
     ]
 )
@@ -978,114 +1004,36 @@ def toggle_settings_menu(*args):
 
 @app.callback(
     Output("data-updated", "children"),
-    Output("stale-note",   "children"),
     Input("refresh-trigger", "data"),
 )
 def update_data_note(_refresh):
     if df.empty:
-        return "No data loaded", ""
+        return "No data loaded"
     as_of = _as_of()
-    fresh = source_freshness(df)
-    parts = [f"{len(fresh)} source{'s' if len(fresh) != 1 else ''}: {', '.join(sorted(fresh.index))}",
-             f"data through {as_of:%b} {as_of.day}, {as_of.year}"]
-    # Name any source lagging the newest by over a week — its recent
-    # transactions are missing, so recent totals undercount
-    lagging = [f"{src} through {d:%b} {d.day}" for src, d in fresh.items()
-               if (as_of - d.normalize()).days > 7]
-    if lagging:
-        parts.append("behind: " + ", ".join(lagging))
+    return f"Data through {as_of:%b} {as_of.day}, {as_of.year}"
 
-    stale = ""
-    age = (pd.Timestamp.today().normalize() - as_of).days
-    if age > 7:
-        stale = (f"No transactions in the last {age} days. Download newer statements into "
-                 f"your RAW folder and use Settings → Reload data to track the current week.")
-    return " · ".join(parts), stale
+
+_ATTENTION_ITEMS = ("unlabeled", "review", "transfers")
 
 
 @app.callback(
-    Output("unlabeled-note",   "children"),
-    Output("open-label-panel", "style"),
+    Output("attention", "style"),
+    *[Output(f"att-{k}-item", "style") for k in _ATTENTION_ITEMS],
+    *[Output(f"att-{k}", "children") for k in _ATTENTION_ITEMS],
+    Output("att-other", "children"),
     Input("refresh-trigger", "data"),
 )
-def update_unlabeled_note(_refresh):
-    # Anything outside Expense / Income / Transfer (including blank) never
-    # reaches a total — Transfer is deliberate, the rest deserve a flag.
-    u = unlabeled_summary(df)
-    if u["count"] == 0:
-        return "", _HIDDEN
-    return (f"⚠ {u['count']:,} of {u['total']:,} transactions ({_dollar0(u['amount'])}) "
-            f"are unlabeled and not counted."), _SHOWN_INLINE
-
-
-@app.callback(
-    Output("last-import-note",  "children"),
-    Output("open-label-review", "style"),
-    Input("refresh-trigger", "data"),
-)
-def update_last_import_note(_refresh):
-    text, need = last_import_text(df, last_import_ids(MASTER_PATH))
-    return text, (_SHOWN_INLINE if need else _HIDDEN)
-
-
-@app.callback(
-    Output("orphan-note", "children"),
-    Input("refresh-trigger", "data"),
-)
-def update_orphan_note(_refresh):
-    n = orphan_count(MASTER_PATH) if MASTER_PATH else 0
-    if not n:
-        return ""
-    return (f"⚠ {n} label{'s' if n != 1 else ''} currently match no transaction. They're kept "
-            f"in SORTED/orphaned_labels.csv and re-attach automatically if those "
-            f"transactions come back in a later export.")
-
-
-@app.callback(
-    Output("skipped-note", "children"),
-    Input("refresh-trigger", "data"),
-)
-def update_skipped_note(_refresh):
-    return skipped_text(read_skipped(MASTER_PATH)) if MASTER_PATH else ""
-
-
-# ── Budget settings ───────────────────────────────────────────────────────────
-
-@app.callback(
-    Output("budget-month", "value"),
-    Output("budget-week",  "value"),
-    Input("refresh-trigger", "data"),
-)
-def load_budget_inputs(_refresh):
-    b = read_budget(MASTER_PATH) if MASTER_PATH else {"week": None, "month": None}
-    return b["month"], b["week"]
-
-
-@app.callback(
-    Output("budget-save-status", "children"),
-    Output("refresh-trigger",    "data", allow_duplicate=True),
-    Input("save-budget-btn", "n_clicks"),
-    State("budget-month", "value"),
-    State("budget-week",  "value"),
-    State("refresh-trigger", "data"),
-    prevent_initial_call=True,
-)
-def save_budget_click(n_clicks, month, week, trigger):
-    if not n_clicks:
-        return dash.no_update, dash.no_update
-    if not MASTER_PATH:
-        return "⚠ Choose a data folder first.", dash.no_update
-    try:
-        save_budget(MASTER_PATH, week=week, month=month)
-    except ValueError:
-        return "⚠ A budget must be a positive amount (leave it blank for none).", dash.no_update
-    except OSError as e:
-        return f"⚠ Couldn't save the budget ({e}).", dash.no_update
-    b = read_budget(MASTER_PATH)
-    parts = [f"{_dollar0(b['month'])}/month" if b["month"] else None,
-             f"{_dollar0(b['week'])}/week" if b["week"] else None]
-    saved = " · ".join(p for p in parts if p) or "no budget"
-    return f"Budget saved: {saved}", (trigger or 0) + 1
+def update_attention(_refresh):
+    parts = attention_parts(
+        df, _suspects(), last_import_ids(MASTER_PATH),
+        orphan_count(MASTER_PATH) if MASTER_PATH else 0,
+        read_skipped(MASTER_PATH) if MASTER_PATH else [],
+    )
+    shown = {"display": "flex"} if any(parts.values()) else _HIDDEN
+    return (shown,
+            *[_SHOWN_INLINE if parts[k] else _HIDDEN for k in _ATTENTION_ITEMS],
+            *[parts[k] for k in _ATTENTION_ITEMS],
+            parts["other"])
 
 
 # ── Period navigation ─────────────────────────────────────────────────────────
@@ -1144,9 +1092,7 @@ def update_period_header(store):
     start = p.start_time.normalize()
     end   = p.end_time.normalize()
     if start <= as_of < end:
-        day   = (as_of - start).days + 1
-        total = (end - start).days + 1
-        sub = f"in progress · data through {as_of:%b} {as_of.day} · day {day} of {total}"
+        sub = "in progress"
     elif p == last:
         sub = "latest complete " + FREQ_NOUN[freq]
     else:
@@ -1154,7 +1100,7 @@ def update_period_header(store):
     return period_label(p, freq), sub, p <= first, p >= last, p >= last
 
 
-# ── Stat cards + pace ─────────────────────────────────────────────────────────
+# ── Headline + stat cards ─────────────────────────────────────────────────────
 
 def _pct_delta(cur, prior):
     """Relative change, or None when either side is zero (a ▲/▼100% against
@@ -1194,10 +1140,17 @@ def _stat_card(title, value, lines):
     ])
 
 
+def _pair_row_ids() -> set:
+    """Rows on either side of a certain transfer pair. Unlabeled ones are
+    almost surely transfers, so they don't count as unreviewed spending —
+    an unlabeled card payment would otherwise look like a missing expense."""
+    return {r["row_id"] for p in _pair_lists()[0] for r in p["to_label"]}
+
+
 @app.callback(
-    Output("period-stats", "children"),
-    Output("pace-strip",   "children"),
-    Output("budget-strip", "children"),
+    Output("period-stats",   "children"),
+    Output("headline",       "children"),
+    Output("headline-label", "style"),
     Input("period-store",  "data"),
     Input("theme-store",   "data"),
     Input("refresh-trigger", "data"),
@@ -1206,8 +1159,9 @@ def update_stats(store, theme, _refresh):
     theme = theme if theme in _CHART else "dark"
     c = _CHART[theme]
     freq, p = _selected_period(store)
-    s = period_summary(df, freq, p, _as_of())
-    cur, prev, typ = s["cur"], s["prev"], s["typical"]
+    as_of = _as_of()
+    s = period_summary(df, freq, p, as_of)
+    cur, typ = s["cur"], s["typical"]
 
     n = s["n_typical"]
     lookback = TYPICAL_LOOKBACK[freq]
@@ -1215,38 +1169,16 @@ def update_stats(store, theme, _refresh):
         typ_tip = f"Median of the previous {n} {FREQ_NOUN[freq]}{'s' if n != 1 else ''}"
         if lookback:
             typ_tip += f" (looks back up to {lookback})"
-    else:
-        typ_tip = "No earlier periods in your data to compare against"
-    if s["partial"]:
-        prev_sfx = f"vs same point {_prev_name(p, freq)}" if freq == "week" else \
-                   f"vs same point in {_prev_name(p, freq)}"
-        typ_sfx  = "vs typical by now"
-        if n:
+        if s["partial"]:
             typ_tip += f", over their first {s['days_elapsed']} days"
     else:
-        prev_sfx = f"vs {_prev_name(p, freq)}"
-        typ_sfx  = f"vs typical {FREQ_NOUN[freq]}"
+        typ_tip = "No earlier periods in your data to compare against"
+    typ_sfx = "vs typical by now" if s["partial"] else f"vs typical {FREQ_NOUN[freq]}"
 
-    def _lines(key, higher_is_good):
-        return [
-            _delta_line(_pct_delta(cur[key], prev[key]) if prev else None, prev_sfx, higher_is_good),
-            _delta_line(_pct_delta(cur[key], typ[key]) if typ else None, typ_sfx, higher_is_good,
-                        tip=typ_tip),
-        ]
-
-    def _net_lines():
-        # Net often sits near zero or flips sign, where a % change explodes
-        # (▼9205%) — compare it in dollars instead
-        return [
-            _delta_line(cur["net"] - prev["net"] if prev else None, prev_sfx, True, unit="$"),
-            _delta_line(cur["net"] - typ["net"] if typ else None, typ_sfx, True, unit="$",
-                        tip=typ_tip),
-        ]
-
-    def _pt(a, b):
-        return a - b if a is not None and b is not None else None
-
-    out_unrev, in_unrev = unreviewed_amounts(filter_period(df, p))
+    rows = filter_period(df, p)
+    if not rows.empty:
+        rows = rows[~row_ids(rows).isin(_pair_row_ids())]
+    out_unrev, in_unrev = unreviewed_amounts(rows)
 
     def _unreviewed(amount):
         if amount < 0.5:
@@ -1255,67 +1187,31 @@ def update_stats(store, theme, _refresh):
                         title="Unlabeled transactions in this period — not counted above")
 
     so_far = " SO FAR" if s["partial"] else ""
+    # Spending's comparison is the headline; income and net carry their own
     cards = [
-        _stat_card("SPENT" + so_far,  _dollar(cur["exp"]), [*_lines("exp", False), _unreviewed(out_unrev)]),
-        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [*_lines("inc", True), _unreviewed(in_unrev)]),
-        _stat_card("NET" + so_far,    _dollar(cur["net"]), _net_lines()),
-        # Savings rate is already a percentage: compare in points, not %
-        _stat_card("SAVINGS RATE",
-                   f"{s['rate']:.0f}%" if s["rate"] is not None else "—",
-                   [_delta_line(_pt(s["rate"], s["prev_rate"]), prev_sfx, True, unit="pt"),
-                    _delta_line(_pt(s["rate"], s["typical_rate"]), typ_sfx, True, unit="pt",
-                                tip=typ_tip)]),
+        _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [_unreviewed(out_unrev)]),
+        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [
+            _delta_line(_pct_delta(cur["inc"], typ["inc"]) if typ else None, typ_sfx, True,
+                        tip=typ_tip),
+            _unreviewed(in_unrev)]),
+        # Net often sits near zero or flips sign, where a % change explodes
+        # (▼9205%) — compare it in dollars instead
+        _stat_card("NET" + so_far, _dollar(cur["net"]), [
+            _delta_line(cur["net"] - typ["net"] if typ else None, typ_sfx, True, unit="$",
+                        tip=typ_tip)]),
     ]
 
-    # ── Pace: only while the period is still in progress ──
-    pace = []
-    if s["partial"]:
-        spent   = cur["exp"]
-        by_now  = typ["exp"] if typ else None
-        full    = s["typical_full"]["exp"] if s["typical_full"] else None
-        noun    = FREQ_NOUN[freq]
-        if by_now is not None and full is not None:
-            diff   = spent - by_now
-            ahead  = diff > 0
-            status = (f"{_dollar0(abs(diff))} {'over' if ahead else 'under'} your typical pace"
-                      if abs(diff) >= 1 else "Right on your typical pace")
-            scale  = max(full, spent, by_now) * 1.05 or 1
-            fill_c = c["accent2"] if ahead else c["accent3"]
-            pace = [
-                html.Div(className="pace-head", children=[
-                    html.Div([html.Div(f"PACE · DAY {s['days_elapsed']} OF {s['days_total']}",
-                                       className="app-label"),
-                              html.Div(f"spending so far vs a typical {noun} at the same point",
-                                       className="hint")]),
-                    html.Div(status, className="pace-status",
-                             style={"color": fill_c}),
-                ]),
-                html.Div(className="pace-track", children=[
-                    html.Div(className="pace-fill",
-                             style={"width": f"{min(spent / scale, 1) * 100:.1f}%", "background": fill_c}),
-                    html.Div(className="pace-marker", title="Typical spending by now",
-                             style={"left": f"{min(by_now / scale, 1) * 100:.1f}%"}),
-                ]),
-                html.Div(className="pace-legend", children=[
-                    html.Span(f"Spent {_dollar0(spent)}"),
-                    html.Span(f"│ typical by now {_dollar0(by_now)}"),
-                    html.Span(f"typical full {noun} {_dollar0(full)}"),
-                ]),
-            ]
-        else:
-            pace = [html.Div(className="pace-head", children=[
-                html.Div(f"PACE · DAY {s['days_elapsed']} OF {s['days_total']}", className="app-label"),
-                html.Div(f"Not enough history yet to compare this {noun} against.", className="hint"),
-            ])]
-    budget = budget_for(read_budget(MASTER_PATH), freq) if MASTER_PATH else None
-    return cards, pace, budget_strip(budget, s, freq, c)
+    un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
+    health = {"current": p == to_period(as_of, freq), "age": data_age(df), "as_of": as_of,
+              "unlabeled_out": out_unrev, "unlabeled_n": int(len(un))}
+    headline, label_fix = headline_view(s, freq, health, c)
+    return cards, headline, (_SHOWN_INLINE if label_fix else _HIDDEN)
 
 
 # ── Spending over time ────────────────────────────────────────────────────────
 
 @app.callback(
-    Output("period-chart",       "figure"),
-    Output("period-chart-range", "children"),
+    Output("period-chart", "figure"),
     Input("period-store",    "data"),
     Input("cashflow-metric", "value"),
     Input("theme-store",     "data"),
@@ -1326,11 +1222,10 @@ def update_period_chart(store, metric, theme, _refresh):
     c      = _CHART[theme]
     metric = metric if metric in ("net", "expenses", "income") else "expenses"
     freq, p = _selected_period(store)
-    noun = FREQ_NOUN[freq]
 
     totals = period_totals(df, freq)
     if totals.empty:
-        return empty_figure("No transactions yet", theme, 300), ""
+        return empty_figure("No transactions yet", theme, 300)
 
     # Window: the latest N periods — or, when the selected period is older
     # than that, a window that keeps it on screen
@@ -1384,8 +1279,7 @@ def update_period_chart(store, metric, theme, _refresh):
     fig.update_layout(**chart_template(theme), height=300, showlegend=False, bargap=0.25)
     fig.update_xaxes(type="category", showgrid=False)
 
-    span = f"{len(win)} {noun}{'s' if len(win) != 1 else ''}"
-    return fig, f"{span} · click a bar to open that {noun}"
+    return fig
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -1593,68 +1487,6 @@ def update_recurring(_refresh):
     pairs, suspects = _pair_lists()
     transfer_ids = {s["row_id"] for p in pairs + suspects for s in (p["out"], p["in"])}
     return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids))
-
-
-# ── Seasonality ───────────────────────────────────────────────────────────────
-
-@app.callback(
-    Output("seasonality-chart", "figure"),
-    Output("seasonality-title", "children"),
-    Input("seasonality-metric", "value"),
-    Input("period-store",       "data"),
-    Input("theme-store",        "data"),
-    Input("refresh-trigger",    "data"),
-)
-def update_seasonality(metric, store, theme, _refresh):
-    import calendar
-    theme  = theme if theme in _CHART else "dark"
-    c      = _CHART[theme]
-    metric = metric if metric in ("expenses", "income") else "expenses"
-    metric_lbl = "EXPENSES" if metric == "expenses" else "INCOME"
-    title = f"{metric_lbl} BY CALENDAR MONTH"
-
-    if metric == "expenses":
-        series = monthly_expenses(df).rename(columns={"total_expenses": "val"})
-    else:
-        series = monthly_income(df).rename(columns={"total_income": "val"})
-    val_map   = {(int(m[:4]), int(m[5:7])): v for m, v in zip(series["month_str"], series["val"])}
-    years_all = sorted({yr for yr, _ in val_map})
-    if not years_all:
-        return empty_figure(f"No labeled {metric} yet", theme, 320), title
-
-    # The highlighted year follows the selected period
-    _, p = _selected_period(store)
-    hi_yr = p.start_time.year if p.start_time.year in years_all else years_all[-1]
-
-    x_lbls = [calendar.month_abbr[m_] for m_ in range(1, 13)]
-    fig = go.Figure()
-    # Highlighted year drawn last so it sits on top of the muted ones
-    for yr in [y for y in years_all if y != hi_yr] + [hi_yr]:
-        ys, cds = [], []
-        for m_ in range(1, 13):
-            v  = val_map.get((yr, m_))
-            pv = val_map.get((yr - 1, m_))
-            ys.append(v)
-            if v is not None and pv:
-                d = v - pv
-                cds.append(f"{'+' if d >= 0 else '-'}${abs(d):,.0f} "
-                           f"({'+' if d >= 0 else '-'}{abs(d / pv * 100):.0f}%) "
-                           f"vs {calendar.month_abbr[m_]} {yr - 1}")
-            else:
-                cds.append("")
-        is_hi = yr == hi_yr
-        fig.add_trace(go.Scatter(
-            x=x_lbls, y=ys, name=str(yr),
-            mode="lines+markers",
-            line=dict(color=c["accent"] if is_hi else c["muted_line"], width=3.5 if is_hi else 1.5),
-            marker=dict(size=8 if is_hi else 4),
-            legendrank=yr,  # legend stays chronological whatever the draw order
-            customdata=cds,
-            hovertemplate=("<b>%{x} " + str(yr) + "</b><br>"
-                           + metric_lbl.title() + ": $%{y:,.2f}<br>%{customdata}<extra></extra>"),
-        ))
-    fig.update_layout(**chart_template(theme), height=320)
-    return fig, title
 
 
 # ── Import / export / reload ──────────────────────────────────────────────────
@@ -1865,11 +1697,12 @@ def save_setup(n_clicks, path, trigger):
     Input("open-label-panel",  "n_clicks"),
     Input("open-label-review", "n_clicks"),
     Input("open-transfer-check", "n_clicks"),
+    Input("headline-label",    "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _check, _close, trigger):
+def toggle_label_panel(_open, _review, _check, _headline, _close, trigger):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
@@ -2219,16 +2052,6 @@ def fix_click(_clicks, version, filt):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return (dash.no_update,) * 4
     return _do_fix_suspect(dict(ctx.triggered_id), version, filt)
-
-
-@app.callback(
-    Output("transfer-check-note", "children"),
-    Output("open-transfer-check", "style"),
-    Input("refresh-trigger", "data"),
-)
-def update_transfer_check_note(_refresh):
-    text = transfer_check_text(_suspects())
-    return text, (_SHOWN_INLINE if text else _HIDDEN)
 
 
 @app.callback(
