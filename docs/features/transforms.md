@@ -111,7 +111,7 @@ Everything time-based in the dashboard goes through these. Granularities are nam
 | `period_totals(df, freq)` | One row per period from the first to the last transaction, **gap periods included as zeros**; columns `exp`, `inc`, `net` |
 | `previous_periods(p, freq, first)` | The periods "typical" is measured over: up to `TYPICAL_LOOKBACK` (12 weeks / 12 months / every year) before `p` |
 | `to_date_totals(df, p, days)` | Totals for the first `days` days of `p` — the like-for-like comparison for an in-progress period |
-| `period_summary(df, freq, p, as_of)` | Everything the stat cards and pace strip need — see below |
+| `period_summary(df, freq, p, as_of)` | Everything the headline and stat cards need — see below |
 
 `period_summary` treats `p` as **in progress** when it contains `as_of` (the newest transaction date) and runs past it. It returns:
 
@@ -127,8 +127,8 @@ Everything time-based in the dashboard goes through these. Granularities are nam
 
 | Function | Returns |
 |----------|---------|
-| `unlabeled_summary(df)` | `{"count", "total", "amount"}` — rows with no valid label (not Expense / Income / Transfer) and their absolute dollar size, for the header note |
-| `source_freshness(df)` | Newest transaction date per source, newest first — drives `data through …` and the `behind:` list |
+| `unlabeled_summary(df)` | `{"count", "total", "amount"}` — rows with no valid label (not Expense / Income / Transfer) and their absolute dollar size, for the attention line |
+| `source_freshness(df)` | Newest transaction date per source, newest first — drives the attention line's lagging-source item |
 
 ## Enumeration helpers
 

@@ -510,9 +510,9 @@ def test_skipped_files_text(appmod):
     text = appmod["skipped_text"]
     assert text([]) == ""
     one = text([("CapitalOne/CapitalOne_2026.csv", "unrecognized format")])
-    assert one.startswith("⚠ 1 file in RAW wasn't imported") and "CapitalOne_2026.csv (unrecognized format)" in one
+    assert one.startswith("1 RAW file not imported") and "CapitalOne_2026.csv (unrecognized format)" in one
     many = text([(f"f{i}.csv", "unrecognized format") for i in range(5)])
-    assert "5 files" in many and "and 2 more" in many and "f3.csv" not in many
+    assert "5 RAW files" in many and "and 2 more" in many and "f3.csv" not in many
 
 
 
@@ -560,12 +560,78 @@ def test_recurring_view(appmod):
     assert "RENT CO" in text and "Stopped (1)" in text and "HULU" in text
 
 
-def test_budget_strip(appmod):
-    strip = appmod["budget_strip"]
+def _summary(spent, typ=None, full=None, partial=False, day=31, days=31):
+    t = {"exp": typ} if typ is not None else None
+    f = {"exp": full if full is not None else typ} if typ is not None else None
+    return {"cur": {"exp": spent}, "typical": t, "typical_full": f,
+            "partial": partial, "days_elapsed": day, "days_total": days}
+
+
+_OK = {"current": True, "age": 3, "as_of": pd.Timestamp("2026-10-07"),
+       "unlabeled_out": 0.0, "unlabeled_n": 0}
+
+
+def test_headline_compares_with_typical(appmod):
+    view = appmod["headline_view"]
     c = appmod["_CHART"]["dark"]
-    s = {"cur": {"exp": 800.0}, "partial": True, "days_elapsed": 10, "days_total": 30}
-    assert strip(None, s, "month", c) == []                       # no budget, no card
-    text = str(strip(3000.0, s, "month", c))
-    assert "BUDGET" in text and "$2,200 left" in text and "/day" in text
-    s_over = {"cur": {"exp": 3200.0}, "partial": False, "days_elapsed": 30, "days_total": 30}
-    assert "$200 over budget" in str(strip(3000.0, s_over, "month", c))
+    over, fix = view(_summary(1400.0, 1000.0), "month", _OK, c)
+    assert "$400 over a typical month" in str(over) and not fix
+    assert "$300 under your typical pace" in str(view(
+        _summary(700.0, 1000.0, 2000.0, partial=True, day=15), "month", _OK, c)[0])
+    assert "In line with a typical month" in str(view(_summary(1030.0, 1000.0), "month", _OK, c)[0])
+    assert "No earlier months" in str(view(_summary(50.0), "month", _OK, c)[0])
+    early = str(view(_summary(80.0, 10.0, 2000.0, partial=True, day=2), "month", _OK, c)[0])
+    assert "Too early to call" in early and "over" not in early
+
+
+def test_headline_refuses_on_stale_or_unlabeled_data(appmod):
+    view = appmod["headline_view"]
+    c = appmod["_CHART"]["dark"]
+    s = _summary(1400.0, 1000.0)
+    stale = dict(_OK, age=40)
+    text, fix = view(s, "month", stale, c)
+    assert "Can't say yet" in str(text) and "40 days ago" in str(text) and not fix
+    # A past period isn't affected by how old the newest data is
+    assert "over a typical month" in str(view(s, "month", dict(stale, current=False), c)[0])
+    unlabeled = dict(_OK, unlabeled_out=200.0, unlabeled_n=7)       # 200 / 1600 > 10%
+    text, fix = view(s, "month", unlabeled, c)
+    assert "Can't say yet" in str(text) and "7 transactions" in str(text) and fix
+    a_little = dict(_OK, unlabeled_out=100.0, unlabeled_n=2)         # 100 / 1500 < 10%
+    assert "over a typical month" in str(view(s, "month", a_little, c)[0])
+
+
+def test_attention_line_is_silent_when_healthy(appmod):
+    parts = appmod["attention_parts"]
+    frame = pd.DataFrame({
+        "date": pd.to_datetime(["2026-10-01", "2026-10-05"]), "description": ["A", "B"],
+        "amount": [-5.0, -7.0], "source": ["Chase Debit", "Chase Credit"],
+        "card_last4": ["", ""], "master_category": ["Expense", "Expense"],
+    })
+    today = pd.Timestamp("2026-10-08")
+    assert not any(parts(frame, [], None, 0, [], today).values())
+    frame.loc[0, "master_category"] = ""
+    frame.loc[1, "date"] = pd.Timestamp("2026-10-20")
+    got = parts(frame, [], None, 2, [("x.csv", "unrecognized format")], pd.Timestamp("2026-11-30"))
+    assert got["unlabeled"] == "1 unlabeled ($5) not counted"
+    assert "no transactions in 41 days" in got["other"]
+    assert "Chase Debit only through Oct 1" in got["other"]
+    assert "2 labels match no transaction" in got["other"] and "x.csv" in got["other"]
+
+
+def test_every_callback_id_is_in_the_layout(appmod):
+    app = appmod["app"]
+    layout = {i for i in _ids(app.layout) if isinstance(i, str)}
+    used = set()
+    for key, cb in app.callback_map.items():
+        for dep in cb["inputs"] + cb.get("state", []):
+            used.add(dep["id"])
+        for out in key.lstrip(".").split("..."):
+            used.add(out.split(".")[0].split("@")[0])
+    used = {i for i in used if not i.startswith("{")}             # pattern-matching ids
+    assert used <= layout, used - layout
+
+
+def test_dollar_formatting_never_shows_negative_zero(appmod):
+    d, d0 = appmod["_dollar"], appmod["_dollar0"]
+    assert d(-0.0) == "$0.00" and d(-0.001) == "$0.00" and d0(-0.0) == "$0" and d0(-0.4) == "$0"
+    assert d(-12.5) == "-$12.50" and d0(-1234.6) == "-$1,235" and d(1234.5) == "$1,234.50"
