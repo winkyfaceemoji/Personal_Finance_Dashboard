@@ -14,8 +14,10 @@ from config import get_data_dir, get_master_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
-    transfer_pairs, TRANSFER_PAIR_DAYS,
+    TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
+from Modules.budget import budget_for, budget_status, read_budget, save_budget
+from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
     snapshot_master,
@@ -252,6 +254,76 @@ def skipped_text(skipped: list[tuple[str, str]]) -> str:
             f"{shown}{more}. Their transactions are missing from every total.")
 
 
+def budget_strip(budget: float | None, s: dict, freq: str, c: dict) -> list:
+    """The budget card for the selected period: spent against the cap, and —
+    while the period is in progress — against an even pace through it (the
+    marker), with what's left per remaining day. Nothing without a budget."""
+    if not budget:
+        return []
+    b = budget_status(s["cur"]["exp"], budget, s["days_elapsed"], s["days_total"], s["partial"])
+    noun = FREQ_NOUN[freq]
+    if b["over"]:
+        status, bad = f"{_dollar0(-b['left'])} over budget", True
+    elif b["over_pace"]:
+        status, bad = (f"{_dollar0(b['spent'] - b['by_now'])} ahead of budget pace · "
+                       f"{_dollar0(b['left'])} left"), True
+    else:
+        status, bad = f"{_dollar0(b['left'])} left", False
+        if b["per_day_left"] is not None:
+            status += (f" · {_dollar0(b['per_day_left'])}/day for {b['days_left']} "
+                       f"day{'s' if b['days_left'] != 1 else ''}")
+    colour = c["accent2"] if bad else c["accent3"]
+    scale = max(budget, b["spent"]) or 1
+    track = [html.Div(className="pace-fill",
+                      style={"width": f"{min(b['spent'] / scale, 1) * 100:.1f}%", "background": colour})]
+    legend = [html.Span(f"Spent {_dollar0(b['spent'])}")]
+    if b["by_now"] is not None:
+        track.append(html.Div(className="pace-marker", title="Budget used by now at an even pace",
+                              style={"left": f"{min(b['by_now'] / scale, 1) * 100:.1f}%"}))
+        legend.append(html.Span(f"│ even pace by now {_dollar0(b['by_now'])}"))
+    legend.append(html.Span(f"{noun} budget {_dollar0(budget)}"
+                            + (" (12 × monthly)" if freq == "year" else "")))
+    return [
+        html.Div(className="pace-head", children=[
+            html.Div([html.Div(f"BUDGET · {noun.upper()}", className="app-label"),
+                      html.Div("spending this period against your cap — set it in Settings ⚙",
+                               className="hint")]),
+            html.Div(status, className="pace-status", style={"color": colour}),
+        ]),
+        html.Div(className="pace-track", children=track),
+        html.Div(className="pace-legend", children=legend),
+    ]
+
+
+def recurring_view(items: list[dict]) -> tuple[list, str]:
+    """(rows for the RECURRING CHARGES card, its subtitle). Active charges
+    first; ones that stopped are folded away — still worth a glance when a
+    subscription you cancelled is still billing elsewhere."""
+    if not items:
+        return [html.Div("No regular charges found yet — a charge needs to repeat at least 3 times "
+                         "monthly, quarterly or yearly at a steady amount.", className="hint")], ""
+
+    def _row(r):
+        return html.Div(className="recurring-row", children=[
+            html.Span(r["merchant"], className="rc-name", title=f"{r['count']} charges since "
+                      f"{r['first']:%b} {r['first'].day}, {r['first'].year}"),
+            html.Span(r["cadence"], className="rc-cadence"),
+            html.Span(_dollar(r["amount"]), className="rc-amt"),
+            html.Span(f"{_dollar0(r['yearly'])} / yr", className="rc-year"),
+            html.Span(f"last {r['last']:%b} {r['last'].day}, {r['last'].year}", className="rc-last"),
+        ])
+
+    active = [r for r in items if r["active"]]
+    stopped = [r for r in items if not r["active"]]
+    rows = [_row(r) for r in active] or [html.Div("None active right now.", className="hint")]
+    if stopped:
+        rows.append(html.Details(className="lg-rows", children=[
+            html.Summary(f"Stopped ({len(stopped)})"), *[_row(r) for r in stopped]]))
+    sub = (f"{len(active)} active · {_dollar0(sum(r['yearly'] for r in active))} a year · "
+           f"same merchant, steady amount, regular schedule")
+    return rows, sub
+
+
 def last_import_text(frame: pd.DataFrame, ids) -> tuple[str, int]:
     """'Last import: 31 new · 27 labeled · 4 need you', and the need-you count."""
     if not ids:
@@ -408,6 +480,12 @@ app.layout = html.Div(
                 html.Button("REVIEW →", id="open-label-review", n_clicks=0,
                             className="btn-secondary btn-small", style=_HIDDEN),
             ]),
+            # Likely transfers labeled Expense / Income — counted when they shouldn't be
+            html.Div(className="notice-row", children=[
+                html.Span(id="transfer-check-note", className="notice warn-text"),
+                html.Button("CHECK →", id="open-transfer-check", n_clicks=0,
+                            className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
             # Labels the last rebuild couldn't place (kept in a side file)
             html.P(id="orphan-note", className="notice warn-text"),
             # RAW files the last import couldn't use — their money is missing
@@ -430,6 +508,22 @@ app.layout = html.Div(
                     ]),
                     dcc.Download(id="export-csv-download"),
                     _settings_button("RELOAD DATA", "reload-data-btn"),
+                    html.Div(className="divider", style={"margin": "4px 0"}),
+                    html.Div("BUDGET", className="settings-label"),
+                    html.Div(className="settings-row", children=[
+                        html.Label(className="budget-field", children=[
+                            html.Span("PER MONTH $", className="hint"),
+                            dcc.Input(id="budget-month", type="number", min=0, step=1, debounce=False,
+                                      placeholder="none", className="setup-input budget-input"),
+                        ]),
+                        html.Label(className="budget-field", children=[
+                            html.Span("PER WEEK $", className="hint"),
+                            dcc.Input(id="budget-week", type="number", min=0, step=1, debounce=False,
+                                      placeholder="none", className="setup-input budget-input"),
+                        ]),
+                    ]),
+                    _settings_button("SAVE BUDGET", "save-budget-btn"),
+                    html.Span(id="budget-save-status", className="settings-status"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
@@ -487,6 +581,8 @@ app.layout = html.Div(
 
         # Pace: spending so far vs typical by this point (in-progress periods only)
         html.Div(id="pace-strip", className="app-card pace-card"),
+        # ── Budget: one overall cap for the week / month (year = 12 months) ──
+        html.Div(id="budget-strip", className="app-card pace-card"),
 
         # ── Spending over time: one bar per week / month / year ───────────────
         card([
@@ -520,6 +616,17 @@ app.layout = html.Div(
             ]),
             dcc.Graph(id="category-chart", config={"displayModeBar": False}),
             html.Div(id="category-drilldown"),
+        ]),
+
+        # ── Recurring charges: subscriptions, rent, utilities ────────────────
+        card([
+            html.Div(className="card-head", children=[
+                html.Div([
+                    html.Div("RECURRING CHARGES", className="app-label"),
+                    html.Div(id="recurring-sub", className="hint"),
+                ]),
+            ]),
+            html.Div(id="recurring-list"),
         ]),
 
         # ── Seasonality: same calendar month, year over year ─────────────────
@@ -673,11 +780,22 @@ def _pair_card(p: dict):
     ])
 
 
+_PAIRS_CACHE: dict = {}
+
+
+def _pair_lists() -> tuple[list[dict], list[dict]]:
+    """(transfer_pairs, suspect_transfers) for the current df, computed once per
+    load: the header, the TO LABEL hint and the pairs tab all ask for them."""
+    if _PAIRS_CACHE.get("df") is not df:
+        _PAIRS_CACHE.update(df=df, lists=pair_lists(df))
+    return _PAIRS_CACHE["lists"]
+
+
 def _shown_pairs(filt) -> tuple[list[dict], int]:
     """(the pairs the TRANSFER PAIRS tab shows, how many exist). Opened from
     REVIEW, only pairs touching the last import's rows; at most LABEL_TOP_N,
     and LABEL ALL acts on exactly these — never on pairs the user didn't see."""
-    pairs = transfer_pairs(df)
+    pairs = _pair_lists()[0]
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     if only is not None:
         only = set(only)
@@ -685,16 +803,72 @@ def _shown_pairs(filt) -> tuple[list[dict], int]:
     return pairs[:LABEL_TOP_N], len(pairs)
 
 
+def _suspects(filt=None) -> list[dict]:
+    """Likely transfers labeled Expense/Income that the user hasn't dismissed
+    (REVIEW: only those touching the last import), biggest first."""
+    dismissed = not_transfer_keys(MASTER_PATH) if MASTER_PATH else set()
+    out = [p for p in _pair_lists()[1] if p["key"] not in dismissed]
+    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    if only is not None:
+        only = set(only)
+        out = [p for p in out if p["out"]["row_id"] in only or p["in"]["row_id"] in only]
+    return out
+
+
+def transfer_check_text(suspects: list[dict]) -> str:
+    """Header warning: money counted as spending or income that most likely
+    just moved between your own accounts."""
+    if not suspects:
+        return ""
+    n = len(suspects)
+    return (f"⚠ {n} likely transfer{'s' if n != 1 else ''} between your accounts "
+            f"{'are' if n != 1 else 'is'} labeled Expense or Income — "
+            f"{_dollar0(sum(p['counted'] for p in suspects))} counted that probably shouldn't be.")
+
+
+def _suspect_card(p: dict):
+    """A likely transfer labeled Expense/Income: fix it, or say it isn't one."""
+    return html.Div(className="app-card label-group", children=[
+        html.Div(className="lg-main", children=[
+            html.Div(className="lg-info", children=[
+                html.Span(f"{_dollar(p['amount'])} moved between your accounts?", className="lg-name"),
+                html.Div(f"{p['gap']} day{'s' if p['gap'] != 1 else ''} apart · "
+                         f"{_dollar0(p['counted'])} of it is in your totals", className="hint"),
+            ]),
+            html.Div(className="lg-buttons", children=[
+                html.Button("RELABEL AS TRANSFER",
+                            id={"type": "lbl-fix", "pair": p["key"], "act": "fix"}, n_clicks=0,
+                            className="btn-secondary btn-small suggested"),
+                html.Button("NOT A TRANSFER",
+                            id={"type": "lbl-fix", "pair": p["key"], "act": "dismiss"}, n_clicks=0,
+                            className="btn-secondary btn-small",
+                            title="Keep the labels and stop flagging this pair"),
+            ]),
+        ]),
+        _pair_side(p["out"], "OUT"),
+        _pair_side(p["in"], "IN"),
+    ])
+
+
 def _pairs_sig(pairs: list[dict]) -> str:
     """Signature of the whole pairs list, checked again when LABEL ALL is clicked."""
     return hashlib.sha1("|".join(p["key"] for p in pairs).encode()).hexdigest()[:10]
 
 
-def _pairs_view(pairs: list[dict]) -> list:
+def _pairs_view(pairs: list[dict], suspects: list[dict] | None = None) -> list:
+    suspects = suspects or []
+    check = [
+        html.Div("CHECK THESE — LABELED EXPENSE OR INCOME", className="settings-label"),
+        html.Div("Same amount out of one account and into another, but counted as spending or "
+                 "income. A card payment labeled Expense counts that card's purchases twice.",
+                 className="hint"),
+        *[_suspect_card(p) for p in suspects[:LABEL_TOP_N]],
+        html.Div("TO LABEL", className="settings-label", style={"marginTop": "20px"}),
+    ] if suspects else []
     if not pairs:
-        return [html.Div("No likely transfer pairs to label ✓", className="hint")]
+        return [*check, html.Div("No likely transfer pairs to label ✓", className="hint")]
     rows = sum(len(p["to_label"]) for p in pairs)
-    return [
+    return [*check,
         html.Div(className="label-status-row", children=[
             html.Span(f"The same amount left one of your accounts and arrived in another within "
                       f"{TRANSFER_PAIR_DAYS} days — a card payment or a move between your own accounts. "
@@ -871,6 +1045,45 @@ def update_skipped_note(_refresh):
     return skipped_text(read_skipped(MASTER_PATH)) if MASTER_PATH else ""
 
 
+# ── Budget settings ───────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("budget-month", "value"),
+    Output("budget-week",  "value"),
+    Input("refresh-trigger", "data"),
+)
+def load_budget_inputs(_refresh):
+    b = read_budget(MASTER_PATH) if MASTER_PATH else {"week": None, "month": None}
+    return b["month"], b["week"]
+
+
+@app.callback(
+    Output("budget-save-status", "children"),
+    Output("refresh-trigger",    "data", allow_duplicate=True),
+    Input("save-budget-btn", "n_clicks"),
+    State("budget-month", "value"),
+    State("budget-week",  "value"),
+    State("refresh-trigger", "data"),
+    prevent_initial_call=True,
+)
+def save_budget_click(n_clicks, month, week, trigger):
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+    if not MASTER_PATH:
+        return "⚠ Choose a data folder first.", dash.no_update
+    try:
+        save_budget(MASTER_PATH, week=week, month=month)
+    except ValueError:
+        return "⚠ A budget must be a positive amount (leave it blank for none).", dash.no_update
+    except OSError as e:
+        return f"⚠ Couldn't save the budget ({e}).", dash.no_update
+    b = read_budget(MASTER_PATH)
+    parts = [f"{_dollar0(b['month'])}/month" if b["month"] else None,
+             f"{_dollar0(b['week'])}/week" if b["week"] else None]
+    saved = " · ".join(p for p in parts if p) or "no budget"
+    return f"Budget saved: {saved}", (trigger or 0) + 1
+
+
 # ── Period navigation ─────────────────────────────────────────────────────────
 
 @app.callback(
@@ -980,6 +1193,7 @@ def _stat_card(title, value, lines):
 @app.callback(
     Output("period-stats", "children"),
     Output("pace-strip",   "children"),
+    Output("budget-strip", "children"),
     Input("period-store",  "data"),
     Input("theme-store",   "data"),
     Input("refresh-trigger", "data"),
@@ -1089,7 +1303,8 @@ def update_stats(store, theme, _refresh):
                 html.Div(f"PACE · DAY {s['days_elapsed']} OF {s['days_total']}", className="app-label"),
                 html.Div(f"Not enough history yet to compare this {noun} against.", className="hint"),
             ])]
-    return cards, pace
+    budget = budget_for(read_budget(MASTER_PATH), freq) if MASTER_PATH else None
+    return cards, pace, budget_strip(budget, s, freq, c)
 
 
 # ── Spending over time ────────────────────────────────────────────────────────
@@ -1358,6 +1573,22 @@ def category_drilldown(label, _theme, store):
     if cat_txns.empty:
         return []
     return _top_merchants_panel(cat_txns, f"{label.upper()}{scope_lbl}")
+
+
+# ── Recurring charges ─────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("recurring-list", "children"),
+    Output("recurring-sub",  "children"),
+    Input("refresh-trigger", "data"),
+)
+def update_recurring(_refresh):
+    # Not tied to the period bar: a subscription is a standing commitment,
+    # judged over all your history and "active" as of your newest data. The
+    # sides of likely transfers (a fixed monthly move to savings) aren't charges
+    pairs, suspects = _pair_lists()
+    transfer_ids = {s["row_id"] for p in pairs + suspects for s in (p["out"], p["in"])}
+    return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids))
 
 
 # ── Seasonality ───────────────────────────────────────────────────────────────
@@ -1629,18 +1860,20 @@ def save_setup(n_clicks, path, trigger):
     Output("refresh-trigger", "data", allow_duplicate=True),
     Input("open-label-panel",  "n_clicks"),
     Input("open-label-review", "n_clicks"),
+    Input("open-transfer-check", "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _close, trigger):
+def toggle_label_panel(_open, _review, _check, _close, trigger):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
         return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
     filt = "last" if ctx.triggered_id == "open-label-review" else "all"
+    tab = "pairs" if ctx.triggered_id == "open-transfer-check" else "todo"
     _snapshot_before_labeling()
-    return {"display": "block"}, filt, "todo", dash.no_update
+    return {"display": "block"}, filt, tab, dash.no_update
 
 
 def _snapshot_before_labeling() -> None:
@@ -1686,7 +1919,10 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             summary += " · from the last import"
         if n_pairs > len(shown):
             summary += f" · showing the top {len(shown)}"
-        return _pairs_view(shown), summary
+        suspects = _suspects(filt)
+        if suspects:
+            summary += f" · {len(suspects)} to check"
+        return _pairs_view(shown, suspects), summary
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
     groups = unlabeled_groups(df, only_row_ids=only)
     n_rows = sum(g["count"] for g in groups)
@@ -1732,16 +1968,29 @@ def _mtime(path) -> str:
     return str(Path(path).stat().st_mtime_ns) if path and Path(path).exists() else "0"
 
 
-def _write_labels(rows: list[dict], cat: str, sub: str = ""):
+def _write_labels(rows: list[dict], cat: str, sub: str = "", relabel: bool = False):
     """The master write every label action shares; call it holding MASTER_LOCK.
-    Labels exactly these rows (unlabeled ones only), backup first, atomic
-    write. Returns (rows labeled, backup), or None — with nothing written and
-    df reloaded — when the master no longer matches what the user saw.
-    PermissionError (file open in Excel) propagates: nothing was written."""
+    Labels exactly these rows — unlabeled ones only, or with relabel (an
+    explicit fix) each row whose label on disk is still the one shown (its
+    "label") — backup first, atomic write. Returns (rows labeled, backup), or
+    None — with nothing written and df reloaded — when the master no longer
+    matches what the user saw. PermissionError (file open in Excel)
+    propagates: nothing was written."""
     global df
     expected = sum(r["count"] for r in rows)
     master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
-    master, n = label_rows(master, rows, cat, sub)
+    if relabel:
+        # Row by row, each checked on its own: a combined count could hide one
+        # side matching nothing while another matches an unseen row
+        n = 0
+        for r in rows:
+            master, k = label_rows(master, [r], cat, sub, relabel_from={r["label"]} if r.get("label") else None)
+            if k != r["count"]:
+                n = -1
+                break
+            n += k
+    else:
+        master, n = label_rows(master, rows, cat, sub)
     if n != expected:
         # Something relabeled or removed these rows since the list was drawn —
         # write nothing rather than a partial label, and reload so the next
@@ -1908,6 +2157,74 @@ def pair_click(_clicks, version, filt):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return (dash.no_update,) * 4
     return _do_label_pairs(dict(ctx.triggered_id), version, filt)
+
+
+def _do_fix_suspect(trig: dict, version, filt=None):
+    """RELABEL AS TRANSFER: overwrite the Expense/Income side(s) of one likely
+    transfer — an explicit fix, so labeled rows are touched (relabel). NOT A
+    TRANSFER: remember the pair and stop flagging it; labels untouched.
+    Returns (status, undo, undo-button style, version), like _do_label."""
+    global df
+    bumped = (version or 0) + 1
+    stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
+    pair = next((p for p in _suspects(filt) if p["key"] == trig.get("pair")), None)
+    if pair is None:
+        return stale
+    if trig.get("act") == "dismiss":
+        try:
+            with MASTER_LOCK:
+                add_not_transfer(MASTER_PATH, pair["key"])
+        except PermissionError:
+            return ("⚠ SORTED/not_transfers.csv is open in another program (Excel?) — close it and try again.",
+                    dash.no_update, dash.no_update, dash.no_update)
+        except (OSError, KeyError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            # Never replace a file we can't read: that would undo every earlier dismissal
+            return ("⚠ SORTED/not_transfers.csv couldn't be read (edited by hand?) — fix or delete it "
+                    "and try again.", dash.no_update, dash.no_update, dash.no_update)
+        return "Kept as is — this pair won't be flagged again.", dash.no_update, dash.no_update, bumped
+    with MASTER_LOCK:
+        try:
+            written = _write_labels(pair["to_fix"], "Transfer", relabel=True)
+        except PermissionError:
+            return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+        if written is None:
+            return stale
+        n, backup = written
+        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
+                "rules_mtime": _mtime(RULES_PATH), "rule": None}
+    note = ""
+    try:
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except Exception:
+        note = " · couldn't reload the data — use RELOAD DATA"
+    return (f"Relabeled {n} row{'s' if n != 1 else ''} as Transfer "
+            f"({_dollar0(pair['counted'])} no longer counted)" + note, undo, _SHOWN_INLINE, bumped)
+
+
+@app.callback(
+    Output("label-status",   "children", allow_duplicate=True),
+    Output("label-undo",     "data",     allow_duplicate=True),
+    Output("label-undo-btn", "style",    allow_duplicate=True),
+    Output("label-version",  "data",     allow_duplicate=True),
+    Input({"type": "lbl-fix", "pair": ALL, "act": ALL}, "n_clicks"),
+    State("label-version", "data"),
+    State("label-filter",  "data"),
+    prevent_initial_call=True,
+)
+def fix_click(_clicks, version, filt):
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return (dash.no_update,) * 4
+    return _do_fix_suspect(dict(ctx.triggered_id), version, filt)
+
+
+@app.callback(
+    Output("transfer-check-note", "children"),
+    Output("open-transfer-check", "style"),
+    Input("refresh-trigger", "data"),
+)
+def update_transfer_check_note(_refresh):
+    text = transfer_check_text(_suspects())
+    return text, (_SHOWN_INLINE if text else _HIDDEN)
 
 
 @app.callback(

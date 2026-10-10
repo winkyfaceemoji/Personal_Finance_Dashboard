@@ -246,7 +246,7 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
 TRANSFER_PAIR_DAYS = 5
 
 
-def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list[dict]:
+def _certain_pairs(df: pd.DataFrame, max_days: int) -> list[dict]:
     """
     Likely transfers between your own accounts: one row out and one row in of
     exactly the same amount, on different accounts (source + card), within
@@ -255,11 +255,8 @@ def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list
 
     Only certain matches are returned: if either row has more than one
     candidate (two equal payments, identical twins) the pair is a guess and is
-    skipped. Pairs with a side labeled Expense or Income are left alone (the
-    user decided that), and pairs already labeled Transfer on both sides have
-    nothing to do. Each dict: key, out, in (row dicts like unlabeled_groups'),
-    amount, gap (days), to_label (the sides without a valid label).
-    Biggest first.
+    skipped. Each dict: key, out, in (row dicts like unlabeled_groups', plus
+    their current label), amount, gap (days). Biggest first.
     """
     if df.empty:
         return []
@@ -294,17 +291,52 @@ def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> list
     pairs = []
     for r in m.to_dict("records"):
         sides = [_side(r, "_o"), _side(r, "_i")]
-        labels = {s["label"] for s in sides}
-        if labels & {"Expense", "Income"} or labels == {"Transfer"}:
-            continue
         pairs.append({
             "key": hashlib.sha1((sides[0]["row_id"] + sides[1]["row_id"]).encode()).hexdigest()[:10],
             "out": sides[0], "in": sides[1],
             "amount": abs(sides[0]["amount"]),
             "gap": int(abs((sides[1]["date"] - sides[0]["date"]).days)),
-            "to_label": [s for s in sides if not s["label"]],
         })
     return sorted(pairs, key=lambda p: (p["amount"], p["out"]["date"]), reverse=True)
+
+
+def transfer_pairs(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS,
+                   _certain: list[dict] | None = None) -> list[dict]:
+    """Certain pairs (see _certain_pairs) with something to label: no side
+    labeled Expense or Income (that's suspect_transfers' list), not Transfer on
+    both sides already. Adds to_label: the sides without a valid label."""
+    out = []
+    for p in (_certain if _certain is not None else _certain_pairs(df, max_days)):
+        labels = {p["out"]["label"], p["in"]["label"]}
+        if labels & {"Expense", "Income"} or labels == {"Transfer"}:
+            continue
+        out.append({**p, "to_label": [s for s in (p["out"], p["in"]) if not s["label"]]})
+    return out
+
+
+def pair_lists(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS) -> tuple[list[dict], list[dict]]:
+    """(transfer_pairs, suspect_transfers) from a single matching pass."""
+    certain = _certain_pairs(df, max_days)
+    return transfer_pairs(df, max_days, certain), suspect_transfers(df, max_days, certain)
+
+
+def suspect_transfers(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS,
+                      _certain: list[dict] | None = None) -> list[dict]:
+    """
+    Certain pairs with a side labeled Expense or Income — most likely a card
+    payment or a move between your own accounts that is being counted as
+    spending or income (a card payment labeled Expense counts every purchase
+    on that card twice). Adds to_fix (every side not already Transfer) and
+    counted (the dollars those sides put into totals).
+    """
+    out = []
+    for p in (_certain if _certain is not None else _certain_pairs(df, max_days)):
+        if not {p["out"]["label"], p["in"]["label"]} & {"Expense", "Income"}:
+            continue
+        fix = [s for s in (p["out"], p["in"]) if s["label"] != "Transfer"]
+        counted = sum(abs(s["amount"]) for s in fix if s["label"] in ("Expense", "Income"))
+        out.append({**p, "to_fix": fix, "counted": counted})
+    return out
 
 
 # ── Rules: safety check and rules.csv I/O ─────────────────────────────────────
@@ -406,12 +438,15 @@ def rule_check(df: pd.DataFrame, rules: pd.DataFrame, group: dict, norm=None) ->
 LAST_IMPORT_NAME = "last_import.csv"
 
 
-def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str = "") -> tuple[pd.DataFrame, int]:
+def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str = "",
+               relabel_from: set[str] | None = None) -> tuple[pd.DataFrame, int]:
     """Label exactly these rows in the master, through the same matcher Excel
     imports use (date + description + amount + source + card), touching only
-    rows that have no valid label yet. Twin rows are sent once so the count
-    isn't doubled. Returns (master, rows labeled); the caller checks the count
-    against what it expected and writes nothing on a mismatch."""
+    rows that have no valid label yet — plus, for an explicit fix the user
+    clicked, rows currently labeled one of relabel_from (the label they saw, so
+    a label changed on disk since is never overwritten). Twin rows are sent
+    once so the count isn't doubled. Returns (master, rows labeled); the caller
+    checks the count against what it expected and writes nothing on a mismatch."""
     imp = pd.DataFrame([{
         "date": pd.Timestamp(r["date"]).strftime("%Y-%m-%d"),
         "description": str(r["description"]),
@@ -424,12 +459,41 @@ def label_rows(master: pd.DataFrame, rows: list[dict], category: str, sub: str =
     # Only rows without a valid label are candidates: a hand-labeled twin of an
     # unlabeled row (same date, description, amount, card) must keep its label
     master = master.copy()
-    open_ = ~master["master_category"].fillna("").astype(str).str.strip().isin(PREDEFINED_CATEGORIES)
+    current = master["master_category"].fillna("").astype(str).str.strip()
+    open_ = ~current.isin(PREDEFINED_CATEGORIES)
+    if relabel_from:
+        open_ |= current.isin(relabel_from)
     part, updated, _ = apply_label_import(master[open_], imp)
     for col in ("master_category", "sub_category"):
         master[col] = master[col].fillna("").astype(str)
         master.loc[part.index, col] = part[col]
     return master, updated
+
+
+NOT_TRANSFERS_NAME = "not_transfers.csv"
+
+
+def _read_not_transfers(p: Path) -> set[str]:
+    if not p.exists():
+        return set()
+    return set(pd.read_csv(p, dtype=str, keep_default_na=False)["pair"])
+
+
+def not_transfer_keys(master_path) -> set[str]:
+    """Pair keys the user marked "not a transfer" — never flagged again."""
+    try:
+        return _read_not_transfers(Path(master_path).parent / NOT_TRANSFERS_NAME)
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, KeyError, OSError, ValueError):
+        return set()
+
+
+def add_not_transfer(master_path, key: str) -> None:
+    """Remember one more dismissed pair. An existing file that can't be read
+    (hand-edited, saved by Excel) raises instead of being replaced by just
+    this key, which would silently bring back every earlier dismissal."""
+    keys = _read_not_transfers(Path(master_path).parent / NOT_TRANSFERS_NAME) | {key}
+    atomic_write_csv(pd.DataFrame({"pair": sorted(keys)}),
+                     Path(master_path).parent / NOT_TRANSFERS_NAME)
 
 
 def last_import_ids(master_path) -> list[str] | None:

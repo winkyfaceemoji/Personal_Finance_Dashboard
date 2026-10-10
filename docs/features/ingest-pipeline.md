@@ -178,6 +178,8 @@ The new master is written atomically (temp file + `os.replace`), so a crash mid-
 | `SORTED/edited_combined_transactions.csv` | Every pipeline run (full rebuild; categorization carried forward by match key) | `app.py` on startup and after reload |
 | `SORTED/backups/edited_combined_transactions.<timestamp>.csv` | Every rebuild and every import, unless the master is unchanged since the last backup (newest 10 kept) | Auto-restore when the master is missing or empty; manual rollback |
 | `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; header note |
+| `SORTED/not_transfers.csv` | Labeling panel: pairs you marked NOT A TRANSFER | Those pairs are never flagged again |
+| `SORTED/budget.json` | Settings → SAVE BUDGET | The budget card |
 | `SORTED/skipped_files.csv` | Every import: RAW files that couldn't be used, with the reason (removed when none) | Header warning (`skipped-note`) |
 | `SORTED/last_import.csv` | A rebuild that added rows: their `row_id`s (left alone when nothing is new) | The header's `Last import: …` line and the labeling panel's `REVIEW →` filter |
 | `SORTED/backups/before-labeling-YYYY-MM-DD.csv` | The app, when the labeling panel first opens that day (outside the backup rotation, never pruned) | Manual rollback to the state before that day's labeling |

@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from Modules.labels import suspect_transfers, transfer_pairs
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -433,21 +435,24 @@ def test_snapshot_failure_does_not_block_panel(appmod, monkeypatch):
     g_["_snapshot_before_labeling"]()            # must not raise
 
 
-def _add_transfer_pair(g_, cents=77777):
-    """Append a certain card-payment pair to the temp master and reload df."""
+def _add_transfer_pair(g_, cents=77777, labels=("", "")):
+    """Append a certain card-payment pair to the temp master and reload df.
+    labels: (out side, in side) master_category."""
     master = g_["MASTER_PATH"]
     m = pd.read_csv(master, dtype=str, keep_default_na=False)
     amt = f"{cents / 100:.2f}"
     base = {c: "" for c in m.columns}
     out_row = {**base, "date": "2026-01-05", "post_date": "2026-01-05", "source": "Chase Debit",
                "description": "ACME SAVINGS XFER OUT 4823", "amount": f"-{amt}",
-               "card_last4": "4823"}
+               "card_last4": "4823", "master_category": labels[0]}
     in_row = {**base, "date": "2026-01-06", "post_date": "2026-01-06", "source": "Chase Credit",
-              "description": "ACME SAVINGS XFER IN 3094", "amount": amt, "card_last4": "3094"}
+              "description": "ACME SAVINGS XFER IN 3094", "amount": amt, "card_last4": "3094",
+              "master_category": labels[1]}
     m = pd.concat([m, pd.DataFrame([out_row, in_row])], ignore_index=True)
     m.to_csv(master, index=False)
     g_["df"] = g_["load_transactions"](master, rules_path=g_["RULES_PATH"])
-    return next(p for p in g_["transfer_pairs"](g_["df"]) if p["amount"] == cents / 100)
+    found = transfer_pairs(g_["df"]) + suspect_transfers(g_["df"])
+    return next(p for p in found if p["amount"] == cents / 100)
 
 
 def test_pairs_tab_lists_and_labels_a_pair(appmod):
@@ -469,7 +474,7 @@ def test_pairs_tab_lists_and_labels_a_pair(appmod):
     df = g_["df"]
     both = row_ids(df).isin({pair["out"]["row_id"], pair["in"]["row_id"]})
     assert both.sum() == 2 and (df.loc[both, "master_category"] == "Transfer").all()
-    assert pair["key"] not in {p["key"] for p in g_["transfer_pairs"](df)}
+    assert pair["key"] not in {p["key"] for p in transfer_pairs(df)}
     status, _, _, _ = g_["_do_undo"](undo, 1)
     assert status == "Undone." and master.read_bytes() == before
 
@@ -481,9 +486,9 @@ def test_label_all_pairs_refuses_a_stale_list(appmod):
     before = master.read_bytes()
     status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": "0000000000"}, 0)
     assert status.startswith("The list changed") and master.read_bytes() == before
-    sig = g_["_pairs_sig"](g_["transfer_pairs"](g_["df"]))
+    sig = g_["_pairs_sig"](transfer_pairs(g_["df"]))
     status, _, _, _ = g_["_do_label_pairs"]({"type": "lbl-pair", "pair": "__all__", "sig": sig}, 0)
-    assert status.startswith("Labeled") and g_["transfer_pairs"](g_["df"]) == []
+    assert status.startswith("Labeled") and transfer_pairs(g_["df"]) == []
 
 
 def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
@@ -498,7 +503,7 @@ def test_label_all_pairs_only_labels_the_pairs_shown(appmod, monkeypatch):
     status, _, _, _ = g_["_do_label_pairs"](
         {"type": "lbl-pair", "pair": "__all__", "sig": g_["_pairs_sig"](shown)}, 0, "all")
     assert status.startswith("Labeled 2 rows (1 pair)")
-    assert [p["amount"] for p in g_["transfer_pairs"](g_["df"])] == [666.66]
+    assert [p["amount"] for p in transfer_pairs(g_["df"])] == [666.66]
 
 
 def test_skipped_files_text(appmod):
@@ -508,3 +513,59 @@ def test_skipped_files_text(appmod):
     assert one.startswith("⚠ 1 file in RAW wasn't imported") and "CapitalOne_2026.csv (unrecognized format)" in one
     many = text([(f"f{i}.csv", "unrecognized format") for i in range(5)])
     assert "5 files" in many and "and 2 more" in many and "f3.csv" not in many
+
+
+
+def test_transfer_labeled_expense_is_flagged_fixed_and_undone(appmod):
+    from Modules.labels import row_ids
+    g_ = _live(appmod)
+    pair = _add_transfer_pair(g_, cents=55555, labels=("Expense", "Transfer"))
+    assert "labeled Expense or Income" in g_["transfer_check_text"](g_["_suspects"]())
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, undo, _, _ = g_["_do_fix_suspect"]({"pair": pair["key"], "act": "fix"}, 0)
+    assert status.startswith("Relabeled 1 row as Transfer")
+    df = g_["df"]
+    out_row = row_ids(df) == pair["out"]["row_id"]
+    assert out_row.sum() == 1 and (df.loc[out_row, "master_category"] == "Transfer").all()
+    assert pair["key"] not in {p["key"] for p in g_["_suspects"]()}
+    status, _, _, _ = g_["_do_undo"](undo, 1)
+    assert status == "Undone." and master.read_bytes() == before
+
+
+def test_not_a_transfer_stops_the_flag_and_keeps_labels(appmod):
+    g_ = _live(appmod)
+    pair = _add_transfer_pair(g_, cents=44444, labels=("Expense", "Income"))
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, _, _, _ = g_["_do_fix_suspect"]({"pair": pair["key"], "act": "dismiss"}, 0)
+    assert status.startswith("Kept as is")
+    assert master.read_bytes() == before
+    assert pair["key"] not in {p["key"] for p in g_["_suspects"]()}
+
+
+def test_recurring_view(appmod):
+    view = appmod["recurring_view"]
+    children, sub = view([])
+    assert "No regular charges" in str(children) and sub == ""
+    items = [
+        {"merchant": "RENT CO", "cadence": "monthly", "amount": 1500.0, "yearly": 18000.0, "count": 6,
+         "first": pd.Timestamp("2025-01-01"), "last": pd.Timestamp("2025-06-01"), "active": True},
+        {"merchant": "HULU", "cadence": "monthly", "amount": 7.99, "yearly": 95.88, "count": 5,
+         "first": pd.Timestamp("2024-01-15"), "last": pd.Timestamp("2024-05-15"), "active": False},
+    ]
+    children, sub = view(items)
+    assert sub.startswith("1 active · $18,000 a year")
+    text = str(children)
+    assert "RENT CO" in text and "Stopped (1)" in text and "HULU" in text
+
+
+def test_budget_strip(appmod):
+    strip = appmod["budget_strip"]
+    c = appmod["_CHART"]["dark"]
+    s = {"cur": {"exp": 800.0}, "partial": True, "days_elapsed": 10, "days_total": 30}
+    assert strip(None, s, "month", c) == []                       # no budget, no card
+    text = str(strip(3000.0, s, "month", c))
+    assert "BUDGET" in text and "$2,200 left" in text and "/day" in text
+    s_over = {"cur": {"exp": 3200.0}, "partial": False, "days_elapsed": 30, "days_total": 30}
+    assert "$200 over budget" in str(strip(3000.0, s_over, "month", c))
