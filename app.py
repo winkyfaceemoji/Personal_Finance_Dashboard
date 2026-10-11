@@ -16,6 +16,7 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
+from Modules.linked_cards import recent_links
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
@@ -289,13 +290,16 @@ def overlap_text(left_out: pd.DataFrame | None) -> str:
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
                     skipped: list[tuple[str, str]], today=None,
                     left_out: pd.DataFrame | None = None,
-                    exported: dict | None = None) -> dict[str, str]:
+                    exported: dict | None = None,
+                    linked: list[str] | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
     transfers each come with a button; other is what has no in-app fix.
     exported: {source: date} its exports are known to reach (from their file
     names), so a quiet card with a recent download isn't "behind".
+    linked: notes on replacement cards the import just linked — past totals
+    changed, so it says why.
     """
     u = unlabeled_summary(frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
@@ -323,6 +327,7 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
         other.append(skipped_text(skipped))
     if overlap_text(left_out):
         other.append(overlap_text(left_out))
+    other.extend(linked or [])
     return {"unlabeled": unlabeled, "review": review,
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
@@ -1087,6 +1092,7 @@ def update_attention(_refresh):
         read_skipped(MASTER_PATH) if MASTER_PATH else [],
         left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
         exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
+        linked=recent_links(MASTER_PATH) if MASTER_PATH else None,
     )
     shown = {"display": "flex"} if any(parts.values()) else _HIDDEN
     return (shown,
