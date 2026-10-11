@@ -147,6 +147,25 @@ def test_first_period_has_no_comparison():
     assert s["typical"] is None and s["n_typical"] == 0
 
 
+def test_typical_leaves_out_periods_that_are_not_labeled():
+    # Aug is mostly unlabeled: it would read $10 and pull the median down
+    df = _df([("2025-07-05", -1000.0, "Expense"), ("2025-08-05", -10.0, "Expense"),
+              ("2025-08-06", -900.0, ""), ("2025-09-05", -1200.0, "Expense"),
+              ("2025-09-07", -50.0, ""),                  # 50 / 1250 = 4%: still counts
+              ("2025-10-05", -500.0, "Expense")])
+    oct25 = to_period("2025-10-05", "month")
+
+    def unlabeled_out(rows):
+        return float(-rows.loc[(rows["master_category"] == "") & (rows["amount"] < 0), "amount"].sum())
+
+    s = period_summary(df, "month", oct25, as_of="2025-10-31", unlabeled_out=unlabeled_out)
+    assert s["typical_periods"] == [to_period("2025-09-01", "month"), to_period("2025-07-01", "month")]
+    assert s["left_out_unlabeled"] == 1 and s["typical"]["exp"] == 1100.0
+    # Without the check every covered period counts, as before
+    s = period_summary(df, "month", oct25, as_of="2025-10-31")
+    assert s["n_typical"] == 3 and s["left_out_unlabeled"] == 0 and s["typical"]["exp"] == 1000.0
+
+
 def test_month_compares_with_the_same_month_last_year():
     df = _df([
         ("2024-10-05", -400.0, "Expense"), ("2024-10-25", -100.0, "Expense"),
