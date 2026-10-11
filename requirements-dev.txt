@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest==8.4.2
+playwright==1.63.0   # tests/test_ui_states.py (skipped without a browser)
