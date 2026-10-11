@@ -17,7 +17,7 @@ from Modules.labels import (
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
 from Modules.linked_cards import (
-    answer_link, links_unreadable, month_span, pending_duplicates, pending_links, recent_answers,
+    answer_link, answered_links, links_unreadable, month_span, pending_duplicates, pending_links,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -402,8 +402,9 @@ def card_question_reason(pending: list[dict], freq: str, p: pd.Period, first) ->
 def card_question_items(pending: list[dict], answered: list[dict], confirm: str | None) -> list:
     """The attention line's replacement-card questions, first on the line:
     asked about what happened (a new card), with the money it decides. NO on
-    a pair this alike asks once more; each answer can be undone for two
-    weeks (Modules/linked_cards)."""
+    a pair this alike asks once more. `answered`: the pair just answered,
+    confirmed once with UNDO — gone on the next load; Settings → CARDS can
+    switch it later (Modules/linked_cards)."""
     def _buttons(pid, buttons):
         return html.Span(className="q-buttons", children=[
             html.Button(label, id={"type": "card-ans", "pair": pid, "act": act}, n_clicks=0,
@@ -427,7 +428,7 @@ def card_question_items(pending: list[dict], answered: list[dict], confirm: str 
         text = (f"{a['new_card']} counted as a replacement for {a['old_card']} — {span} no longer "
                 f"counts {_dollar0(a['out'])} twice." if a["status"] == "same" else
                 f"{a['old_card']} and {a['new_card']} kept apart — {_dollar0(a['out'])} in {span} "
-                f"stays counted twice.")
+                f"stays counted twice.") + " You can change this in Settings → Cards."
         items.append(html.Span(className="attention-item attention-note",
                                children=[html.Span(text), _buttons(a["id"], [("UNDO", "undo")])]))
     return items
@@ -590,7 +591,8 @@ app.layout = html.Div(
         # callbacks (charts, header notes) re-render automatically.
         dcc.Store(id="refresh-trigger", data=0),
         # Replacement-card question: {"confirm": pair awaiting NO's second
-        # tap, "error": a failed answer's message}
+        # tap, "just": pair just answered (confirmed once — memory storage,
+        # so a reload clears it), "error": a failed answer's message}
         dcc.Store(id="card-ui", data={}),
 
         dcc.Store(id="settings-menu-open", data=False),
@@ -703,6 +705,8 @@ app.layout = html.Div(
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
+                    # Replacement-card answers, switchable (filled when any exist)
+                    html.Div(id="settings-cards", className="settings-cards"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("THEME", className="settings-label"),
                     html.Div(className="settings-row", children=[
@@ -1163,8 +1167,9 @@ def _without_pending_dups(frame: pd.DataFrame, pending: list[dict] | None = None
 def update_attention(_refresh, card_ui):
     card_ui = card_ui or {}
     pending = _pending()
-    cards = card_question_items(pending, recent_answers(MASTER_PATH) if MASTER_PATH else [],
-                                card_ui.get("confirm"))
+    just = [a for a in (answered_links(MASTER_PATH) if MASTER_PATH else [])
+            if a["id"] == card_ui.get("just")]
+    cards = card_question_items(pending, just, card_ui.get("confirm"))
     if card_ui.get("error"):
         cards.append(html.Span(card_ui["error"], className="attention-item"))
     parts = attention_parts(
@@ -1196,19 +1201,22 @@ def card_answer(_clicks, trigger):
 
 
 def _do_card_answer(pid: str, act: str, trigger) -> tuple[dict, int]:
-    """Answer (or undo) a replacement-card question. Writes only if the pair
-    is still in the state the button was drawn for — a double tap or a stale
-    page is a no-op. YES, and undoing a YES, change which rows are merged,
-    so they re-run the import like Reload. Returns (card-ui, refresh)."""
+    """Answer, undo or switch a replacement-card answer (attention line or
+    Settings → CARDS). Writes only if the pair is still in the state the
+    button was drawn for — a double tap or a stale page is a no-op. Anything
+    that makes or breaks a "same" re-runs the import like Reload. Returns
+    (card-ui, refresh); card-ui {"just": pair} shows the answer once."""
     global df
     bump = (trigger or 0) + 1
     if act == "no":
-        return {"confirm": pid}, bump           # a pair this alike: ask once more
+        return {"confirm": pid}, dash.no_update   # a pair this alike: ask once more
     if act == "back" or not MASTER_PATH:
-        return {}, bump
+        return {}, dash.no_update
+    was = {a["id"]: a["status"] for a in answered_links(MASTER_PATH)}.get(pid)
     if act == "undo":
-        was = {a["id"]: a["status"] for a in recent_answers(MASTER_PATH)}.get(pid)
         expect, status = (was, "proposed") if was else (None, None)
+    elif act == "switch":
+        expect, status = (was, {"same": "different", "different": "same"}[was]) if was else (None, None)
     else:
         expect, status = {"yes": ("proposed", "same"), "keep": ("proposed", "different")}.get(act, (None, None))
     if expect is None:
@@ -1226,7 +1234,36 @@ def _do_card_answer(pid: str, act: str, trigger) -> tuple[dict, int]:
         except Exception as e:
             return {"error": f"Answer saved, but the reload failed ({e}) — close any open data file "
                              f"and press Reload."}, bump
-    return {}, bump
+    return ({"just": pid} if changed and status != "proposed" else {}), bump
+
+
+def settings_card_rows(answered: list[dict]) -> list:
+    """Settings → CARDS: every replacement-card answer, each switchable."""
+    if not answered:
+        return []
+    rows = []
+    for a in answered:
+        if a["status"] == "same":
+            text, button = f"{a['old_card']} → {a['new_card']} · counted as one card", "KEEP APART"
+        else:
+            text = (f"{a['old_card']} / {a['new_card']} · kept apart "
+                    f"({_dollar0(a['out'])} counted twice)")
+            button = "COUNT AS ONE"
+        rows.append(html.Div(className="settings-card-row", children=[
+            html.Span(f"{a['source']} {text}", className="settings-card-text"),
+            html.Button(button, id={"type": "card-ans", "pair": a["id"], "act": "switch"}, n_clicks=0,
+                        className="btn-secondary btn-small"),
+        ]))
+    return [html.Div(className="divider", style={"margin": "4px 0"}),
+            html.Div("CARDS", className="settings-label"), *rows]
+
+
+@app.callback(
+    Output("settings-cards", "children"),
+    Input("refresh-trigger", "data"),
+)
+def update_settings_cards(_refresh):
+    return settings_card_rows(answered_links(MASTER_PATH) if MASTER_PATH else [])
 
 
 # ── Period navigation ─────────────────────────────────────────────────────────
