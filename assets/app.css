@@ -35,6 +35,17 @@ html, body {
 .attention-item:empty { display: none; }
 .attention .btn-small { padding: 3px 10px; font-size: 12px; margin-left: 8px; }
 .warn-text { color: var(--accent2); }
+/* Replacement-card questions lead the line; on a phone the sentence wraps and
+   its buttons drop below it. An answered one (with UNDO) is a note, no ⚠. */
+.attention-cards { display: contents; }
+.attention-question, .attention-note { flex-basis: 100%; }
+.attention-note::before { content: none; }
+.q-buttons { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 600px) {
+    .q-buttons { display: flex; margin-top: 6px; }
+    .q-buttons .btn-small:first-child { margin-left: 0; }
+    .attention .q-buttons .btn-small { margin-left: 0; }
+}
 
 /* ── Period bar (sticky: it drives everything below it) ─────────────────── */
 .period-bar {
