@@ -11,10 +11,11 @@ records them in SORTED/linked_cards.csv as "proposed": nothing changes until
 the user answers the dashboard's question ("Did Chase replace your card
 ending 6236 with 9956?"). Yes → "same": the newer number's rows are filed
 under the older number and the two merge like any re-export of one account.
-No → "different": they stay apart and the pair isn't asked about again. Both
-answers can be undone from the dashboard for two weeks (back to "proposed"),
-and later by editing the file; a status it doesn't recognise counts as
-"proposed", so a typo brings the question back rather than settling it.
+No → "different": they stay apart and the pair isn't asked about again. The
+dashboard confirms an answer once, with UNDO (back to "proposed"); after
+that the answer can be switched any time in Settings → CARDS. A status the
+file doesn't recognise counts as "proposed", so a typo brings the question
+back rather than settling it.
 """
 from pathlib import Path
 
@@ -26,7 +27,6 @@ LINKS_NAME = "linked_cards.csv"
 LINK_COLUMNS = ["source", "institution", "old_card", "new_card", "status", "matched", "out",
                 "from", "to", "found_on", "answered_on"]
 STATUSES = ("proposed", "same", "different")
-ANSWER_DAYS = 14   # how long the dashboard offers to undo an answer
 
 # A replacement repeats every charge of the overlap (116 of 116 on real data);
 # two different cards share only the odd coincidence (3 of 342). Under
@@ -184,19 +184,13 @@ def pending_links(master: Path) -> list[dict]:
     return [_info(r) for _, r in links[links["status"] == "proposed"].iterrows()]
 
 
-def recent_answers(master: Path, today=None, days: int = ANSWER_DAYS) -> list[dict]:
-    """Pairs the user answered in the last `days` days — still undoable from
-    the dashboard."""
+def answered_links(master: Path) -> list[dict]:
+    """Pairs the user has answered ("same" or "different") — listed in
+    Settings → CARDS, where either answer can be switched."""
     links = read_links(master, quiet=True)
     if links is None or links.empty:
         return []
-    today = pd.Timestamp(today if today is not None else pd.Timestamp.today()).normalize()
-    out = []
-    for _, r in links[links["status"].isin(["same", "different"])].iterrows():
-        d = _info(r)
-        if pd.notna(d["answered_on"]) and (today - d["answered_on"].normalize()).days <= days:
-            out.append(d)
-    return out
+    return [_info(r) for _, r in links[links["status"].isin(["same", "different"])].iterrows()]
 
 
 def answer_link(master: Path, pid: str, expect: str, status: str, today=None) -> bool:
