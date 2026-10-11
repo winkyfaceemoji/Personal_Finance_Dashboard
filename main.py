@@ -339,10 +339,11 @@ def _only_in_dropped(merged: pd.DataFrame, dropped: list[pd.DataFrame]) -> pd.Da
 
 def _link_replacement_cards(groups: dict[tuple, list[pd.DataFrame]], master_file: Path
                             ) -> tuple[dict[tuple, list[pd.DataFrame]], dict[tuple[str, str], str]]:
-    """Regroup a replacement card's exports under the number it replaced
-    (Modules/linked_cards), so the coverage merge counts the charges both
-    exports carry once. New links are recorded in SORTED/linked_cards.csv
-    first; returns the regrouped files and the card map in force."""
+    """Regroup a confirmed replacement card's exports under the number it
+    replaced (Modules/linked_cards), so the coverage merge counts the charges
+    both exports carry once. A newly spotted pair is only recorded, as
+    "proposed", for the dashboard to ask about; returns the regrouped files
+    and the card map in force."""
     links = read_links(master_file)
     if links is None:
         return groups, {}
@@ -351,11 +352,14 @@ def _link_replacement_cards(groups: dict[tuple, list[pd.DataFrame]], master_file
     if found:
         links = pd.concat([links, pd.DataFrame([{k: f[k] for k in links.columns} for f in found])],
                           ignore_index=True)
-        write_links(master_file, links)
+        try:
+            write_links(master_file, links)
+        except OSError as e:
+            print(f"  ⚠ Could not update SORTED/linked_cards.csv ({e})")
         for f in found:
-            print(f"  {f['source']} {f['new_card']} is a new number for {f['old_card']}: "
-                  f"{f['matched']} charges where both overlap are the same — counted once from now on "
-                  f"(SORTED/linked_cards.csv)")
+            print(f"  {f['source']} {f['new_card']} looks like a replacement for {f['old_card']} "
+                  f"({f['matched']} charges where both overlap are the same) — answer the question "
+                  f"on the dashboard; until then they count twice")
     cards = card_map(links)
     if not cards:
         return groups, cards
