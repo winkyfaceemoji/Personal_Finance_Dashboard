@@ -41,7 +41,7 @@ Bank CSVs (RAW/)
        │           last import → REVIEW, likely transfers → CHECK, stale data, lagging sources, skipped files)
        ├─ Period bar  (WEEK | MONTH | YEAR · ‹ period › · LATEST) — drives everything below
        ├─ Headline  (spending vs typical in one sentence — or "Can't say yet" on stale / unlabeled data)
-       ├─ Stat cards  (spent / income / net)
+       ├─ Stat cards  (spent / income / net, each vs the same month / year last year)
        ├─ Spending over time  (bar per week/month/year; click to open a period)
        ├─ Categories  (sorted bars for the period + click-to-merchants drilldown)
        ├─ More  (folded: recurring charges — subscriptions, rent, utilities, cost per year)

@@ -4,7 +4,11 @@
    CSS and the Plotly figures share one palette. Never hardcode a hex here. */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); color: var(--text); }
+html, body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+    background: var(--bg); color: var(--text);
+}
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -18,20 +22,18 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .app-header { position: relative; margin-bottom: 20px; padding-right: 56px; }
-.wordmark {
-    font-family: "Syne", sans-serif; font-weight: 800; line-height: 1.1;
-    font-size: clamp(24px, 5vw, 32px); letter-spacing: -1px;
-}
-.wordmark .accent { color: var(--accent); }
-.header-meta { color: var(--subtext); font-size: 12px; margin-top: 8px; }
+.wordmark { font-weight: 600; line-height: 1.2; font-size: 22px; letter-spacing: -0.02em; }
+.wordmark .accent { color: var(--subtext); font-weight: 500; }
+.header-meta { color: var(--subtext); font-size: 13px; margin-top: 6px; }
 /* The attention line: everything that needs you, in red, one line that wraps */
 .attention {
     flex-wrap: wrap; align-items: center; gap: 6px 18px;
-    font-size: 12px; margin-top: 8px; color: var(--accent2);
+    font-size: 13px; margin-top: 8px; color: var(--text);
 }
-.attention-item::before { content: "⚠ "; }
+/* A warning is a chore, not overspending: ink text, only the ⚠ is red */
+.attention-item::before { content: "⚠ "; color: var(--accent2); }
 .attention-item:empty { display: none; }
-.attention .btn-small { padding: 2px 8px; font-size: 10px; margin-left: 8px; }
+.attention .btn-small { padding: 3px 10px; font-size: 12px; margin-left: 8px; }
 .warn-text { color: var(--accent2); }
 
 /* ── Period bar (sticky: it drives everything below it) ─────────────────── */
@@ -44,13 +46,13 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 }
 .stepper { display: flex; align-items: center; gap: 10px; }
 .period-text { min-width: 210px; text-align: center; }
-.period-label { font-family: "Syne", sans-serif; font-size: 20px; font-weight: 700; line-height: 1.2; }
+.period-label { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
 .step-btn {
-    width: 36px; height: 36px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface); color: var(--text);
-    font-family: inherit; font-size: 18px; line-height: 1;
+    width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+    border: 1px solid var(--control); background: transparent; color: var(--text);
+    font-family: inherit; font-size: 18px; line-height: 1; transition: background 0.15s;
 }
-.step-btn:hover:not(:disabled) { border-color: var(--accent); }
+.step-btn:hover:not(:disabled) { background: var(--accent-weak); }
 .step-btn:disabled { opacity: 0.35; cursor: default; }
 @media (max-width: 640px) {
     .stepper { width: 100%; }
@@ -61,32 +63,34 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 /* ── Pills (dcc.RadioItems styled as chips) ─────────────────────────────── */
 /* Dash 4 renders each option as <label class="dash-options-list-option">,
    with .selected on the chosen one (see docs/design.md, gotcha #2). */
-.pills { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.pills { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; }
 .pills label {
-    padding: 6px 14px; white-space: nowrap; border-radius: 6px; cursor: pointer;
-    font-size: 12px; font-weight: 600; letter-spacing: 1px;
-    color: var(--subtext); background: var(--chip); border: 1px solid var(--border);
+    padding: 6px 14px; white-space: nowrap; border-radius: 999px; cursor: pointer;
+    font-size: 13px; font-weight: 500;
+    color: var(--subtext); background: transparent; border: 1px solid transparent;
     transition: all 0.15s;
 }
 .pills label:hover { color: var(--text); }
-.pills .dash-options-list-option.selected {
-    color: var(--text); border-color: var(--accent); background: var(--accent-weak);
-}
+.pills label:hover:not(.selected) { background: var(--accent-weak); }
+/* Selected = ink fill: a grey tint alone is ~1.1:1 against the page */
+.pills .dash-options-list-option.selected { color: var(--on-accent); background: var(--accent); }
+.pills label { position: relative; }
+.pills label:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 .app-card {
     background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    border-radius: 12px; padding: 24px; margin-bottom: 24px;
+    border-radius: 16px; padding: 24px; margin-bottom: 20px;
 }
 .card-head {
     display: flex; justify-content: space-between; align-items: center;
     flex-wrap: wrap; gap: 12px; margin-bottom: 12px;
 }
 .app-label {
-    font-size: 11px; letter-spacing: 2px; font-weight: 600;
+    font-size: 12px; letter-spacing: 0.04em; font-weight: 500;
     text-transform: uppercase; color: var(--label);
 }
-.hint { font-size: 11px; color: var(--subtext); margin-top: 3px; }
+.hint { font-size: 12px; color: var(--subtext); margin-top: 3px; }
 .muted-text { color: var(--subtext); }
 
 /* ── Stat cards ─────────────────────────────────────────────────────────── */
@@ -95,15 +99,15 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
     gap: 16px; margin-bottom: 16px;
 }
 .stat-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
     padding: 18px 20px; display: flex; flex-direction: column; gap: 6px;
 }
-.stat-title { font-size: 11px; letter-spacing: 1.5px; font-weight: 600; color: var(--subtext); }
+.stat-title { font-size: 12px; letter-spacing: 0.04em; font-weight: 500; color: var(--subtext); }
 .stat-value {
-    font-family: "Syne", sans-serif; font-size: 30px; font-weight: 700;
-    line-height: 1.1; color: var(--text); margin-bottom: 4px;
+    font-size: 28px; font-weight: 600; letter-spacing: -0.02em;
+    line-height: 1.15; color: var(--text); margin-bottom: 2px;
 }
-.stat-delta { font-size: 11px; color: var(--subtext); }
+.stat-delta { font-size: 12px; color: var(--subtext); }
 .stat-delta.unreviewed { color: var(--subtext); font-style: italic; }
 .delta-good { color: var(--accent3); font-weight: 600; }
 .delta-bad  { color: var(--accent2); font-weight: 600; }
@@ -111,25 +115,26 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 /* ── Headline: this period's spending against a typical one ────────────── */
 .pace-card { padding: 18px 20px; margin-bottom: 16px; }
 .headline-status {
-    font-family: "Syne", sans-serif; font-size: clamp(20px, 4vw, 26px); font-weight: 700;
-    line-height: 1.2; margin: 6px 0 10px;
+    font-size: clamp(20px, 4vw, 26px); font-weight: 600; letter-spacing: -0.02em;
+    line-height: 1.25; margin: 6px 0 12px;
 }
 .pace-card .btn-small { margin-top: 10px; }
-.pace-track { position: relative; height: 10px; border-radius: 5px; background: var(--border); margin: 6px 0 8px; }
-.pace-fill { height: 10px; border-radius: 5px; }
+.pace-track { position: relative; height: 8px; border-radius: 4px; background: var(--accent-weak); margin: 6px 0 8px; }
+.pace-fill { position: absolute; top: 0; height: 8px; border-radius: 4px; }
+.pace-over { border-radius: 0 4px 4px 0; }
 .pace-marker {
-    position: absolute; top: -4px; width: 2px; height: 18px;
+    position: absolute; top: -4px; width: 2px; height: 16px;
     background: var(--text); border-radius: 1px;
 }
-.pace-legend { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--subtext); }
+.pace-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 12px; color: var(--subtext); }
 
 /* ── Drilldown ──────────────────────────────────────────────────────────── */
 .drilldown { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 20px; }
 .drill-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .drill-name { flex: 0 0 220px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drill-track { flex: 1; height: 8px; border-radius: 4px; background: var(--border); }
-.drill-fill { height: 8px; border-radius: 4px; background: var(--accent); }
-.drill-fill.muted { background: var(--subtext); }
+.drill-track { flex: 1; height: 8px; border-radius: 4px; background: var(--accent-weak); }
+.drill-fill { height: 8px; border-radius: 4px; background: var(--subtext); }
+.drill-fill.muted { opacity: 0.4; }
 .drill-stat { flex: 0 0 180px; font-size: 11px; text-align: right; color: var(--subtext); }
 .divider { height: 1px; background: var(--border); margin: 12px 0; }
 @media (max-width: 640px) {
@@ -139,26 +144,32 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn-primary, .btn-secondary {
-    border-radius: 6px; padding: 10px 20px; cursor: pointer;
-    font-family: "IBM Plex Mono", monospace; font-size: 12px;
-    font-weight: 600; letter-spacing: 1px;
+    border-radius: 999px; padding: 10px 20px; cursor: pointer;
+    font-family: inherit; font-size: 14px; font-weight: 500;
+    transition: background 0.15s, opacity 0.15s;
 }
 .btn-primary { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }
-.btn-secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-.btn-primary:hover, .btn-secondary:hover { opacity: 0.85; }
+.btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--control); }
+.btn-primary:hover { opacity: 0.85; }
+.btn-secondary:hover:not(:disabled) { background: var(--accent-weak); }
 .btn-secondary:disabled { opacity: 0.35; cursor: default; }
 .btn-secondary.active { background: var(--accent-weak); color: var(--text); }
-.btn-small { font-size: 11px; padding: 8px 14px; }
+.btn-small { font-size: 13px; padding: 6px 14px; }
+/* Keyboard focus is always visible */
+button:focus-visible, input:focus-visible, .dash-dropdown:focus-visible,
+summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* Bars you can click (open a period / a category) show a pointer */
+#period-chart .nsewdrag, #category-chart .nsewdrag { cursor: pointer !important; }
 
 /* ── Settings menu ──────────────────────────────────────────────────────── */
 #settings-menu-wrapper { position: absolute; top: 0; right: 0; z-index: 50; }
 #settings-menu-btn {
     width: 44px; height: 44px; border-radius: 50%; padding: 0; cursor: pointer;
     display: flex; align-items: center; justify-content: center; line-height: 1;
-    background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    box-shadow: 0 4px 16px var(--shade-weak); transition: all 0.2s;
+    background: transparent; border: 1px solid var(--control); color: var(--text);
+    transition: background 0.15s;
 }
-#settings-menu-btn:hover { transform: scale(1.1); }
+#settings-menu-btn:hover { background: var(--accent-weak); }
 #settings-menu-btn .gear-icon {
     width: 20px; height: 20px; display: inline-block; background-color: currentColor;
     -webkit-mask: var(--gear-icon) center / contain no-repeat;
@@ -167,13 +178,13 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 #settings-menu-panel {
     position: absolute; top: 56px; right: 0; min-width: 240px;
     flex-direction: column; gap: 8px; padding: 16px; margin: 0;
-    box-shadow: 0 8px 24px var(--shade-strong);
+    box-shadow: 0 8px 24px var(--shade-weak);
 }
 /* Invisible full-screen layer behind the open menu: a click anywhere outside
    the panel lands here and closes it */
 #settings-backdrop { position: fixed; inset: 0; z-index: 40; }
-.settings-label { font-size: 9px; letter-spacing: 2px; font-weight: 600; color: var(--subtext); }
-.settings-status { font-size: 11px; color: var(--accent3); }
+.settings-label { font-size: 11px; letter-spacing: 0.04em; font-weight: 500; color: var(--subtext); }
+.settings-status { font-size: 12px; color: var(--accent3); }
 .settings-row { display: flex; gap: 8px; }
 .settings-row > * { flex: 1; }
 
@@ -183,11 +194,10 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
 .setup-copy { margin: 24px 0 16px; color: var(--subtext); font-size: 13px; line-height: 1.5; }
 .setup-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .setup-input {
-    flex: 1; min-width: 0; padding: 10px 14px; border-radius: 6px;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    font-family: "IBM Plex Mono", monospace; font-size: 13px;
+    flex: 1; min-width: 0; padding: 10px 14px; border-radius: 12px;
+    background: var(--bg); border: 1px solid var(--control); color: var(--text);
+    font-family: inherit; font-size: 14px;
 }
-.setup-input:focus { outline: none; border-color: var(--accent); }
 .setup-status { margin-top: 12px; font-size: 12px; color: var(--accent2); }
 
 /* ── Dash 4 dropdown ────────────────────────────────────────────────────── */
@@ -199,14 +209,15 @@ html, body { font-family: "IBM Plex Mono", monospace; background: var(--bg); col
     border-color: var(--border) !important;
     color: var(--text) !important;
 }
+.dash-dropdown { border-color: var(--control) !important; }
 .dash-dropdown-option, .dash-dropdown-value, .dash-dropdown-search { color: var(--text) !important; }
 .dash-dropdown-search { background: transparent !important; }
-.dash-dropdown-option:hover, .dash-dropdown-option:focus { background-color: var(--border) !important; }
+.dash-dropdown-option:hover, .dash-dropdown-option:focus { background-color: var(--accent-weak) !important; }
 .dash-dropdown-placeholder, .dash-dropdown-clear, .dash-dropdown-trigger-icon { color: var(--subtext) !important; }
 /* Metric dropdown styled as a card title — matches the .app-label headers */
 .title-dropdown .dash-dropdown-value {
-    font-size: 11px !important; letter-spacing: 2px !important;
-    font-weight: 600 !important; text-transform: uppercase;
+    font-size: 12px !important; letter-spacing: 0.04em !important;
+    font-weight: 500 !important; text-transform: uppercase;
 }
 
 /* ── dcc.Loading fullscreen overlay ─────────────────────────────────────── */
@@ -218,7 +229,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .label-panel-inner { max-width: 1100px; margin: 0 auto; }
 .label-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .label-guide { margin-bottom: 12px; font-size: 12px; color: var(--subtext); line-height: 1.6; }
-.label-guide summary { cursor: pointer; color: var(--accent); font-weight: 600; letter-spacing: 1px; }
+.label-guide summary { cursor: pointer; color: var(--text); font-weight: 500; }
 .label-guide p, .label-guide ul { margin: 8px 0; }
 .label-guide ul { padding-left: 18px; }
 .label-status-row { display: flex; gap: 10px; align-items: center; min-height: 30px; margin-bottom: 8px; }
@@ -226,11 +237,11 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-main { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lg-info { min-width: 0; flex: 1; }
 .lg-name { font-weight: 600; font-size: 14px; }
-.lg-badge { margin-left: 8px; font-size: 10px; letter-spacing: 1px; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 4px; padding: 1px 6px; }
+.lg-badge { margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 999px; padding: 1px 8px; }
 .lg-example { font-size: 11px; color: var(--subtext); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lg-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
-/* Suggested: filled and starred — plain buttons are already accent-outlined */
-.btn-secondary.suggested { background: var(--accent-weak); color: var(--text); font-weight: 700; }
+/* Suggested: filled and starred — plain buttons are only outlined */
+.btn-secondary.suggested { background: var(--accent-weak); color: var(--text); font-weight: 600; }
 .lg-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 .lg-sub { flex: 0 0 230px; padding: 6px 10px; font-size: 12px; }
 .lg-remember { font-size: 12px; }
@@ -241,7 +252,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-amt { flex: 0 0 90px; text-align: right; }
 .rule-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 /* Transfer pairs: the OUT and IN rows of one move between your accounts */
-.pair-dir { flex: 0 0 32px; font-size: 10px; letter-spacing: 1px; color: var(--subtext); }
+.pair-dir { flex: 0 0 32px; font-size: 11px; letter-spacing: 0.04em; color: var(--subtext); }
 .pair-acct { flex: 0 0 150px; color: var(--subtext); }
 .pair-label { flex: 0 0 80px; font-size: 11px; color: var(--subtext); }
 .pair-label.open { color: var(--accent2); }
@@ -251,7 +262,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 /* ── Recurring charges ───────────────────────────────────────────────────── */
 .recurring-row { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; flex-wrap: wrap; }
 .rc-name { flex: 1; min-width: 160px; font-weight: 600; }
-.rc-cadence { flex: 0 0 80px; color: var(--subtext); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.rc-cadence { flex: 0 0 80px; color: var(--subtext); font-size: 12px; }
 .rc-amt { flex: 0 0 90px; text-align: right; }
 .rc-year { flex: 0 0 110px; text-align: right; color: var(--subtext); }
 .rc-last { flex: 0 0 130px; text-align: right; color: var(--subtext); font-size: 11px; }
@@ -259,6 +270,6 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 
 /* ── More (folded detail) ───────────────────────────────────────────────── */
 .more > summary {
-    cursor: pointer; font-size: 11px; letter-spacing: 2px; font-weight: 600; color: var(--label);
+    cursor: pointer; font-size: 12px; letter-spacing: 0.04em; font-weight: 500; color: var(--label);
 }
 .more[open] > summary { margin-bottom: 16px; }

@@ -639,6 +639,81 @@ def test_every_callback_id_is_in_the_layout(appmod):
     assert used <= layout, used - layout
 
 
+def _ly_summary(cur, last, partial=False):
+    return {"cur": cur, "last_year": last, "partial": partial,
+            "last_year_period": pd.Period("2024-10", "M"),
+            "last_year_window": (pd.Timestamp("2024-10-01"), pd.Timestamp("2024-10-26"))}
+
+
+def test_last_year_lines_in_dollars_and_words(appmod):
+    lines = appmod["last_year_lines"]
+    s = _ly_summary({"exp": 2870.0, "inc": 2406.0, "net": -464.0},
+                    {"exp": 2420.0, "inc": 3106.0, "net": 686.0})
+    got = {k: str(v) for k, v in lines(s, "month", 0.0).items()}
+    assert "$450 more" in got["exp"] and "delta-bad" in got["exp"] and "Oct 2024 ($2,420)" in got["exp"]
+    assert "$700 less" in got["inc"] and "delta-bad" in got["inc"] and "($3,106)" in got["inc"]
+    assert "$1,150 worse" in got["net"] and "delta-bad" in got["net"] and "($686)" in got["net"]
+    assert "%" not in "".join(got.values())
+    better = lines(_ly_summary({"exp": 100.0, "inc": 500.0, "net": 400.0},
+                               {"exp": 300.0, "inc": 500.0, "net": 200.0}), "month", 0.0)
+    assert "$200 less" in str(better["exp"]) and "delta-good" in str(better["exp"])
+    assert "Same as Oct 2024" in str(better["inc"])
+    assert "$200 better" in str(better["net"]) and "delta-good" in str(better["net"])
+    # In progress: say which day last year it's measured to
+    partial = lines(_ly_summary({"exp": 10.0, "inc": 0.0, "net": -10.0},
+                                {"exp": 5.0, "inc": 0.0, "net": -5.0}, partial=True), "month", 0.0)
+    assert "Oct 2024 by Oct 26" in str(partial["exp"])
+
+
+def test_last_year_lines_refuse_rather_than_mislead(appmod):
+    lines = appmod["last_year_lines"]
+    none = dict(_ly_summary({"exp": 1.0, "inc": 0.0, "net": -1.0}, None), last_year_period=None)
+    assert lines(none, "week", None) == {"exp": None, "inc": None, "net": None}
+    no_data = _ly_summary({"exp": 1.0, "inc": 0.0, "net": -1.0}, None)
+    assert all("No data for Oct 2024" in str(v) for v in lines(no_data, "month", None).values())
+    s = _ly_summary({"exp": 10.0, "inc": 0.0, "net": -10.0}, {"exp": 5.0, "inc": 0.0, "net": -5.0})
+    assert all("Oct 2024 isn't fully labeled" in str(v) for v in lines(s, "month", 0.4).values())
+
+
+def test_stat_cards_render_for_every_view(appmod):
+    # The callback itself, on the demo data: every view builds, weeks carry
+    # no last-year line, and a blocked period (stale demo data) shows none
+    update = appmod["update_stats"]
+    for freq in ("week", "month", "year"):
+        cards, headline, _ = update({"freq": freq}, "dark", 0)
+        text = str(cards)
+        assert "SPENT" in text and "INCOME" in text and "NET" in text
+        if "Can't say yet" in str(headline) or freq == "week":
+            assert " than " not in text
+    cards, headline, _ = update({"freq": "year", "start": "2024-01-01"}, "light", 0)
+    assert "Can't say yet" in str(headline) or " than 2023" in str(cards) or "2023" in str(cards)
+
+
+def test_stat_cards_compare_with_last_year_on_labeled_data(appmod, monkeypatch):
+    rows = []
+    for year, (rent, pay) in {2024: (2420.0, 3106.0), 2025: (2870.0, 2406.0)}.items():
+        for m in range(1, 13):
+            rows.append((f"{year}-{m:02d}-05", "RENT", -rent, "Expense"))
+            rows.append((f"{year}-{m:02d}-15", "PAYROLL", pay, "Income"))
+    rows.append(("2026-01-05", "RENT", -2870.0, "Expense"))   # 2025 is then a finished year
+    frame = pd.DataFrame(rows, columns=["date", "description", "amount", "master_category"])
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame = frame.assign(source="Chase Debit", card_last4="4823", sub_category="")
+    g_ = _live(appmod)
+    monkeypatch.setitem(g_, "df", frame)
+    cards, headline, _ = g_["update_stats"]({"freq": "month", "start": "2025-10-01"}, "dark", 0)
+    text = str(cards)
+    assert "$450 more" in text and "Oct 2024 ($2,420)" in text
+    assert "$700 less" in text and "($3,106)" in text
+    assert "$1,150 worse" in text and "($686)" in text
+    cards, _, _ = g_["update_stats"]({"freq": "year", "start": "2025-01-01"}, "dark", 0)
+    assert "than 2024" in str(cards) and "$5,400 more" in str(cards)       # 12 × $450
+    # A month whose year-ago month isn't labeled says so instead
+    frame.loc[frame["date"] == "2024-09-05", "master_category"] = ""
+    cards, _, _ = g_["update_stats"]({"freq": "month", "start": "2025-09-01"}, "dark", 0)
+    assert "Sep 2024 isn't fully labeled" in str(cards)
+
+
 def test_dollar_formatting_never_shows_negative_zero(appmod):
     d, d0 = appmod["_dollar"], appmod["_dollar0"]
     assert d(-0.0) == "$0.00" and d(-0.001) == "$0.00" and d0(-0.0) == "$0" and d0(-0.4) == "$0"

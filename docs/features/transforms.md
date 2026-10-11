@@ -119,6 +119,7 @@ Everything time-based in the dashboard goes through these. Granularities are nam
 - `prev` — the previous period, truncated to the same number of days when `p` is in progress
 - `typical` — medians over `previous_periods`, truncated the same way; `typical_full` — the same medians over whole periods (the pace target)
 - `rate`, `prev_rate`, `typical_rate` — savings rate (net ÷ income, %), `None` without income
+- `last_year`, `last_year_period`, `last_year_window` — totals for the same month last year, or last year (`LAST_YEAR_STEP`: 12 months / 1 year; none for weeks), only up to the same calendar date while `p` is in progress, and that `(start, end)` window. `None` when the data doesn't reach back that far
 - `partial`, `days_elapsed`, `days_total`, `prev_period`, `n_typical`
 
 `prev` / `typical` are `None` when there's no earlier period in the data.
