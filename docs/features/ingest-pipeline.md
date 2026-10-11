@@ -189,6 +189,7 @@ The new master is written atomically (temp file + `os.replace`), so a crash mid-
 | `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; attention line |
 | `SORTED/not_transfers.csv` | Labeling panel: pairs you marked NOT A TRANSFER | Those pairs are never flagged again |
 | `SORTED/skipped_files.csv` | Every import: RAW files that couldn't be used, with the reason (removed when none) | Attention line |
+| `SORTED/exported_through.csv` | Every import: per source, the latest date in its export file names (`filename_date`: a download or statement date, `YYYY-MM-DD` or `YYYYMMDD`; dates after today ignored) | The attention line: a quiet card with a recent export isn't flagged as behind |
 | `SORTED/overlap_only.csv` | Every import: Capital One transactions left out on dates the Discover history owns, with no Discover match (removed when none) | Attention line |
 | `SORTED/last_import.csv` | A rebuild that added rows: their `row_id`s (left alone when nothing is new) | The attention line's `N new from the last import need a label` and the labeling panel's `REVIEW →` filter |
 | `SORTED/backups/before-labeling-YYYY-MM-DD.csv` | The app, when the labeling panel first opens that day (outside the backup rotation, never pruned) | Manual rollback to the state before that day's labeling |
