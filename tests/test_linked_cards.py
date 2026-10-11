@@ -11,7 +11,7 @@ import check_data
 from main import main as run_pipeline
 from Modules.linked_cards import (
     LINK_COLUMNS, answer_link, card_map, links_unreadable, month_span, pending_duplicates,
-    pending_links, read_links, recent_answers,
+    pending_links, read_links, answered_links,
 )
 from Modules.safety import orphan_count, read_overlap_only
 from Modules.transforms import load_transactions
@@ -125,15 +125,14 @@ def test_no_keeps_them_apart_and_isnt_asked_again_but_the_check_says_so(tmp_path
         in _report(tmp_path)
 
 
-def test_answers_only_apply_once_and_undo_brings_the_question_back(tmp_path):
+def test_answers_only_apply_once_and_stay_listed_until_undone(tmp_path):
     _replacement(tmp_path)
     run_pipeline(tmp_path)
     master = _mpath(tmp_path)
     assert answer_link(master, PAIR, "proposed", "same", today="2026-10-11")
     assert not answer_link(master, PAIR, "proposed", "same")              # a double tap
     assert not answer_link(master, PAIR, "proposed", "different")         # a stale page
-    assert [a["id"] for a in recent_answers(master, today="2026-10-20")] == [PAIR]
-    assert recent_answers(master, today="2026-11-01") == []               # undo offered two weeks
+    assert [(a["id"], a["status"]) for a in answered_links(master)] == [(PAIR, "same")]  # no time limit
     assert answer_link(master, PAIR, "same", "proposed")
     assert [q["id"] for q in pending_links(master)] == [PAIR]
     assert _links(tmp_path)["answered_on"].tolist() == [""]
@@ -350,15 +349,36 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     assert "stays counted twice" in again and "KEEP BOTH" in again and "GO BACK" in again
     assert g["_do_card_answer"](PAIR, "back", 0)[0] == {}
 
-    # YES merges right away (re-import) and offers UNDO; UNDO asks again
+    # NO and GO BACK only change what the line shows: nothing else re-renders
+    assert g["_do_card_answer"](PAIR, "no", 0)[1] is g["dash"].no_update
+
+    # YES merges right away (re-import) and confirms it once, with UNDO
     n_before = len(g["df"])
-    assert g["_do_card_answer"](PAIR, "yes", 0)[0] == {}
+    ui, _ = g["_do_card_answer"](PAIR, "yes", 0)
+    assert ui == {"just": PAIR}
     assert g["_pending"]() == [] and len(g["df"]) == n_before - (len(SHARED) + 1)
-    note = " ".join(_texts(g["card_question_items"]([], recent_answers(g["MASTER_PATH"]), None)))
+    note = " ".join(_texts(g["card_question_items"](
+        [], [a for a in answered_links(g["MASTER_PATH"]) if a["id"] == ui["just"]], None)))
     assert "9956 counted as a replacement for 6236" in note and "UNDO" in note
+    assert "change this in Settings → Cards" in note
+    # The next load (card-ui reset) shows nothing; Settings lists the answer
+    assert g["card_question_items"](g["_pending"](), [], None) == []
+    rows = " ".join(_texts(g["settings_card_rows"](answered_links(g["MASTER_PATH"]))))
+    assert "CARDS" in rows and "6236 → 9956 · counted as one card" in rows and "KEEP APART" in rows
     assert g["_do_card_answer"](PAIR, "yes", 0)[0] == {}                       # a second tap: no-op
+
+    # Settings switches it either way, any time
+    assert g["_do_card_answer"](PAIR, "switch", 0)[0] == {"just": PAIR}
+    assert len(g["df"]) == n_before
+    rows = " ".join(_texts(g["settings_card_rows"](answered_links(g["MASTER_PATH"]))))
+    assert "6236 / 9956 · kept apart" in rows and "COUNT AS ONE" in rows
+    g["_do_card_answer"](PAIR, "switch", 0)
+    assert len(g["df"]) == n_before - (len(SHARED) + 1)
+
+    # UNDO asks the question again
     g["_do_card_answer"](PAIR, "undo", 0)
     assert [q["id"] for q in g["_pending"]()] == [PAIR] and len(g["df"]) == n_before
+    assert g["settings_card_rows"](answered_links(g["MASTER_PATH"])) == []
 
 
 def test_the_dashboard_says_imports_are_paused(cardapp):

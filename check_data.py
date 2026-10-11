@@ -220,7 +220,7 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
             if is_replacement(s):
                 problems += 1
                 p(f"    WARNING: you said these are different cards, but they share almost every charge - "
-                  f"{_money(s['out'])} is counted twice. Undo on the dashboard (two weeks) or set the "
+                  f"{_money(s['out'])} is counted twice. Switch it in Settings -> Cards on the dashboard, or set the "
                   f"line's status to same in SORTED/linked_cards.csv")
             else:
                 p("    You said these are different cards - each counted on its own")
