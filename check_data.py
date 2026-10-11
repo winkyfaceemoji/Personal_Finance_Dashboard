@@ -23,6 +23,7 @@ import pandas as pd
 
 from config import get_data_dir, get_master_path
 from main import _merge_by_coverage, filename_date, load_and_normalize
+from Modules.linked_cards import MIN_ROWS, MIN_SHARE, card_map, is_replacement, overlap_match, read_links
 from Modules.safety import orphan_count, read_overlap_only
 from Modules.transforms import load_transactions
 
@@ -86,28 +87,44 @@ def split_cards(accounts: dict[tuple, pd.DataFrame]) -> list[dict]:
 
 
 def same_charges(accounts: dict[tuple, pd.DataFrame]) -> list[dict]:
-    """Two card numbers of the same kind (e.g. a replacement card) whose
-    exports overlap: charges with the same date, amount and description on
-    both are in the dashboard twice, since each card is its own account."""
-    keys = sorted(accounts)
+    """Two card numbers of one institution and source whose exports overlap,
+    with the charges on both (same date, amount, description)."""
+    keys = sorted(k for k in accounts if k[2])
     out = []
     for i, a in enumerate(keys):
         for b in keys[i + 1:]:
             if a[:2] != b[:2] or a[2] == b[2]:
                 continue
-            da, db = accounts[a], accounts[b]
-            lo = max(da["date"].min(), db["date"].min())
-            hi = min(da["date"].max(), db["date"].max())
-            if not lo <= hi:
-                continue
-            cols = ["date", "amount", "description"]
-            ca = da[da["date"].between(lo, hi)].groupby(cols).size()
-            cb = db[db["date"].between(lo, hi)].groupby(cols).size()
-            both = pd.concat([ca, cb], axis=1, join="inner").min(axis=1)
-            amounts = both.index.get_level_values("amount")
-            out.append({"a": a, "b": b, "from": lo, "to": hi,
-                         "rows_a": int(ca.sum()), "rows_b": int(cb.sum()), "same": int(both.sum()),
-                         "out": float((-amounts[amounts < 0] * both[amounts < 0]).sum())})
+            m = overlap_match(accounts[a], accounts[b])
+            if m is not None:
+                out.append({"a": a, "b": b, **m})
+    return out
+
+
+def copy_labels(master: Path, source: str, cards: tuple[str, str], lo, hi) -> dict | None:
+    """How the master labels the two copies of each charge on both card
+    numbers. None when the master holds only one copy (already linked)."""
+    m = pd.read_csv(master, dtype=str, keep_default_na=False)
+    m["date"] = pd.to_datetime(m["date"], errors="coerce")
+    m = m[(m["source"] == source) & m["date"].between(lo, hi)]
+    m["label"] = (m["master_category"].str.strip() + " / " + m["sub_category"].str.strip()).str.strip(" /")
+    m["key"] = list(zip(m["date"], m["description"].str.strip(),
+                        pd.to_numeric(m["amount"], errors="coerce").round(2)))
+    a = m[m["card_last4"].str.strip() == cards[0]].groupby("key")["label"].apply(list)
+    b = m[m["card_last4"].str.strip() == cards[1]].groupby("key")["label"].apply(list)
+    if a.empty or b.empty:
+        return None
+    out = {"same": 0, "one": 0, "neither": 0, "different": [], "transfer_one": []}
+    for key in a.index.intersection(b.index):
+        for la, lb in zip(sorted(a[key], reverse=True), sorted(b[key], reverse=True)):
+            if la == lb:
+                out["same" if la else "neither"] += 1
+            elif not la or not lb:
+                out["one"] += 1
+                if (la or lb).startswith("Transfer"):
+                    out["transfer_one"].append((key, la or lb))
+            else:
+                out["different"].append((key, la, lb))
     return out
 
 
@@ -182,16 +199,41 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
             p("    Their dates don't overlap, so nothing is counted twice yet.")
     if not splits:
         p("  OK: no card is split across two accounts")
+    links = read_links(master) if master else None
+    linked = card_map(links)
     for s in same_charges(accounts):
-        name_a, name_b = account_name(s["a"]), account_name(s["b"])
-        p(f"  {name_a} and {name_b} both cover {_day(s['from'])} to {_day(s['to'])} "
-          f"({s['rows_a']} and {s['rows_b']} rows)")
-        if s["same"]:
+        (_, source, ca), (_, _, cb) = s["a"], s["b"]
+        p(f"  {account_name(s['a'])} and {account_name(s['b'])} both cover {_day(s['from'])} to "
+          f"{_day(s['to'])} ({s['rows_a']} and {s['rows_b']} rows); {s['same']} charges are on both")
+        recorded = None if links is None else links[
+            (links["source"] == source) & links["old_card"].isin([ca, cb]) & links["new_card"].isin([ca, cb])]
+        if recorded is not None and not recorded.empty and recorded["status"].iat[-1] != "same":
+            p("    Marked as different cards in SORTED/linked_cards.csv - each counted on its own")
+            continue
+        if linked.get((source, ca)) is not None and linked.get((source, ca)) == linked.get((source, cb)):
+            p("    OK: linked as one card (SORTED/linked_cards.csv) - charges on both count once")
+        elif is_replacement(s):
             problems += 1
-            p(f"    WARNING: {s['same']} charges are on both (same date, amount, description) and are "
-              f"counted twice today: {_money(s['out'])} out")
+            p(f"    WARNING: a replacement card - these charges are counted twice ({_money(s['out'])} out) "
+              f"until the next import (Reload), which links the two numbers and counts them once")
         else:
-            p("    OK: no charge is on both")
+            p(f"    Different cards (a replacement repeats at least {MIN_SHARE:.0%} of the overlap, "
+              f"{MIN_ROWS}+ rows): {'a few coincidences, ' if s['same'] else ''}nothing to do")
+            continue
+        labels = copy_labels(master, source, (ca, cb), s["from"], s["to"]) if master and master.exists() else None
+        if labels is None:
+            continue
+        p(f"    Labels on the two copies: {labels['same']} same on both, {labels['one']} on one copy only, "
+          f"{labels['neither']} on neither, {len(labels['different'])} different")
+        if labels["different"]:
+            p("    Different labels - one is kept, the other shows as a label that matches no transaction:")
+            for (d, desc, amt), la, lb in labels["different"][:15]:
+                p(f"      {d:%Y-%m-%d}  {_money(amt):>10}  {desc}: {ca} says {la}, {cb} says {lb}")
+        if labels["transfer_one"]:
+            p("    Labeled Transfer on one copy only - after the merge that charge stays a Transfer "
+              "(not spending). Check these are right:")
+            for (d, desc, amt), lab in labels["transfer_one"][:15]:
+                p(f"      {d:%Y-%m-%d}  {_money(amt):>10}  {desc}: {lab}")
 
     p("\n3. FIRST MONTH AND YEAR OF EACH ACCOUNT")
     for k, d in sorted(accounts.items()):

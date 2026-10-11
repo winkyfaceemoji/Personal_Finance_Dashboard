@@ -76,7 +76,8 @@ def test_is_read_only_and_compares_saved_totals(tmp_path):
     assert "can't read" in report and "save one first with --save" in report
 
 
-def test_finds_charges_on_both_an_old_and_a_replacement_card(tmp_path):
+def test_a_two_row_overlap_is_too_little_to_call_a_replacement(tmp_path):
+    # The full replacement case is in test_linked_cards.py
     head = "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
     _raw(tmp_path, "Chase/Chase6236_Activity_20260401.csv", head +
          "01/05/2026,01/06/2026,COFFEE,Food & Drink,Sale,-4.50,\n"
@@ -88,4 +89,5 @@ def test_finds_charges_on_both_an_old_and_a_replacement_card(tmp_path):
          "05/01/2026,05/02/2026,GAS,Gas,Sale,-30.00,\n")
     report = _report(tmp_path)
     assert "Chase Credit 6236 (folder: Chase) and Chase Credit 9956 (folder: Chase) both cover" in report
-    assert "2 charges are on both" in report and "$75.00 out" in report
+    assert "(2 and 2 rows); 2 charges are on both" in report
+    assert "Different cards (a replacement repeats at least 95% of the overlap, 10+ rows)" in report
