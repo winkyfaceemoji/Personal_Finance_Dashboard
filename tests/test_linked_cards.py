@@ -10,8 +10,8 @@ import pytest
 import check_data
 from main import main as run_pipeline
 from Modules.linked_cards import (
-    LINK_COLUMNS, answer_link, card_map, month_span, pending_duplicates, pending_links,
-    read_links, recent_answers,
+    LINK_COLUMNS, answer_link, card_map, links_unreadable, month_span, pending_duplicates,
+    pending_links, read_links, recent_answers,
 )
 from Modules.safety import orphan_count, read_overlap_only
 from Modules.transforms import load_transactions
@@ -149,14 +149,61 @@ def test_a_typo_in_the_status_asks_again_instead_of_settling_it(tmp_path):
     assert 'linked_cards.csv says "sme"' in _report(tmp_path)
 
 
-def test_an_unreadable_links_file_is_left_alone(tmp_path):
+def test_an_unreadable_links_file_stops_the_import_before_anything_changes(tmp_path):
+    # A confirmed replacement, then the file is saved badly (a header renamed in Excel)
     _replacement(tmp_path)
-    (tmp_path / "SORTED").mkdir(parents=True)
-    bad = tmp_path / "SORTED" / "linked_cards.csv"
-    bad.write_text("not,a\nlinks,file\n")
     run_pipeline(tmp_path)
-    assert bad.read_text() == "not,a\nlinks,file\n"
-    assert set(_master(tmp_path)["card_last4"]) == {"6236", "9956"}
+    answer_link(_mpath(tmp_path), PAIR, "proposed", "same")
+    run_pipeline(tmp_path)
+    sorted_ = tmp_path / "SORTED"
+    bad = sorted_ / "linked_cards.csv"
+    bad.write_text(bad.read_text().replace("status", "Status ", 1).replace("source", "Source x", 1))
+    before = {f.name: f.read_bytes() for f in sorted_.glob("*.csv")}
+    _raw(tmp_path, "Chase9956_Activity_20261011.csv", NEW_ONLY + [("2026-04-20", "LATER", -9.0)])
+
+    run_pipeline(tmp_path)
+    # Nothing written: not the master (the card isn't split again), not the
+    # exported-through dates or the skipped list the header reads
+    assert {f.name: f.read_bytes() for f in sorted_.glob("*.csv")} == before
+    assert links_unreadable(_mpath(tmp_path))
+    out = io.StringIO()
+    assert check_data.run(tmp_path, out=out) > 0
+    assert "linked_cards.csv can't be read - imports are stopped" in out.getvalue()
+
+
+def test_a_same_card_re_download_isnt_reported_as_left_out(tmp_path):
+    # After YES: a narrower re-download of the old card, where a pending $40
+    # has since posted as $48 (a tip). It loses its dates to the old card's
+    # wider export — same number, so not a "left out" charge.
+    _replacement(tmp_path)
+    run_pipeline(tmp_path)
+    answer_link(_mpath(tmp_path), PAIR, "proposed", "same")
+    re_download = [r for r in SHARED[9:18]]
+    re_download[0] = (re_download[0][0], re_download[0][1], -48.0)
+    _raw(tmp_path, "Chase6236_Activity_20260315.csv", re_download)
+    run_pipeline(tmp_path)
+    assert read_overlap_only(_mpath(tmp_path)).empty
+
+
+def test_a_label_on_a_charge_only_the_losing_export_has_is_kept_not_absorbed(tmp_path):
+    # Three identical $2.75 rides: the old card's (winning) export has two,
+    # the new card's has all three. Five labeled rows before YES; after it two
+    # remain, two labels were the new card's copies — and the third ride's
+    # label is kept as unmatched (the ride itself is reported as left out).
+    ride = ("2026-02-03", "TRANSIT", -2.75)
+    _raw(tmp_path, "Chase6236_Activity_20260401.csv",
+         OLD_ONLY + SHARED + [ride, ride, ("2026-03-27", "LAST OLD", -3.0)])
+    _raw(tmp_path, "Chase9956_Activity_20261010.csv",
+         SHARED + [ride, ride, ride, ("2026-03-27", "LAST OLD", -3.0)] + NEW_ONLY)
+    run_pipeline(tmp_path)
+    m = _master(tmp_path)
+    m.loc[m["description"] == "TRANSIT", "master_category"] = "Expense"
+    m.to_csv(_mpath(tmp_path), index=False)
+    assert answer_link(_mpath(tmp_path), PAIR, "proposed", "same")
+    run_pipeline(tmp_path)
+    assert (_master(tmp_path)["description"] == "TRANSIT").sum() == 2
+    assert orphan_count(_mpath(tmp_path)) == 1
+    assert read_overlap_only(_mpath(tmp_path))["description"].tolist() == ["TRANSIT"]
 
 
 def _label(m, desc, card, cat, sub=""):
@@ -312,3 +359,9 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     assert g["_do_card_answer"](PAIR, "yes", 0)[0] == {}                       # a second tap: no-op
     g["_do_card_answer"](PAIR, "undo", 0)
     assert [q["id"] for q in g["_pending"]()] == [PAIR] and len(g["df"]) == n_before
+
+
+def test_the_dashboard_says_imports_are_paused(cardapp):
+    g = cardapp["_do_card_answer"].__globals__
+    parts = g["attention_parts"](g["df"].iloc[0:0], [], None, 0, [], links_broken=True)
+    assert parts["other"].startswith("SORTED/linked_cards.csv can't be read — imports are paused")
