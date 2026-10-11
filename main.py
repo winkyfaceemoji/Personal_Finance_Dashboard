@@ -5,7 +5,8 @@ from pathlib import Path
 from config import get_data_dir, get_master_path
 from Modules.labels import LAST_IMPORT_NAME, row_id
 from Modules.safety import (
-    atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_overlap_only, write_skipped,
+    atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_exported_through,
+    write_overlap_only, write_skipped,
 )
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -225,6 +226,26 @@ def load_and_normalize(filepath: Path, input_folder: Path, skipped: list | None 
     tag = f" [{institution}]" if institution else ""
     print(f"  [OK]   {filepath.name} -> {fmt}{tag}" + (f" (card ...{last4})" if last4 else ""))
     return result
+
+
+_NAME_DATE = re.compile(r"(?<!\d)(\d{4})-?(\d{2})-?(\d{2})(?!\d)")
+
+
+def filename_date(name: str, today=None) -> pd.Timestamp | None:
+    """The latest date written in an export's file name — the download date
+    (2026-10-10_transaction_download.csv, Chase…_20260411.CSV) or statement
+    date (Discover-Statement-20230527.csv). None without one; dates after
+    today are ignored as not dates at all."""
+    today = pd.Timestamp(today if today is not None else pd.Timestamp.today()).normalize()
+    found = []
+    for y, m, d in _NAME_DATE.findall(name):
+        try:
+            t = pd.Timestamp(int(y), int(m), int(d))
+        except ValueError:
+            continue
+        if 2000 <= t.year and t <= today:
+            found.append(t)
+    return max(found) if found else None
 
 
 def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None = None) -> pd.DataFrame:
@@ -503,10 +524,16 @@ def main(data_dir: Path | None = None):
     print(f"Found {len(csv_files)} CSV file(s) in {input_folder}\n")
 
     groups: dict[tuple, list[pd.DataFrame]] = defaultdict(list)
+    exported: dict[str, pd.Timestamp] = {}
     for f in csv_files:
         normalized = load_and_normalize(f, input_folder, skipped)
         if normalized is None or normalized.empty:
             continue
+        # A card with no recent charges isn't behind if its export is recent
+        named = filename_date(f.name)
+        src = normalized["source"].iat[0]
+        if named is not None and (src not in exported or named > exported[src]):
+            exported[src] = named
         normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
         # Account key includes institution so two institutions that export the
         # same CSV format (same source, blank card_last4) don't collapse into
@@ -519,6 +546,7 @@ def main(data_dir: Path | None = None):
     # Recorded before anything below can return or fail: the header warning
     # must describe this run, not a stale one
     write_skipped(master_file, skipped)
+    write_exported_through(master_file, exported)
 
     if not groups:
         print("No valid files were processed. Exiting.")
