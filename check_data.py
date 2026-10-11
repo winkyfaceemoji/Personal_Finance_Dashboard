@@ -199,10 +199,11 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
             p("    Their dates don't overlap, so nothing is counted twice yet.")
     if not splits:
         p("  OK: no card is split across two accounts")
-    links = read_links(master) if master else None
-    if links is None and master and (master.parent / "linked_cards.csv").exists():
+    links = read_links(master, quiet=True) if master else None
+    if master and links is None:
         problems += 1
-        p("  WARNING: SORTED/linked_cards.csv can't be read - replacement cards aren't checked")
+        p("  WARNING: SORTED/linked_cards.csv can't be read - imports are stopped until it's fixed "
+          "(a confirmed replacement card would otherwise count twice)")
     for source, old, new_, status in (links.attrs.get("unknown", []) if links is not None else []):
         problems += 1
         p(f"  WARNING: linked_cards.csv says \"{status}\" for {source} {old}/{new_} - not a status "
@@ -335,8 +336,8 @@ def main(argv=None) -> int:
     if not data_dir:
         print("No data folder configured - open the dashboard once, or pass --data-dir.")
         return 2
-    run(Path(data_dir), save=args.save, against=args.compare)
-    return 0
+    # Exit 1 when the report found a problem, so a script can tell
+    return 1 if run(Path(data_dir), save=args.save, against=args.compare) else 0
 
 
 if __name__ == "__main__":
