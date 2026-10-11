@@ -560,11 +560,15 @@ def test_recurring_view(appmod):
     assert "RENT CO" in text and "Stopped (1)" in text and "HULU" in text
 
 
-def _summary(spent, typ=None, full=None, partial=False, day=31, days=31):
+def _summary(spent, typ=None, full=None, partial=False, day=31, days=31, periods=None):
     t = {"exp": typ} if typ is not None else None
     f = {"exp": full if full is not None else typ} if typ is not None else None
+    if periods is None:      # a few full earlier months by default
+        periods = [pd.Period("2026-09", "M"), pd.Period("2026-08", "M")] if typ is not None else []
     return {"cur": {"exp": spent}, "typical": t, "typical_full": f,
-            "partial": partial, "days_elapsed": day, "days_total": days}
+            "partial": partial, "days_elapsed": day, "days_total": days,
+            "through": pd.Timestamp(f"2026-10-{day:02d}") if partial else None,
+            "typical_periods": periods}
 
 
 _OK = {"current": True, "age": 3, "as_of": pd.Timestamp("2026-10-07"),
@@ -576,12 +580,22 @@ def test_headline_compares_with_typical(appmod):
     c = appmod["_CHART"]["dark"]
     over, fix = view(_summary(1400.0, 1000.0), "month", _OK, c)
     assert "$400 over a typical month" in str(over) and not fix
-    assert "$300 under your typical pace" in str(view(
-        _summary(700.0, 1000.0, 2000.0, partial=True, day=15), "month", _OK, c)[0])
+    # In progress: where the data stops, in the same words everywhere
+    partial = str(view(_summary(700.0, 1000.0, 2000.0, partial=True, day=15), "month", _OK, c)[0])
+    assert "SPENDING THROUGH OCT 15" in partial and "$300 under a typical month" in partial
+    assert "typical by Oct 15 $1,000" in partial and "typical full month $2,000" in partial
+    assert "DAY " not in partial and "typical pace" not in partial
     assert "In line with a typical month" in str(view(_summary(1030.0, 1000.0), "month", _OK, c)[0])
-    assert "No earlier months" in str(view(_summary(50.0), "month", _OK, c)[0])
+    none = str(view(_summary(50.0), "month", _OK, c)[0])
+    assert "$50 spent" in none and "No full earlier month to compare against" in none
     early = str(view(_summary(80.0, 10.0, 2000.0, partial=True, day=2), "month", _OK, c)[0])
-    assert "Too early to call" in early and "over" not in early
+    assert "Too early to call — $80 spent" in early and "over" not in early
+    # One full earlier period isn't "typical": it's named
+    one = str(view(_summary(1400.0, 1000.0, periods=[pd.Period("2024", "Y")]), "year", _OK, c)[0])
+    assert "$400 over 2024" in one and "2024 $1,000" in one and "typical" not in one
+    one = str(view(_summary(700.0, 1000.0, 2000.0, partial=True, day=15,
+                            periods=[pd.Period("2025", "Y")]), "year", _OK, c)[0])
+    assert "$300 under 2025" in one and "2025 by Oct 15 $1,000" in one and "all of 2025 $2,000" in one
 
 
 def test_headline_refuses_on_stale_or_unlabeled_data(appmod):
@@ -662,7 +676,7 @@ def test_last_year_lines_in_dollars_and_words(appmod):
     # In progress: say which day last year it's measured to
     partial = lines(_ly_summary({"exp": 10.0, "inc": 0.0, "net": -10.0},
                                 {"exp": 5.0, "inc": 0.0, "net": -5.0}, partial=True), "month", 0.0)
-    assert "Oct 2024 by Oct 26" in str(partial["exp"])
+    assert "Oct 2024 through Oct 26" in str(partial["exp"])
 
 
 def test_last_year_lines_refuse_rather_than_mislead(appmod):
@@ -673,6 +687,9 @@ def test_last_year_lines_refuse_rather_than_mislead(appmod):
     assert all("No data for Oct 2024" in str(v) for v in lines(no_data, "month", None).values())
     s = _ly_summary({"exp": 10.0, "inc": 0.0, "net": -10.0}, {"exp": 5.0, "inc": 0.0, "net": -5.0})
     assert all("Oct 2024 isn't fully labeled" in str(v) for v in lines(s, "month", 0.4).values())
+    # Last year's period only partly in the data: a note, never a number
+    part = dict(_ly_summary({"exp": 10.0, "inc": 0.0, "net": -10.0}, None), last_year_partial=True)
+    assert all(str(v).count("Oct 2024 only partly covered") == 1 for v in lines(part, "month", None).values())
 
 
 def test_stat_cards_render_for_every_view(appmod):
@@ -714,7 +731,7 @@ def test_stat_cards_compare_with_last_year_on_labeled_data(appmod, monkeypatch):
     assert "Sep 2024 isn't fully labeled" in str(cards)
 
 
-def test_period_header_says_where_old_data_ends(appmod, monkeypatch):
+def test_period_header_says_where_the_data_stops(appmod, monkeypatch):
     # Data ending Dec 26, 2025: December is the "latest" period, but it ended
     # long ago — the header must not call it in progress
     g_ = _live(appmod)
@@ -722,15 +739,18 @@ def test_period_header_says_where_old_data_ends(appmod, monkeypatch):
                           "amount": [-5.0, -7.0], "master_category": ["Expense", "Expense"]})
     monkeypatch.setitem(g_, "df", frame)
     label, sub, *_ = g_["update_period_header"]({"freq": "month", "start": "2025-12-01"})
-    assert label == "Dec 2025" and sub == "data ends Dec 26"
-    # A period that really is still running says so (on a month's last day
-    # the newest data completes the month, so there's nothing to check)
+    assert label == "Dec 2025" and sub == "through Dec 26"
+    # The same words whatever today's date is: the screen depends on the data
     today = pd.Timestamp.today().normalize()
-    if today == today.to_period("M").end_time.normalize():
-        return
-    monkeypatch.setitem(g_, "df", frame.assign(date=[today - pd.Timedelta(days=40), today]))
-    start = today.to_period("M").start_time.strftime("%Y-%m-%d")
-    assert g_["update_period_header"]({"freq": "month", "start": start})[1] == "in progress"
+    if today != today.to_period("M").end_time.normalize():
+        monkeypatch.setitem(g_, "df", frame.assign(date=[today - pd.Timedelta(days=40), today]))
+        start = today.to_period("M").start_time.strftime("%Y-%m-%d")
+        assert g_["update_period_header"]({"freq": "month", "start": start})[1] == \
+            f"through {today:%b} {today.day}"
+    # A first period the data only partly covers says where it starts
+    monkeypatch.setitem(g_, "df", frame.assign(date=pd.to_datetime(["2023-02-16", "2023-05-01"])))
+    assert g_["update_period_header"]({"freq": "month", "start": "2023-02-01"})[1] == "data starts Feb 16"
+    assert g_["update_period_header"]({"freq": "year", "start": "2023-01-01"})[1] == "through May 1"
 
 
 def test_dollar_formatting_never_shows_negative_zero(appmod):
