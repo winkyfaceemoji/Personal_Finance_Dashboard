@@ -47,6 +47,30 @@ def test_merchant_key_keeps_numeric_and_hyphenated_names():
     assert merchant_key("WAL-MART #1234") == "wal-mart"
 
 
+def test_merchant_key_reads_past_a_processor_prefix():
+    # The merchant is the word after TST* / SQ * / SP / PAYPAL *, even when it
+    # starts with a digit; a bare number there is a phone number, not a name
+    assert merchant_key("TST* 7TH STREET BURGER -") == "tst 7th street burger"
+    assert merchant_key("PAYPAL *AITADDII10") == "paypal aitaddii10"
+    assert merchant_key("PAYPAL *4029357733") == "paypal"
+    assert merchant_key("SQ *THE EGG SHOP") == "sq the egg shop"
+    assert merchant_key("TST*ANGELINA BAKERY - 16") == "tst angelina bakery"
+    assert rule_keyword(["TST* 7TH STREET BURGER -"] * 2) == "tst 7th street burger"
+
+
+RTP = ("REAL TIME PAYMENT CREDIT RECD FROM ABA/CONTR BNK-{}  FROM: BNF-{} REF: 1a2b "
+       "INFO: TEXT-/VXR/1 IID: 2 RECD: 15:18:45 TRN: 3GD")
+
+
+def test_payment_network_without_a_payee_is_never_grouped():
+    # A real-time payment names the network, not who paid: a sportsbook, a
+    # paycheck or a refund — each row is labeled on its own
+    a, b = RTP.format(181504472, "FanDuel Credit via Trustly"), RTP.format(466312825, "Nuvei US")
+    assert merchant_key(a) == merchant_key(b) == ""
+    groups = unlabeled_groups(_df([("2025-03-01", a, 50.0, ""), ("2025-03-02", b, 80.0, "")]))
+    assert len(groups) == 2 and all(g["fallback"] and g["count"] == 1 for g in groups)
+
+
 def test_rule_keyword_is_common_prefix_and_substring():
     descs = ["STARBUCKS STORE 01234 SEATTLE", "STARBUCKS STORE 09876 NY"]
     kw = rule_keyword(descs)

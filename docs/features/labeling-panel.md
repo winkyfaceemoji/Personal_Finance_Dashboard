@@ -51,12 +51,12 @@ A collapsible **How to choose a label** box (`LABEL_GUIDE` in `app.py`, rendered
 1. `normalize_description` — lowercase, `*` and `#` become spaces, whitespace collapsed.
 2. Cut at the first ` web id`, ` ppd id`, ` ccd id`, ` id:` or ` ach ` (reference-id tails).
 3. Drop ACH code tokens (`rtl-…`, `ppd-…`, `ccd-…`, `web-…`). The pattern is narrow on purpose: a generic `xx-…` pattern would eat names like `wal-mart`.
-4. Keep the first word, then each following word until one contains a digit. Store numbers and dates drop off, but a name that **starts with a number or contains a hyphen** survives (`7-eleven`, `99 ranch market`, `1-800-flowers`).
+4. Keep the first word, then each following word until one contains a digit. Store numbers and dates drop off, but a name that **starts with a number or contains a hyphen** survives (`7-eleven`, `99 ranch market`, `1-800-flowers`). After a card processor's prefix (`tst`, `sq`, `sp`, `paypal`) the next word is always kept when it has a letter, since it is the merchant's name (`TST* 7TH STREET BURGER` → `tst 7th street burger`); a bare number there (`PAYPAL *4029357733`) is a phone number and still drops off.
 5. Trim ` -.,/`.
 
 `STARBUCKS STORE 01234 SEATTLE` and `STARBUCKS STORE 09876 NEW YORK` both become `starbucks store`.
 
-A description with **no recognizable name** (nothing with a letter is left, e.g. `#1234`) becomes its own one-row **fallback** group, keyed on its full normalized description. Unrelated nameless rows are never lumped into a shared catch-all.
+A description with **no recognizable name** (nothing with a letter is left, e.g. `#1234`) becomes its own one-row **fallback** group, keyed on its full normalized description. So does a **real-time payment** (`REAL TIME PAYMENT CREDIT RECD FROM …`): its text names the payment network, not who paid, and a sportsbook payout, a paycheck or a refund can all arrive that way. Unrelated rows are never lumped into a shared catch-all. A fallback card is titled `No clear merchant`, with its transaction text below.
 
 Each group carries: `key` (a short hash), `merchant`, `count`, `total`, `abs_total`, `first` / `last` date, one `example` description, `mixed`, `fallback`, `sig`, `suggest_transfer` and `rows`. Rows are one entry per distinct `row_id` (a hash of date, description, amount, source and card), with identical twin rows merged into one entry with a `count`, the same way the import matcher treats them. `sig` is a hash of the group's row ids and counts, used to detect a stale list (see Writes).
 

@@ -894,7 +894,11 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
                 # Who it's with (the name rows are grouped under) as the title,
                 # and under it, verbatim and tagged, what the bank wrote
                 html.Div(className="lg-title", children=[
-                    html.Span(g["merchant"], className="lg-name", title="Merchant"),
+                    # A nameless (fallback) group has no merchant to show — its
+                    # title would only repeat the transaction text below
+                    html.Span("No clear merchant", className="lg-name lg-unclear",
+                              title="Label each row by what its transaction text says")
+                    if g["fallback"] else html.Span(g["merchant"], className="lg-name", title="Merchant"),
                     html.Span("MIXED", className="lg-badge",
                               title="Has money in and out — check the rows") if g["mixed"] else None,
                 ]),

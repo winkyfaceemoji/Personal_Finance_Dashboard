@@ -279,6 +279,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-info { min-width: 0; flex: 1 1 260px; }   /* below 260px the buttons drop under it */
 .lg-title { margin-bottom: 4px; }
 .lg-name { font-weight: 600; font-size: 15px; }
+.lg-unclear { font-weight: 500; color: var(--subtext); }
 .lg-text { font-size: 12px; margin-bottom: 4px; overflow-wrap: anywhere; }
 .lg-tag { color: var(--subtext); margin-right: 8px; }
 .lg-more { color: var(--subtext); margin-left: 8px; white-space: nowrap; }
