@@ -18,8 +18,8 @@ from Modules.labels import (
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
-    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_overlap_only, read_skipped,
-    restore_backup, snapshot_master,
+    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
+    read_skipped, restore_backup, snapshot_master,
 )
 from Modules.transforms import (
     load_transactions,
@@ -280,11 +280,14 @@ def overlap_text(left_out: pd.DataFrame | None) -> str:
 
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
                     skipped: list[tuple[str, str]], today=None,
-                    left_out: pd.DataFrame | None = None) -> dict[str, str]:
+                    left_out: pd.DataFrame | None = None,
+                    exported: dict | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
     transfers each come with a button; other is what has no in-app fix.
+    exported: {source: date} its exports are known to reach (from their file
+    names), so a quiet card with a recent download isn't "behind".
     """
     u = unlabeled_summary(frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
@@ -298,9 +301,13 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
         other.append(f"no transactions in {age} days — add newer statements and reload")
     if not frame.empty:
         newest = frame["date"].max().normalize()
-        # A source lagging the newest by over a week: its recent spending is missing
-        other += [f"{src} only through {d:%b} {d.day}" for src, d in source_freshness(frame).items()
-                  if (newest - d.normalize()).days > 7]
+        # A source lagging the newest by over a week: its recent spending is
+        # missing — unless an export named after a later date says it was quiet
+        exported = exported or {}
+        for src, d in source_freshness(frame).items():
+            through = max(d.normalize(), exported.get(src, d).normalize())
+            if (newest - through).days > 7:
+                other.append(f"{src} only through {d:%b} {d.day}")
     if orphans:
         other.append(f"{orphans} label{'s' if orphans != 1 else ''} match no transaction "
                      f"(kept in SORTED/orphaned_labels.csv)")
@@ -1044,6 +1051,7 @@ def update_attention(_refresh):
         orphan_count(MASTER_PATH) if MASTER_PATH else 0,
         read_skipped(MASTER_PATH) if MASTER_PATH else [],
         left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
+        exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
     )
     shown = {"display": "flex"} if any(parts.values()) else _HIDDEN
     return (shown,

@@ -18,6 +18,7 @@ BACKUP_KEEP    = 10
 ORPHANS_NAME   = "orphaned_labels.csv"
 SKIPPED_NAME   = "skipped_files.csv"
 OVERLAP_NAME   = "overlap_only.csv"
+EXPORTED_NAME  = "exported_through.csv"
 
 # Dash's dev server runs callbacks on threads: a Reload rebuilding the master
 # while an Import rewrites it would let one overwrite the other's labels. Every
@@ -238,6 +239,39 @@ def read_overlap_only(master: Path) -> pd.DataFrame:
         return d
     except Exception:
         return empty
+
+
+def exported_path(master: Path) -> Path:
+    return Path(master).parent / EXPORTED_NAME
+
+
+def write_exported_through(master: Path, through: dict) -> None:
+    """Per source, the latest date in its export file names (a download or
+    statement date): how far its data is known to reach even when the card
+    was quiet. No file when none is known. Best effort, like write_skipped."""
+    p = exported_path(master)
+    try:
+        if through:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rows = [(src, d.strftime("%Y-%m-%d")) for src, d in sorted(through.items())]
+            atomic_write_csv(pd.DataFrame(rows, columns=["source", "through"]), p)
+        else:
+            p.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"  ⚠ Could not update {p} ({e})")
+
+
+def read_exported_through(master: Path) -> dict:
+    """{source: Timestamp} from write_exported_through ({} when unknown)."""
+    p = exported_path(master)
+    if not p.exists():
+        return {}
+    try:
+        d = pd.read_csv(p, dtype=str, keep_default_na=False)
+        dates = pd.to_datetime(d["through"], errors="coerce")
+        return {s: t for s, t in zip(d["source"], dates) if pd.notna(t)}
+    except Exception:
+        return {}
 
 
 def orphan_count(master: Path) -> int:
