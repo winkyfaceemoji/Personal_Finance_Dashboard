@@ -737,3 +737,46 @@ def test_dollar_formatting_never_shows_negative_zero(appmod):
     d, d0 = appmod["_dollar"], appmod["_dollar0"]
     assert d(-0.0) == "$0.00" and d(-0.001) == "$0.00" and d0(-0.0) == "$0" and d0(-0.4) == "$0"
     assert d(-12.5) == "-$12.50" and d0(-1234.6) == "-$1,235" and d(1234.5) == "$1,234.50"
+
+
+def test_attention_count_leaves_out_what_the_headline_leaves_out(appmod):
+    from Modules.labels import row_id
+    parts = appmod["attention_parts"]
+    frame = pd.DataFrame({
+        "date": pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-02"]),
+        "description": ["SHOP", "CARD PAYMENT", "PAYMENT THANK YOU"],
+        "amount": [-5.0, -300.0, 300.0], "source": ["Chase Credit", "Chase Debit", "Chase Credit"],
+        "card_last4": ["", "", ""], "master_category": ["", "", ""],
+    })
+    today = pd.Timestamp("2026-10-03")
+    assert parts(frame, [], None, 0, [], today)["unlabeled"] == "3 unlabeled ($605) not counted"
+    # The two sides of a certain transfer pair aren't missing spending
+    pair = {row_id(r) for r in frame.iloc[1:].to_dict("records")}
+    got = parts(frame, [], None, 0, [], today, uncounted_ids=pair)
+    assert got["unlabeled"] == "1 unlabeled ($5) not counted"
+
+
+def test_label_them_opens_on_the_rows_holding_back_the_period(appmod):
+    from Modules.labels import row_ids, unlabeled_groups
+    g_ = _live(appmod)
+    df = g_["df"]
+    # A month the headline refuses for unlabeled money out
+    month = next(q for q in sorted(df["date"].dt.to_period("M").dropna().unique(), reverse=True)
+                 if not g_["_blocking_rows"]("month", q).empty)
+    blocking = g_["_blocking_rows"]("month", month)
+    filt = f"period|month|{month.start_time:%Y-%m-%d}"
+    assert g_["_period_filter"](filt) == ("month", month)
+    ids, note = g_["_filter_ids"](filt)
+    assert ids == set(row_ids(blocking)) and note == f" · in {g_['period_label'](month, 'month')}"
+    assert g_["_filter_ids"](filt, pairs=True) == (None, "")     # the pairs tab shows them all
+    # The list holds exactly those rows — labeling them is what clears "Can't say yet"
+    children, summary = g_["render_label_list"]({"display": "block"}, 0, "todo", filt,
+                                                [], [], [], [], [], [], [], [])
+    groups = unlabeled_groups(g_["_without_pending_dups"](df), only_row_ids=ids)
+    assert sum(gr["count"] for gr in groups) == len(blocking)
+    assert summary.startswith(f"{len(blocking):,} rows") and note in summary
+    # SHOW ALL is offered on a subset, and goes back to everything
+    assert g_["show_all_button"](filt, "todo") == g_["_SHOWN_INLINE"]
+    assert g_["show_all_button"]("all", "todo") == g_["_HIDDEN"]
+    assert g_["show_all_unlabeled"](1, 3) == ("all", 4)
+    assert g_["_period_filter"]("period|nonsense") is None and g_["_period_filter"]("all") is None

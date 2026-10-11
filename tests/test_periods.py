@@ -95,7 +95,7 @@ def test_partial_period_compares_like_for_like():
     s = period_summary(df, "month", to_period("2025-12-10", "month"), as_of="2025-12-10")
     assert s["partial"] and s["days_elapsed"] == 10 and s["days_total"] == 31
     assert s["cur"]["exp"] == 150.0
-    assert s["prev"]["exp"] == 100.0             # Nov 1–10 only
+    assert s["typical"]["exp"] == 100.0          # Nov 1–10 only
     assert s["typical_full"]["exp"] == 1000.0    # the whole of November
 
 
@@ -107,7 +107,6 @@ def test_complete_period_and_typical_median():
     s = period_summary(df, "month", may, as_of="2025-05-31")
     assert not s["partial"]
     assert s["cur"]["exp"] == 50.0
-    assert s["prev"]["exp"] == 1000.0
     assert s["typical"]["exp"] == 250.0          # median of 100, 300, 200, 1000
     assert s["n_typical"] == 4
 
@@ -115,7 +114,7 @@ def test_complete_period_and_typical_median():
 def test_first_period_has_no_comparison():
     df = _df([("2025-01-15", -10.0, "Expense")])
     s = period_summary(df, "month", to_period("2025-01-15", "month"), as_of="2025-01-31")
-    assert s["prev"] is None and s["typical"] is None
+    assert s["typical"] is None and s["n_typical"] == 0
 
 
 def test_month_compares_with_the_same_month_last_year():
@@ -150,12 +149,6 @@ def test_no_last_year_comparison_for_weeks_or_before_the_data():
     df = _df([("2025-01-15", -10.0, "Expense"), ("2025-10-07", -20.0, "Expense")])
     s = period_summary(df, "month", to_period("2025-10-07", "month"), as_of="2025-10-31")
     assert s["last_year"] is None                            # data starts Jan 2025
-
-
-def test_savings_rate():
-    df = _df([("2025-01-10", 1000.0, "Income"), ("2025-01-11", -250.0, "Expense")])
-    s = period_summary(df, "month", to_period("2025-01-10", "month"), as_of="2025-01-31")
-    assert s["rate"] == pytest.approx(75.0)
 
 
 # ── Bundled demo data, end to end ─────────────────────────────────────────────

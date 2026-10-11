@@ -220,6 +220,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .settings-row { display: flex; gap: 8px; }
 .settings-row > * { flex: 1; }
 #settings-menu-panel .btn-small { white-space: nowrap; }
+.label-summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .settings-cards { display: flex; flex-direction: column; gap: 8px; }
 .settings-cards:empty { display: none; }
 .settings-card-row { display: flex; flex-direction: column; gap: 6px; }

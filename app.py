@@ -293,7 +293,8 @@ def overlap_text(left_out: pd.DataFrame | None) -> str:
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
                     skipped: list[tuple[str, str]], today=None,
                     left_out: pd.DataFrame | None = None,
-                    exported: dict | None = None, links_broken: bool = False) -> dict[str, str]:
+                    exported: dict | None = None, links_broken: bool = False,
+                    uncounted_ids: set | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
@@ -302,8 +303,11 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     names), so a quiet card with a recent download isn't "behind".
     links_broken: SORTED/linked_cards.csv can't be read, so imports are
     stopped (a confirmed replacement card would otherwise count twice).
+    uncounted_ids: row ids the headline doesn't count as unreviewed (sides
+    of certain transfer pairs), left out of the unlabeled count too — the
+    line and the headline mustn't disagree.
     """
-    u = unlabeled_summary(frame)
+    u = unlabeled_summary(frame[~row_ids(frame).isin(uncounted_ids)] if uncounted_ids else frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
                  if u["count"] else "")
     _, need = last_import_text(frame, import_ids)
@@ -645,7 +649,12 @@ app.layout = html.Div(
         html.Div(id="label-panel", style=_HIDDEN, children=html.Div(className="label-panel-inner", children=[
             html.Div(className="label-head", children=[
                 html.Div([html.Div("LABEL TRANSACTIONS", className="app-label"),
-                          html.Div(id="label-summary", className="hint")]),
+                          html.Div(className="label-summary-row", children=[
+                              html.Span(id="label-summary", className="hint"),
+                              # Opened on a subset (REVIEW →, LABEL THEM →): the way to everything
+                              html.Button("SHOW ALL", id="label-show-all", n_clicks=0,
+                                          className="btn-secondary btn-small", style=_HIDDEN),
+                          ])]),
                 dcc.RadioItems(
                     id="label-tab", className="pills", value="todo", inline=True,
                     inputStyle=_PILL_INPUT,
@@ -953,9 +962,8 @@ def _shown_pairs(filt) -> tuple[list[dict], int]:
     REVIEW, only pairs touching the last import's rows; at most LABEL_TOP_N,
     and LABEL ALL acts on exactly these — never on pairs the user didn't see."""
     pairs = _pair_lists()[0]
-    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    only, _ = _filter_ids(filt, pairs=True)
     if only is not None:
-        only = set(only)
         pairs = [p for p in pairs if p["out"]["row_id"] in only or p["in"]["row_id"] in only]
     return pairs[:LABEL_TOP_N], len(pairs)
 
@@ -965,9 +973,8 @@ def _suspects(filt=None) -> list[dict]:
     (REVIEW: only those touching the last import), biggest first."""
     dismissed = not_transfer_keys(MASTER_PATH) if MASTER_PATH else set()
     out = [p for p in _pair_lists()[1] if p["key"] not in dismissed]
-    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    only, _ = _filter_ids(filt, pairs=True)
     if only is not None:
-        only = set(only)
         out = [p for p in out if p["out"]["row_id"] in only or p["in"]["row_id"] in only]
     return out
 
@@ -1179,6 +1186,7 @@ def update_attention(_refresh, card_ui):
         left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
         exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
         links_broken=links_unreadable(MASTER_PATH) if MASTER_PATH else False,
+        uncounted_ids=_pair_row_ids(),
     )
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
@@ -1400,6 +1408,48 @@ def _pair_row_ids() -> set:
     return {r["row_id"] for p in _pair_lists()[0] for r in p["to_label"]}
 
 
+def _counted_rows(rows: pd.DataFrame, pending: list[dict] | None = None) -> pd.DataFrame:
+    """Rows that can count, leaving out the sides of certain transfer pairs
+    (an unlabeled card payment isn't missing spending) and a replacement
+    card's copies awaiting the card question."""
+    rows = _without_pending_dups(rows, pending)
+    return rows[~row_ids(rows).isin(_pair_row_ids())] if not rows.empty else rows
+
+
+def _blocking_rows(freq: str, p: pd.Period) -> pd.DataFrame:
+    """The rows the headline's unlabeled test counts for a period —
+    unlabeled money out that can count. Labeling exactly these clears its
+    "Can't say yet"; LABEL THEM → opens the panel on them."""
+    rows = _counted_rows(filter_period(df, p))
+    return rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
+
+
+def _period_filter(filt) -> tuple[str, pd.Period] | None:
+    """(freq, period) from a "period|month|2026-10-01" label filter."""
+    if not isinstance(filt, str) or not filt.startswith("period|"):
+        return None
+    try:
+        _, freq, start = filt.split("|")
+        return (freq, to_period(start, freq)) if freq in PERIOD_FREQS else None
+    except ValueError:
+        return None
+
+
+def _filter_ids(filt, pairs: bool = False) -> tuple[set | None, str]:
+    """(row ids the labeling panel is limited to — None for all — and the
+    summary's note). "last": the last import's rows (REVIEW →); a period
+    filter: the rows holding back that period's headline (LABEL THEM →) —
+    those have no transfer pairs, so the pairs tab ignores it."""
+    if filt == "last":
+        ids = last_import_ids(MASTER_PATH)
+        return (set(ids), " · from the last import") if ids is not None else (None, "")
+    fp = None if pairs else _period_filter(filt)
+    if fp:
+        freq, q = fp
+        return set(row_ids(_blocking_rows(freq, q))), f" · in {period_label(q, freq)}"
+    return None, ""
+
+
 @app.callback(
     Output("period-stats",   "children"),
     Output("headline",       "children"),
@@ -1419,11 +1469,7 @@ def update_stats(store, theme, _refresh):
     pending = _pending()
 
     def _counted(rows):
-        """Rows that can count, leaving out the sides of certain transfer
-        pairs (an unlabeled card payment isn't missing spending) and a
-        replacement card's copies awaiting the card question."""
-        rows = _without_pending_dups(rows, pending)
-        return rows[~row_ids(rows).isin(_pair_row_ids())] if not rows.empty else rows
+        return _counted_rows(rows, pending)
 
     rows = _counted(filter_period(df, p))
     out_unrev, in_unrev = unreviewed_amounts(rows)
@@ -1434,7 +1480,7 @@ def update_stats(store, theme, _refresh):
         return html.Div(f"+ {_dollar0(amount)} unreviewed", className="stat-delta unreviewed",
                         title="Unlabeled transactions in this period — not counted above")
 
-    un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
+    un = _blocking_rows(freq, p)
     first = to_period(df["date"].min(), freq) if df["date"].notna().any() else None
     health = {"current": p == to_period(as_of, freq), "age": data_age(df), "as_of": as_of,
               "unlabeled_out": out_unrev, "unlabeled_n": int(len(un)),
@@ -1968,17 +2014,43 @@ def save_setup(n_clicks, path, trigger):
     Input("headline-label",    "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
+    State("period-store",      "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _check, _headline, _close, trigger):
+def toggle_label_panel(_open, _review, _check, _headline, _close, trigger, store=None):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
         return _HIDDEN, dash.no_update, dash.no_update, (trigger or 0) + 1
     filt = "last" if ctx.triggered_id == "open-label-review" else "all"
+    if ctx.triggered_id == "headline-label":
+        freq, p = _selected_period(store)
+        filt = f"period|{freq}|{p.start_time:%Y-%m-%d}"   # the rows holding back its headline
     tab = "pairs" if ctx.triggered_id == "open-transfer-check" else "todo"
     _snapshot_before_labeling()
     return {"display": "block"}, filt, tab, dash.no_update
+
+
+@app.callback(
+    Output("label-show-all", "style"),
+    Input("label-filter", "data"),
+    Input("label-tab",    "value"),
+)
+def show_all_button(filt, tab):
+    return _SHOWN_INLINE if tab == "todo" and filt not in (None, "all") else _HIDDEN
+
+
+@app.callback(
+    Output("label-filter",  "data",  allow_duplicate=True),
+    Output("label-version", "data",  allow_duplicate=True),
+    Input("label-show-all", "n_clicks"),
+    State("label-version",  "data"),
+    prevent_initial_call=True,
+)
+def show_all_unlabeled(n_clicks, version):
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+    return "all", (version or 0) + 1
 
 
 def _snapshot_before_labeling() -> None:
@@ -2019,20 +2091,19 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
         return _rules_view(), "Rules label every matching unlabeled row, past and future"
     shown, n_pairs = _shown_pairs(filt)
     if tab == "pairs":
-        summary = f"{n_pairs} likely transfer pair{'s' if n_pairs != 1 else ''}"
-        if filt == "last" and last_import_ids(MASTER_PATH) is not None:
-            summary += " · from the last import"
+        summary = f"{n_pairs} likely transfer pair{'s' if n_pairs != 1 else ''}" + _filter_ids(filt, pairs=True)[1]
         if n_pairs > len(shown):
             summary += f" · showing the top {len(shown)}"
         suspects = _suspects(filt)
         if suspects:
             summary += f" · {len(suspects)} to check"
         return _pairs_view(shown, suspects), summary
-    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    only, note = _filter_ids(filt)
     groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
     n_rows = sum(g["count"] for g in groups)
-    summary = (f"{n_rows:,} rows · {_dollar0(sum(g['abs_total'] for g in groups))} · "
-               f"{len(groups)} merchants" + (" · from the last import" if only is not None else ""))
+    summary = (f"{n_rows:,} row{'s' if n_rows != 1 else ''} · "
+               f"{_dollar0(sum(g['abs_total'] for g in groups))} · "
+               f"{len(groups)} merchant{'s' if len(groups) != 1 else ''}" + note)
     if not groups:
         return html.Div("Everything is labeled ✓", className="hint"), summary
     rules = read_rules(RULES_PATH)
@@ -2118,7 +2189,7 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
         return f'"{cat}" isn\'t a label — nothing was changed.', dash.no_update, dash.no_update, dash.no_update
     bumped = (version or 0) + 1
     stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
-    only = last_import_ids(MASTER_PATH) if filt == "last" else None
+    only, _ = _filter_ids(filt)
     groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
     group = next((g for g in groups if g["key"] == trig["group"]), None)
     if trig["type"] == "lbl-group":

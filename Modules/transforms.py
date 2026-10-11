@@ -178,40 +178,6 @@ def get_income(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["master_category"] == "Income"].copy()
 
 
-def monthly_expenses(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Total expenses grouped by month.
-    Returns: month_str, total_expenses (positive values; refund rows labeled
-    Expense net against the total).
-    """
-    expenses = get_expenses(df)
-    grouped = (
-        expenses
-        .groupby("month_str", sort=True)["amount"]
-        .sum()
-        .reset_index()
-        .rename(columns={"amount": "total_expenses"})
-    )
-    grouped["total_expenses"] = -grouped["total_expenses"]
-    return grouped  # already sorted by groupby(sort=True)
-
-
-def monthly_income(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Total income grouped by month.
-    Returns: month_str, total_income.
-    """
-    income = get_income(df)
-    grouped = (
-        income
-        .groupby("month_str", sort=True)["amount"]
-        .sum()
-        .reset_index()
-        .rename(columns={"amount": "total_income"})
-    )
-    return grouped  # already sorted by groupby(sort=True)
-
-
 def yearly_expenses(df: pd.DataFrame) -> pd.DataFrame:
     """
     Total expenses grouped by year.
@@ -329,7 +295,7 @@ def filter_period(df: pd.DataFrame, p: pd.Period) -> pd.DataFrame:
 
 def window_totals(df: pd.DataFrame) -> dict:
     """Label-based income / expenses / net for a slice of rows. Expenses are
-    positive (refunds labeled Expense net against them), like monthly_expenses."""
+    positive (refunds labeled Expense net against them)."""
     exp = -get_expenses(df)["amount"].sum()
     inc = get_income(df)["amount"].sum()
     return {"exp": float(exp), "inc": float(inc), "net": float(inc - exp)}
@@ -386,19 +352,17 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     - cur: totals for p (to date, if p is still in progress)
     - partial / days_elapsed / days_total: whether p ends after `as_of`, the
       latest transaction date, and how far into it the data reaches
-    - prev: the previous period — truncated to the same number of days when
-      p is partial, so a half-finished month isn't compared to a full one
-    - typical: medians over previous_periods(), truncated the same way
+    - typical: medians over previous_periods() — truncated to the same number
+      of days when p is partial, so a half-finished month isn't compared to
+      a full one; n_typical: how many periods that is
     - typical_full: typical *full*-period totals (the pace target)
-    - rate / prev_rate / typical_rate: savings rate (net ÷ income, %) — None
-      when there's no income to divide by
     - last_year / last_year_period / last_year_window: the same month last
       year, or last year (the stat cards' comparison) — while p is in
       progress, only up to the same calendar date (Oct 1–26, or Jan 1 – Oct
       26); window is that (start, end). None for weeks, and when the data
       doesn't reach back that far.
 
-    prev / typical are None when there is no earlier period in the data.
+    typical is None when there is no earlier period in the data.
     """
     as_of      = pd.Timestamp(as_of).normalize()
     start      = p.start_time.normalize()
@@ -413,18 +377,11 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     def _totals(q: pd.Period) -> dict:
         return to_date_totals(df, q, days) if partial else window_totals(filter_period(df, q))
 
-    def _rate(t: dict | None):
-        return t["net"] / t["inc"] * 100 if t and t["inc"] > 0 else None
+    cur = _totals(p)
 
-    cur  = _totals(p)
-    prev = _totals(prevs[0]) if prevs else None
-
-    typical = typical_full = typical_rate = None
+    typical = typical_full = None
     if prevs:
-        hist = pd.DataFrame([_totals(q) for q in prevs])
-        typical = hist.median().to_dict()
-        rates = [r for r in (_rate(t) for t in hist.to_dict("records")) if r is not None]
-        typical_rate = float(pd.Series(rates).median()) if rates else None
+        typical = pd.DataFrame([_totals(q) for q in prevs]).median().to_dict()
         full = pd.DataFrame([window_totals(filter_period(df, q)) for q in prevs])
         typical_full = full.median().to_dict()
 
@@ -441,11 +398,10 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
         last_year = window_totals(filter_window(df, ly_start, ly_end))
 
     return {
-        "cur": cur, "prev": prev, "typical": typical, "typical_full": typical_full,
+        "cur": cur, "typical": typical, "typical_full": typical_full,
         "last_year": last_year, "last_year_period": ly, "last_year_window": last_year_window,
-        "rate": _rate(cur), "prev_rate": _rate(prev), "typical_rate": typical_rate,
         "partial": partial, "days_elapsed": days, "days_total": days_total,
-        "prev_period": prevs[0] if prevs else None, "n_typical": len(prevs),
+        "n_typical": len(prevs),
     }
 
 
