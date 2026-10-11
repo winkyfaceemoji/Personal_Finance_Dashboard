@@ -67,7 +67,7 @@ The selection lives in the `period-store` Store as `{"freq": …, "start": "YYYY
 
 ## Headline (`headline`)
 
-One sentence answering "how is my spending?" for the selected period, against **typical** — the **median** of up to the previous 12 weeks or months, or of every earlier year (`TYPICAL_LOOKBACK`), counting only periods your data fully covers (`is_covered`: the data starts within `COVERAGE_GRACE_DAYS` (7) of the period's start — a quiet first few days isn't missing data, but exports beginning Feb 16 leave that February and that year only partly there). A median, so one huge month doesn't define "normal". `headline_view` builds it:
+One sentence answering "how is my spending?" for the selected period, against **typical** — the **median** of up to the previous 12 weeks or months, or of every earlier year (`TYPICAL_LOOKBACK`), counting only periods your data fully covers (`is_covered`: the data starts within `COVERAGE_GRACE_DAYS` (7) of the period's start — a quiet first few days isn't missing data, but exports beginning Feb 16 leave that February and that year only partly there). A period with over `UNLABELED_BLOCK` (10%) of its money out unlabeled is left out of typical too — it would read short and pull the median down — and the legend says so: `2 earlier months not fully labeled, left out` (the same unlabeled test as Can't say yet, below). A median, so one huge month doesn't define "normal". `headline_view` builds it:
 
 | Situation | Headline | Legend |
 |-----------|----------|--------|
@@ -76,7 +76,7 @@ One sentence answering "how is my spending?" for the selected period, against **
 | Within 5% (`IN_LINE_SHARE`) of typical | `In line with a typical month` (green) | as above |
 | Before 15% of an in-progress period has passed (`EARLY_SHARE`: day 1 of a week, days 1–4 of a month) | `Too early to call — $80 spent` — a day or two of spending says nothing yet | typical full period |
 | Only one full earlier period | it's named, not called typical: `$1,200 over 2024` | spent · 2024 (by Oct 8 · all of 2024, in progress) |
-| No full earlier period | `$X spent` | `No full earlier month to compare against` |
+| No full earlier period | `$X spent` | `No full earlier month to compare against` — or, when there were some but none is labeled enough, `3 earlier months not fully labeled, left out` |
 
 A bar under the sentence shows spending against typical (the marker): grey up to typical, and only the part past it red when the headline says over. While in progress, "typical" is measured over the same number of days of each earlier period, so a part-finished month is never compared with whole ones.
 

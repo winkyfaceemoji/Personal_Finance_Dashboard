@@ -114,7 +114,7 @@ Everything time-based in the dashboard goes through these. Granularities are nam
 `period_summary` treats `p` as **in progress** when it contains `as_of` (the newest transaction date) and runs past it. It returns:
 
 - `cur` — totals for `p` (to date, if in progress)
-- `typical` — medians over the `previous_periods` the data fully covers (`is_covered`), truncated to the same number of days when `p` is in progress; `typical_periods` / `n_typical` — which they are; `typical_full` — the same medians over whole periods (the pace target)
+- `typical` — medians over the `previous_periods` the data fully covers (`is_covered`) and, when `unlabeled_out` is given, that are labeled (over `UNLABELED_BLOCK` of their money out unlabeled leaves them out — `left_out_unlabeled` counts them), truncated to the same number of days when `p` is in progress; `typical_periods` / `n_typical` — which they are; `typical_full` — the same medians over whole periods (the pace target)
 - `last_year`, `last_year_period`, `last_year_window` — totals for the same month last year, or last year (`LAST_YEAR_STEP`: 12 months / 1 year; none for weeks), only up to the same calendar date while `p` is in progress, and that `(start, end)` window. `None` when the data doesn't reach back that far
 - `last_year_partial` — last year's period is only partly covered (then `last_year` and its window are `None`)
 - `partial`, `days_elapsed`, `days_total`, `through` (where the data stops while in progress), `data_start`
