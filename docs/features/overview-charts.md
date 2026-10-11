@@ -16,7 +16,7 @@ The dashboard answers two questions — **"am I on track?"** and **"where did th
 4. **Stat cards** — spent, income, net for the selected period, each against the same period last year
 5. **Spending over time** — one bar per week / month / year; click a bar to open that period
 6. **Spend by category** — for the selected period, with a click drilldown (see [category-breakdown.md](category-breakdown.md))
-7. **More** (folded) — recurring charges: subscriptions, rent, utilities, and what they cost a year
+7. **Recurring charges** (folded) — subscriptions, rent, utilities, and what they cost a year
 
 The layout is deliberately high-level: one answer at the top, three numbers, two charts, and warnings only when they fire. Budget tracking and the seasonality chart were removed — see [decisions.md](../decisions.md#one-high-level-page-spending-vs-typical-no-budget).
 
@@ -126,16 +126,16 @@ Gap periods (no labeled transactions) appear as zero bars rather than disappeari
 
 ---
 
-## Recurring charges (`recurring-list`, under **More**)
+## Recurring charges (`recurring-list`)
 
-Folded under **MORE** at the bottom of the page — detail, not part of the high-level answer. Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it:
+A folded card at the bottom of the page — detail, not part of the high-level answer — whose closed line carries the answer: `RECURRING CHARGES · 7 · $3,149 a year` (`· none found yet` when there are none). Opened, it says first that it covers *all your history, not just this period*. Subscriptions, memberships, rent and utilities — `recurring_charges` in `Modules/recurring.py`. A merchant (grouped by `merchant_key`, as in the labeling panel) counts as recurring when money goes out to it:
 
-- on **3 or more days**, on a **monthly** (gaps of 20–40 days), **every 2 months** (50–70), **quarterly** (75–105), **every 6 months** (160–200) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
-- at a **steady amount** — at least 75% of charges within 25% of the median, so one price change or odd month doesn't hide it.
+- on **3 or more days**, on a **monthly** (gaps of 20–40 days), **every 2 months** (50–70), **quarterly** (75–105), **twice a year** (160–200) or **yearly** (330–400) schedule — at least 75% of the gaps must fit;
+- at a **steady amount** — at least 75% of charges within 25% of the median or of the latest charge, so neither one odd month nor a price rise hides it.
 
 Labeled **Expense** and **unlabeled** money out both count — except transfers: rows labeled Transfer or Income, unlabeled rows with transfer wording ("online transfer", "autopay", …), and either side of a likely transfer pair (a fixed monthly move to savings is not a subscription).
 
-Each row shows the merchant, cadence, the **latest charge near the typical amount** (prices change, but a one-off fee or prorated charge from the same payee isn't the subscription), the yearly cost (that × charges per year) and the last charge date. A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **Stopped (N)** — worth a glance when something you cancelled may still be billing. The subtitle totals the active ones per year.
+Every row is the same two lines at any width: the merchant and its **yearly cost** (`$186 / yr`), then in grey the price, how often and the last charge (`$15.49 monthly · last Oct 3`; the year only when it isn't your newest data's). The price is the **current** one: the latest charge near the typical amount (a one-off fee or prorated charge from the same payee isn't the subscription) — or, when the last two charges agree on a new price, that price, so a price rise past the 25% tolerance shows instead of hiding behind the old number (charges near the latest price count as steady too, so a re-priced subscription never drops off the list). A charge is **active** when it was seen within 1.5 cadences of your newest transaction; ones that stopped fold into **No longer charging (N)** — worth a glance when something you cancelled may still be billing. The closed line totals the active ones per year.
 
 The card isn't tied to the period bar: a subscription is a standing commitment, judged over all your history. Yearly charges need three charges (about two years apart end to end) — two similar charges a year apart (the same trip twice) are too often a coincidence.
 
