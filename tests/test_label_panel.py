@@ -714,6 +714,25 @@ def test_stat_cards_compare_with_last_year_on_labeled_data(appmod, monkeypatch):
     assert "Sep 2024 isn't fully labeled" in str(cards)
 
 
+def test_period_header_says_where_old_data_ends(appmod, monkeypatch):
+    # Data ending Dec 26, 2025: December is the "latest" period, but it ended
+    # long ago — the header must not call it in progress
+    g_ = _live(appmod)
+    frame = pd.DataFrame({"date": pd.to_datetime(["2025-11-03", "2025-12-26"]),
+                          "amount": [-5.0, -7.0], "master_category": ["Expense", "Expense"]})
+    monkeypatch.setitem(g_, "df", frame)
+    label, sub, *_ = g_["update_period_header"]({"freq": "month", "start": "2025-12-01"})
+    assert label == "Dec 2025" and sub == "data ends Dec 26"
+    # A period that really is still running says so (on a month's last day
+    # the newest data completes the month, so there's nothing to check)
+    today = pd.Timestamp.today().normalize()
+    if today == today.to_period("M").end_time.normalize():
+        return
+    monkeypatch.setitem(g_, "df", frame.assign(date=[today - pd.Timedelta(days=40), today]))
+    start = today.to_period("M").start_time.strftime("%Y-%m-%d")
+    assert g_["update_period_header"]({"freq": "month", "start": start})[1] == "in progress"
+
+
 def test_dollar_formatting_never_shows_negative_zero(appmod):
     d, d0 = appmod["_dollar"], appmod["_dollar0"]
     assert d(-0.0) == "$0.00" and d(-0.001) == "$0.00" and d0(-0.0) == "$0" and d0(-0.4) == "$0"

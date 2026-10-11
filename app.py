@@ -1151,7 +1151,10 @@ def update_period_header(store):
     start = p.start_time.normalize()
     end   = p.end_time.normalize()
     if start <= as_of < end:
-        sub = "in progress"
+        # Periods anchor to the newest data, so with old exports this period
+        # ended long ago: say where the data stops, not "in progress"
+        today = pd.Timestamp.today().normalize()
+        sub = "in progress" if today <= end else f"data ends {as_of:%b} {as_of.day}"
     elif p == last:
         sub = "latest complete " + FREQ_NOUN[freq]
     else:
@@ -2201,4 +2204,5 @@ if __name__ == "__main__":
     # FINANCE_HOST=0.0.0.0 inside the container — see the Dockerfile.
     host  = os.environ.get("FINANCE_HOST", "127.0.0.1")
     debug = os.environ.get("FINANCE_DEBUG", "0") == "1"
-    app.run(debug=debug, host=host, port=8050)
+    port  = int(os.environ.get("FINANCE_PORT", "8050"))   # the browser tests use their own
+    app.run(debug=debug, host=host, port=port)
