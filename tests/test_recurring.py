@@ -102,7 +102,7 @@ def test_bimonthly_and_semiannual():
     car = [(d, "GEICO AUTO", -620.0) for d in ("2024-01-10", "2024-07-10", "2025-01-09")]
     found = {r["merchant"]: r for r in recurring_charges(_df(water + car), as_of=pd.Timestamp("2025-05-30"))}
     assert found["CITY WATER"]["cadence"] == "every 2 months" and found["CITY WATER"]["yearly"] == 480.0
-    assert found["GEICO AUTO"]["cadence"] == "every 6 months" and found["GEICO AUTO"]["yearly"] == 1240.0
+    assert found["GEICO AUTO"]["cadence"] == "twice a year" and found["GEICO AUTO"]["yearly"] == 1240.0
 
 
 def test_missing_descriptions_are_skipped():
@@ -110,3 +110,21 @@ def test_missing_descriptions_are_skipped():
     df = _df(rows)
     df.loc[0, "description"] = None
     assert [r["merchant"] for r in recurring_charges(df)] == ["NETFLIX.COM"]
+
+
+def test_a_big_price_rise_shows_the_new_price_and_never_hides_the_charge():
+    # $10 for ten months, then $15 (a 50% rise) — past the steady-amount tolerance
+    rows = (_monthly("STREAMCO", -10.0, start="2024-01-15", n=10)
+            + _monthly("STREAMCO", -15.0, start="2024-11-15", n=2))
+    (r,) = recurring_charges(_df(rows))
+    assert r["amount"] == 15.0 and r["yearly"] == 180.0
+    # ...and still listed once the new price outnumbers what the median allowed
+    rows += _monthly("STREAMCO", -15.0, start="2025-01-15", n=4)
+    (r,) = recurring_charges(_df(rows))
+    assert r["amount"] == 15.0
+
+
+def test_one_odd_charge_is_not_a_new_price():
+    rows = _monthly("GYM", -40.0, n=6) + [("2025-07-15", "GYM", -95.0)]   # a one-off fee
+    (r,) = recurring_charges(_df(rows))
+    assert r["amount"] == 40.0

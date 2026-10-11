@@ -1,7 +1,7 @@
 """
 Recurring charges — subscriptions, memberships, rent, utilities: the same
 merchant charging about the same amount on a regular schedule. Read-only
-analysis for the dashboard's RECURRING CHARGES card.
+analysis for the dashboard's Recurring charges card.
 """
 import pandas as pd
 
@@ -13,7 +13,7 @@ CADENCES = {
     "monthly":        (30,  (20, 40),   3, 12),
     "every 2 months": (61,  (50, 70),   3, 6),
     "quarterly":      (91,  (75, 105),  3, 4),
-    "every 6 months": (182, (160, 200), 3, 2),
+    "twice a year":   (182, (160, 200), 3, 2),
     "yearly":         (365, (330, 400), 3, 1),
 }
 # Three charges for every cadence: two yearly charges of a similar size are
@@ -21,7 +21,8 @@ CADENCES = {
 #
 # A schedule is "regular" when this share of the gaps fits the cadence, and an
 # amount is "steady" when this share of charges is within AMOUNT_TOLERANCE of
-# the median — so a price change or one odd month doesn't hide a subscription
+# the median or of the latest charge — so one odd month doesn't hide a
+# subscription, and neither does a price rise (old and new price both count)
 REGULAR_SHARE    = 0.75
 AMOUNT_TOLERANCE = 0.25
 
@@ -34,9 +35,10 @@ def recurring_charges(df: pd.DataFrame, as_of=None, exclude_row_ids=None) -> lis
     with transfer wording (looks_like_transfer) and exclude_row_ids — the
     caller passes the sides of certain transfer pairs.
 
-    Each dict: merchant, cadence, amount (the latest charge near the typical
-    amount — prices change, but a one-off fee from the same payee isn't the
-    subscription), yearly (amount × charges per year), count, first, last,
+    Each dict: merchant, cadence, amount (the current price: the latest
+    charge near the typical amount — a one-off fee from the same payee isn't
+    the subscription — or, when the last two charges agree on a new price,
+    that), yearly (amount × charges per year), count, first, last,
     active (charged within 1.5 cadences of as_of, which defaults to the
     newest transaction). Biggest yearly cost first.
     """
@@ -53,9 +55,12 @@ def recurring_charges(df: pd.DataFrame, as_of=None, exclude_row_ids=None) -> lis
     # needs 3+ charge days and a steady amount
     days = out.groupby("_mk")["_day"].transform("nunique")
     out = out[days >= min(c[2] for c in CADENCES.values())]
+    out = out.sort_values("date", kind="stable")
     median = out.groupby("_mk")["amount"].transform("median")
-    steady_share = ((out["amount"] - median).abs() <= AMOUNT_TOLERANCE * median.abs()) \
-        .groupby(out["_mk"]).transform("mean")
+    latest = out.groupby("_mk")["amount"].transform("last")
+    near = (((out["amount"] - median).abs() <= AMOUNT_TOLERANCE * median.abs())
+            | ((out["amount"] - latest).abs() <= AMOUNT_TOLERANCE * latest.abs()))
+    steady_share = near.groupby(out["_mk"]).transform("mean")
     out = out[steady_share >= REGULAR_SHARE]
     unlabeled = ~out["master_category"].isin(["Expense"])
     out = out[~(unlabeled & out["description"].map(looks_like_transfer).astype(bool))]
@@ -75,10 +80,14 @@ def recurring_charges(df: pd.DataFrame, as_of=None, exclude_row_ids=None) -> lis
     for mk, g in out.groupby("_mk", sort=False):
         g = g.sort_values("date", kind="stable")
         amounts = -g["amount"]
-        typical = amounts.median()
+        typical, last = amounts.median(), amounts.iloc[-1]
         steady = (amounts - typical).abs() <= AMOUNT_TOLERANCE * typical
-        if steady.mean() < REGULAR_SHARE:
+        if (steady | ((amounts - last).abs() <= AMOUNT_TOLERANCE * last)).mean() < REGULAR_SHARE:
             continue
+        # A new price: the last two charges agree with each other, not with
+        # the old typical amount
+        repriced = (len(amounts) >= 2 and not steady.iloc[-1]
+                    and abs(amounts.iloc[-2] - last) <= AMOUNT_TOLERANCE * last)
         dates = g["_day"].drop_duplicates()
         gaps = dates.diff().dt.days.dropna()
         if gaps.empty:
@@ -88,7 +97,7 @@ def recurring_charges(df: pd.DataFrame, as_of=None, exclude_row_ids=None) -> lis
                 continue
             if gaps.between(lo, hi).mean() < REGULAR_SHARE:
                 continue
-            amount = round(float(amounts[steady].iloc[-1]), 2)
+            amount = round(float(last if repriced else amounts[steady].iloc[-1]), 2)
             found.append({
                 "merchant": mk.upper(),
                 "cadence": cadence,
