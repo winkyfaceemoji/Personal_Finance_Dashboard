@@ -25,6 +25,8 @@ from Modules.safety import (
     read_skipped, restore_backup, snapshot_master,
 )
 from Modules.transforms import (
+    UNLABELED_BLOCK,
+    unlabeled_share,
     load_transactions,
     normalize_description,
     expenses_by_category,
@@ -184,6 +186,12 @@ CHART_PERIODS = {"week": 26, "month": 24, "year": None}
 # of unlabeled dollars on real data; the rest wait for the next session.
 LABEL_TOP_N = 25
 
+# "Remember for future statements" starts ticked only for a merchant seen in
+# at least this many different months: a regular, the kind worth labeling
+# automatically. Two charges on one trip are thin evidence for a rule that
+# labels every future match — those start unticked, the user's call.
+REMEMBER_MONTHS = 3
+
 LABEL_GUIDE = """
 **Ask one question: did money enter or leave *you* — all your accounts counted as one pot?**
 
@@ -200,12 +208,11 @@ loan or mortgage payment: Expense.
 FREQ_NOUN = {"week": "week", "month": "month", "year": "year"}
 
 # The headline won't call a period when the newest data is over STALE_DAYS
-# old (for the period holding it) or over UNLABELED_BLOCK of its money out is
-# unlabeled; nor before EARLY_SHARE of an in-progress period has passed, when
+# old (for the period holding it) or over UNLABELED_BLOCK (transforms.py) of
+# its money out is unlabeled; nor before EARLY_SHARE of an in-progress period has passed, when
 # "typical by now" is a day or two of spending. Within IN_LINE_SHARE of
 # typical reads as in line.
 STALE_DAYS      = 14
-UNLABELED_BLOCK = 0.10
 EARLY_SHARE     = 0.15
 IN_LINE_SHARE   = 0.05
 
@@ -363,12 +370,6 @@ def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> 
     ])
 
 
-def unlabeled_share(spent: float, unlabeled_out: float) -> float:
-    """The share of a period's money out that's unlabeled."""
-    total = spent + unlabeled_out
-    return unlabeled_out / total if total > 0 else 0.0
-
-
 def cant_say_reasons(spent: float, freq: str, health: dict) -> tuple[list[str], bool]:
     """Why the page won't compare this period (headline and cards alike):
     the newest data is stale, too much of its money out is unlabeled, or a
@@ -461,7 +462,7 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
             html.Div(title, className="app-label"),
             html.Div(status, className="headline-status", style={"color": colour}),
             track,
-            html.Div(className="pace-legend", children=[html.Span(t) for t in legend]),
+            html.Div(className="pace-legend", children=[html.Span(t) for t in legend if t]),
         ]
 
     reasons, unlabeled = cant_say_reasons(spent, freq, health)
@@ -470,16 +471,19 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
         return _view("Can't say yet", c["text"], ["; ".join(reasons)]), unlabeled
 
     typ, full = s["typical"], s["typical_full"]
+    # Earlier periods too unlabeled to count toward typical (they'd read short)
+    k = s.get("left_out_unlabeled", 0)
+    left_out = f"{k} earlier {noun}{'s' if k != 1 else ''} not fully labeled, left out" if k else None
     if not typ or not full:
         return _view(f"{_dollar0(spent)} spent", c["text"],
-                     [f"No full earlier {noun} to compare against"]), False
+                     [left_out or f"No full earlier {noun} to compare against"]), False
     # One full earlier period isn't a "typical" one: name it instead
     only = s.get("typical_periods") or []
     one = period_label(only[0], freq) if len(only) == 1 else None
     full_name = f"all of {one}" if one else f"typical full {noun}"
     if s["partial"] and s["days_elapsed"] / s["days_total"] < EARLY_SHARE:
         return _view(f"Too early to call — {_dollar0(spent)} spent", c["text"],
-                     [f"{full_name} {_dollar0(full['exp'])}"]), False
+                     [f"{full_name} {_dollar0(full['exp'])}", left_out]), False
 
     ref = typ["exp"]                   # the same point in a typical period, or a full one
     diff = spent - ref
@@ -498,6 +502,7 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     else:
         legend = [f"Spent {_dollar0(spent)}", f"│ {one or 'typical ' + noun} {_dollar0(ref)}"]
         marker = one or f"Typical {noun}"
+    legend.append(left_out)
     return _view(status, colour, legend, _track(spent, ref, c, over, marker)), False
 
 
@@ -863,18 +868,20 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
                            title="Suggested: looks like a card payment or transfer"
                            if "suggested" in cls else None)
 
+    months = len({(pd.Timestamp(r["date"]).year, pd.Timestamp(r["date"]).month) for r in g["rows"]})
     if chk["ok"]:
         note = (f'rule "{chk["keyword"]}" ({chk["direction"]}) · labels {chk["rows_now"]} row'
                 f'{"s" if chk["rows_now"] != 1 else ""} ({_dollar0(chk["dollars_now"])}) now')
         if g["count"] < 2:
             note += " · only one transaction — tick to remember anyway"
+        elif months < REMEMBER_MONTHS:
+            note += f" · seen in {months} month{'s' if months != 1 else ''} — tick to remember anyway"
     else:
         note = chk["reason"]
     # Remember only acts on a group-button click, so it is disabled where there
-    # are none; and one transaction is thin evidence for a rule that labels
-    # every future match, so it starts unticked there
+    # are none; and it starts ticked only for a regular (REMEMBER_MONTHS)
     can_remember = bulk and not chk["blocking"]
-    ticked = can_remember and chk["ok"] and g["count"] >= 2
+    ticked = can_remember and chk["ok"] and months >= REMEMBER_MONTHS
     remember = ["yes"] if ticked else []
     if can_remember and kept.get("remember") is not None:
         remember = kept["remember"]
@@ -1496,13 +1503,13 @@ def update_stats(store, theme, _refresh):
     c = _CHART[theme]
     freq, p = _selected_period(store)
     as_of = _as_of()
-    s = period_summary(df, freq, p, as_of)
-    cur = s["cur"]
-
     pending = _pending()
 
     def _counted(rows):
         return _counted_rows(rows, pending)
+
+    s = period_summary(df, freq, p, as_of, unlabeled_out=lambda rows: unreviewed_amounts(_counted(rows))[0])
+    cur = s["cur"]
 
     rows = _counted(filter_period(df, p))
     out_unrev, in_unrev = unreviewed_amounts(rows)
