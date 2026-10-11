@@ -281,6 +281,10 @@ PERIOD_FREQS = {"week": "W-SUN", "month": "M", "year": "Y"}
 # earlier year in the data — there are rarely more than a handful.
 TYPICAL_LOOKBACK = {"week": 12, "month": 12, "year": None}
 
+# The same period last year is this many periods back. Weeks have none: the
+# same week a year ago mostly measures where a payday fell.
+LAST_YEAR_STEP = {"month": 12, "year": 1}
+
 
 def to_period(ts, freq: str) -> pd.Period:
     """The week / month / year period containing a timestamp."""
@@ -388,6 +392,11 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     - typical_full: typical *full*-period totals (the pace target)
     - rate / prev_rate / typical_rate: savings rate (net ÷ income, %) — None
       when there's no income to divide by
+    - last_year / last_year_period / last_year_window: the same month last
+      year, or last year (the stat cards' comparison) — while p is in
+      progress, only up to the same calendar date (Oct 1–26, or Jan 1 – Oct
+      26); window is that (start, end). None for weeks, and when the data
+      doesn't reach back that far.
 
     prev / typical are None when there is no earlier period in the data.
     """
@@ -419,8 +428,21 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
         full = pd.DataFrame([window_totals(filter_period(df, q)) for q in prevs])
         typical_full = full.median().to_dict()
 
+    last_year = last_year_window = None
+    ly = p - LAST_YEAR_STEP[freq] if LAST_YEAR_STEP.get(freq) else None
+    if ly is not None and ly < first:
+        ly = None
+    if ly is not None:
+        ly_start = ly.start_time.normalize()
+        ly_end = ly.end_time.normalize()
+        if partial:
+            ly_end = min(as_of - pd.DateOffset(years=1), ly_end)
+        last_year_window = (ly_start, ly_end)
+        last_year = window_totals(filter_window(df, ly_start, ly_end))
+
     return {
         "cur": cur, "prev": prev, "typical": typical, "typical_full": typical_full,
+        "last_year": last_year, "last_year_period": ly, "last_year_window": last_year_window,
         "rate": _rate(cur), "prev_rate": _rate(prev), "typical_rate": typical_rate,
         "partial": partial, "days_elapsed": days, "days_total": days_total,
         "prev_period": prevs[0] if prevs else None, "n_typical": len(prevs),

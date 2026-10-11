@@ -149,7 +149,7 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 |------|---------------|
 | HEADLINE | One sentence: the period's spending against your **typical** period (median of the last 12 weeks/months, or of earlier years) — `$782 over your typical pace`, `$198 under a typical month`, `In line with a typical week`. While a period is in progress it compares against the same number of days of earlier periods. It says **Can't say yet** (and why) when your newest data is over two weeks old or over 10% of the period's money out is unlabeled |
 | STAT CARDS | Spent, income, and net for the period, with `+ $X unreviewed` for unlabeled money |
-| SPENDING OVER TIME | A bar per week (last 26), month (last 24), or year (all), with a dashed typical line; the selected period is drawn in full ink and an in-progress one hatched. **Click a bar to open that period.** The title dropdown switches Expenses / Income / Net Cash Flow |
+| SPENDING OVER TIME | A bar per week (last 26), month (last 24), or year (all), with a dashed median line; the selected period is drawn in full ink and an in-progress one hatched. **Click a bar to open that period.** The title dropdown switches Expenses / Income / Net Cash Flow |
 | SPEND BY CATEGORY | Sorted bars for the selected period — top 9 categories + Other, with `$ · %`. Click a bar for its top merchants and largest transaction (click again to close) |
 | MORE → RECURRING CHARGES | (folded) Subscriptions, rent, utilities — merchants charging a steady amount monthly, quarterly or yearly (3+ times), with the latest charge and its cost per year. Stopped ones fold away under *Stopped* |
 
