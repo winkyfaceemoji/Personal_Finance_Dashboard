@@ -37,6 +37,12 @@ The top-level `RAW/<institution>/` folder is recorded as the `institution` colum
 
 **Why:** scaling past three sources, header detection plus a Chase-only filename regex can't identify institutions, and two banks can export the same CSV format (which would collapse into one account and mis-merge). The folder disambiguates *institutions* — but not cards within one: `card_last4` still comes only from Chase filenames, so two non-Chase cards in one institution folder share an account key and their overlapping dates merge. `institution` is deliberately excluded from `MATCH_COLUMNS` so masters built before the column still carry their labels forward on the first rebuild.
 
+## Capital One exports are the Discover account, and the Discover history owns its dates
+
+Capital One-format files are filed under the Discover institution whatever folder they sit in (`CAPITAL_ONE_ACCOUNT`), and within that account Discover-format files outrank any span (`FORMAT_PRIORITY`). Capital One rows left out on Discover-owned dates with no same-date, same-amount Discover row are listed in `SORTED/overlap_only.csv` and shown on the attention line.
+
+**Why:** reviewed by the council. The card didn't change, only its exporter. Under folder-authoritative identity, the user's natural `RAW/CapitalOne/` folder made it a second account and silently double-counted every overlapping date; a doc rule ("keep them in RAW/Discover/") wasn't a safeguard for a drop-files-and-Reload workflow. Span ranking was built for re-downloads of one exporter; across the switch it would let a Capital One "download everything" export take years of labeled Discover dates and orphan their labels. Treating the Discover history as a closed archive avoids that by design. Its cost — a charge pending at the switch exists only in the Capital One export and is dropped — is reported rather than silently lost, and not added back, since a changed amount would count one charge twice. A second Capital One card would also read as Discover; `Card No.` is the field to separate them if that happens.
+
 ## Totals are label-based; merges are coverage-based
 
 Only rows labeled `Expense` / `Income` count; `Transfer` and unlabeled rows are excluded from every total. Overlapping re-exports are merged by date-range ownership, not row-value dedup.

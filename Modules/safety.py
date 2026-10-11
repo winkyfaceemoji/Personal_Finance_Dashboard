@@ -17,6 +17,7 @@ BACKUP_DIRNAME = "backups"
 BACKUP_KEEP    = 10
 ORPHANS_NAME   = "orphaned_labels.csv"
 SKIPPED_NAME   = "skipped_files.csv"
+OVERLAP_NAME   = "overlap_only.csv"
 
 # Dash's dev server runs callbacks on threads: a Reload rebuilding the master
 # while an Import rewrites it would let one overwrite the other's labels. Every
@@ -203,6 +204,40 @@ def read_skipped(master: Path) -> list[tuple[str, str]]:
         return list(zip(d["file"], d["reason"]))
     except Exception:
         return []
+
+
+def overlap_path(master: Path) -> Path:
+    return Path(master).parent / OVERLAP_NAME
+
+
+def write_overlap_only(master: Path, rows: pd.DataFrame | None) -> None:
+    """Record transactions left out where two exports of one account overlap
+    and the winning export has no transaction on that date for that amount
+    (columns file, date, description, amount); no file when there are none.
+    Best effort, like write_skipped."""
+    p = overlap_path(master)
+    try:
+        if rows is not None and not rows.empty:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_csv(rows[["file", "date", "description", "amount"]], p)
+        else:
+            p.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"  ⚠ Could not update {p} ({e})")
+
+
+def read_overlap_only(master: Path) -> pd.DataFrame:
+    """What write_overlap_only recorded (empty when nothing, or unreadable)."""
+    p = overlap_path(master)
+    empty = pd.DataFrame(columns=["file", "date", "description", "amount"])
+    if not p.exists():
+        return empty
+    try:
+        d = pd.read_csv(p, dtype={"file": str, "description": str}, keep_default_na=False)
+        d["amount"] = pd.to_numeric(d["amount"], errors="coerce")
+        return d
+    except Exception:
+        return empty
 
 
 def orphan_count(master: Path) -> int:

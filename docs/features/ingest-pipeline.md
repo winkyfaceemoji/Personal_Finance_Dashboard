@@ -53,19 +53,24 @@ RAW/
   <institution>/ ...
 ```
 
-`RAW/` is walked recursively (`rglob`), so files can sit at any depth. The **top-level folder under `RAW/` is the institution** and is recorded on every row as the `institution` column (folder-authoritative identity; files dropped directly in `RAW/` get a blank institution). The CSV **format** is still auto-detected from the column headers — independent of the folder — so a single institution folder can hold multiple formats (e.g. Chase debit and Chase credit together). Three formats are supported:
+`RAW/` is walked recursively (`rglob`), so files can sit at any depth. The **top-level folder under `RAW/` is the institution** and is recorded on every row as the `institution` column (folder-authoritative identity; files dropped directly in `RAW/` get a blank institution). The CSV **format** is still auto-detected from the column headers — independent of the folder — so a single institution folder can hold multiple formats (e.g. Chase debit and Chase credit together). Four formats are supported:
 
 | Format constant | Source | Key columns used |
 |----------------|--------|-----------------|
 | `chase_debit` | Chase chequing/debit | `Posting Date`, `Description`, `Amount`, `Type`, `Balance`, `Check or Slip #` |
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
+| `capital_one_credit` | The Discover card, exported by Capital One since it took the card over | `Transaction Date`, `Posted Date`, `Description`, `Category`, `Debit`, `Credit` (`Card No.` is ignored) |
 
 A file that can't be used — unreadable, unrecognised headers, or a normalizer error on a malformed statement — is skipped with a `[SKIP]` log line and recorded, with its reason, in `SORTED/skipped_files.csv`; the dashboard header turns that into a red warning, because a skipped file's whole account is missing from every total. One bad file never aborts the import of the others. The record describes the latest run only (written even when nothing could be imported, removed when nothing was skipped). Multiple files from the same account — including overlapping re-exports of its history — can coexist; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below). Each account is keyed by `(institution, source, card_last4)`, so two institutions that happen to export the same CSV format never collapse into one account.
 
 **Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column. (No per-card subfolder is needed — the last-4 comes from the filename.)
 
 **Discover amount signs:** Discover CSVs record purchases as positive and credits as negative — the opposite of Chase. The pipeline negates all Discover amounts on normalisation so the sign convention is consistent (`amount < 0` = expense, `amount > 0` = income/credit).
+
+**Capital One = the Discover card.** Capital One took over the Discover card, so its exports are the same account in a new format. `normalize_capital_one_credit` gives those rows `source = "Discover Credit"` and a blank `card_last4` (the `Card No.` column is ignored), and `load_and_normalize` sets their institution to `Discover` (`CAPITAL_ONE_ACCOUNT`) **whatever folder they're in** — `RAW/CapitalOne/` keeps them apart on disk, and they still share Discover's account key, so an export overlapping the Discover history is merged by coverage rather than counted twice. This is the one exception to folder-authoritative identity. Charges come in `Debit` and payments / refunds in `Credit`, both positive; the amount is `Credit − Debit`, and `$` signs and thousands commas are tolerated.
+
+Where the two overlap, **the Discover history keeps its dates** (`FORMAT_PRIORITY`, see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage)): it's labeled and will never grow again, so a Capital One "download everything" export reaching back into it can't replace those rows — Capital One words merchants differently (`ANTHROPIC* CLAUDE SUB` vs `ANTHROPIC CLAUDE SUB`), and its rows would orphan the labels. A Capital One transaction on a date the Discover history owns, with no Discover transaction of the same date and amount (a charge still pending when the last Discover export was taken), is left out and listed in `SORTED/overlap_only.csv`, which the dashboard's attention line reports.
 
 ---
 
@@ -85,7 +90,7 @@ Every normalised row has these columns:
 | `memo` | str | Additional memo (Chase Credit only) |
 | `check_or_slip` | str | Chase Debit only |
 | `institution` | str | Top-level `RAW/` folder the file came from (e.g. `Chase`, `Discover`); blank if the file sat directly in `RAW/` |
-| `source` | str | Account type / format: `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` |
+| `source` | str | Account type / format: `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` (Discover and Capital One exports of the Discover card) |
 | `card_last4` | str | Last 4 digits of card number (Chase only; blank for Discover) |
 
 ---
@@ -121,7 +126,7 @@ Earlier versions of this pipeline deduplicated by comparing row values (date, de
 
 ```
 For each (institution, source, card_last4) account:
-  Sort that account's files by (date span, row count) descending
+  Sort that account's files by (format priority, date span, row count) descending
     — i.e. the file with the widest verified date range goes first;
     file modification time is deliberately NOT used, since bulk copies,
     git checkouts, and drive migrations rewrite mtimes with no relation
@@ -134,6 +139,10 @@ For each (institution, source, card_last4) account:
 ```
 
 Whichever file owns a date contributes *all* of its rows for that date — duplicates included — so genuine repeat transactions on the same day survive intact. Rows with an unparseable date are always kept, since their coverage can't be checked.
+
+**Format priority.** `FORMAT_PRIORITY` puts Discover-format files ahead of any span, so in the Discover account the Discover history owns its dates and Capital One exports fill the rest. It only matters in an account that mixes formats; every other account has one format, where span decides as before.
+
+**Overlap check.** The rule assumes the winning file is complete for its dates. Re-downloads of one format always are, but at the switch from Discover to Capital One a charge can exist only in the losing file. When a file of another format than the winner loses dates, its dropped rows with no transaction of the same date and amount in the merged result are written to `SORTED/overlap_only.csv` (file, date, description, amount; one entry per charge even if several losing files hold it). They are reported, not added back: a pending charge whose amount changed when it posted (a tip) would otherwise count twice.
 
 ---
 
@@ -180,6 +189,7 @@ The new master is written atomically (temp file + `os.replace`), so a crash mid-
 | `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; attention line |
 | `SORTED/not_transfers.csv` | Labeling panel: pairs you marked NOT A TRANSFER | Those pairs are never flagged again |
 | `SORTED/skipped_files.csv` | Every import: RAW files that couldn't be used, with the reason (removed when none) | Attention line |
+| `SORTED/overlap_only.csv` | Every import: Capital One transactions left out on dates the Discover history owns, with no Discover match (removed when none) | Attention line |
 | `SORTED/last_import.csv` | A rebuild that added rows: their `row_id`s (left alone when nothing is new) | The attention line's `N new from the last import need a label` and the labeling panel's `REVIEW →` filter |
 | `SORTED/backups/before-labeling-YYYY-MM-DD.csv` | The app, when the labeling panel first opens that day (outside the backup rotation, never pruned) | Manual rollback to the state before that day's labeling |
 
