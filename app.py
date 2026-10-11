@@ -29,6 +29,7 @@ from Modules.transforms import (
     normalize_description,
     expenses_by_category,
     filter_period,
+    is_covered,
     period_label,
     period_short_label,
     previous_periods,
@@ -451,8 +452,9 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     """
     noun = FREQ_NOUN[freq]
     spent = s["cur"]["exp"]
-    title = (f"SPENDING · DAY {s['days_elapsed']} OF {s['days_total']}" if s["partial"]
-             else "SPENDING")
+    t = s.get("through")
+    by = f"{t:%b} {t.day}" if t is not None else ""   # "Oct 8": where the data stops
+    title = f"SPENDING THROUGH {by.upper()}" if s["partial"] else "SPENDING"
 
     def _view(status, colour, legend, track=None):
         return [
@@ -470,28 +472,32 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     typ, full = s["typical"], s["typical_full"]
     if not typ or not full:
         return _view(f"{_dollar0(spent)} spent", c["text"],
-                     [f"No earlier {noun}s to compare against yet"]), False
+                     [f"No full earlier {noun} to compare against"]), False
+    # One full earlier period isn't a "typical" one: name it instead
+    only = s.get("typical_periods") or []
+    one = period_label(only[0], freq) if len(only) == 1 else None
+    full_name = f"all of {one}" if one else f"typical full {noun}"
     if s["partial"] and s["days_elapsed"] / s["days_total"] < EARLY_SHARE:
-        return _view(f"Too early to call — {_dollar0(spent)} so far", c["text"],
-                     [f"typical full {noun} {_dollar0(full['exp'])}"]), False
+        return _view(f"Too early to call — {_dollar0(spent)} spent", c["text"],
+                     [f"{full_name} {_dollar0(full['exp'])}"]), False
 
     ref = typ["exp"]                   # the same point in a typical period, or a full one
     diff = spent - ref
     over = False
+    against = one or f"a typical {noun}"
     if abs(diff) <= max(1.0, IN_LINE_SHARE * ref):
-        status, colour = f"In line with a typical {noun}", c["accent3"]
+        status, colour = f"In line with {against}", c["accent3"]
     else:
-        where = "your typical pace" if s["partial"] else f"a typical {noun}"
-        status = f"{_dollar0(abs(diff))} {'over' if diff > 0 else 'under'} {where}"
+        status = f"{_dollar0(abs(diff))} {'over' if diff > 0 else 'under'} {against}"
         colour = c["accent2"] if diff > 0 else c["accent3"]
         over = diff > 0
     if s["partial"]:
-        legend = [f"Spent {_dollar0(spent)}", f"│ typical by now {_dollar0(ref)}",
-                  f"typical full {noun} {_dollar0(full['exp'])}"]
-        marker = "Typical spending by now"
+        legend = [f"Spent {_dollar0(spent)}", f"│ {one or 'typical'} by {by} {_dollar0(ref)}",
+                  f"{full_name} {_dollar0(full['exp'])}"]
+        marker = f"{one or 'Typical spending'} by {by}"
     else:
-        legend = [f"Spent {_dollar0(spent)}", f"│ typical {noun} {_dollar0(ref)}"]
-        marker = f"Typical {noun}"
+        legend = [f"Spent {_dollar0(spent)}", f"│ {one or 'typical ' + noun} {_dollar0(ref)}"]
+        marker = one or f"Typical {noun}"
     return _view(status, colour, legend, _track(spent, ref, c, over, marker)), False
 
 
@@ -1329,11 +1335,13 @@ def update_period_header(store):
     as_of = _as_of()
     start = p.start_time.normalize()
     end   = p.end_time.normalize()
+    data_start = df["date"].min() if df["date"].notna().any() else pd.NaT
     if start <= as_of < end:
-        # Periods anchor to the newest data, so with old exports this period
-        # ended long ago: say where the data stops, not "in progress"
-        today = pd.Timestamp.today().normalize()
-        sub = "in progress" if today <= end else f"data ends {as_of:%b} {as_of.day}"
+        # Where the data stops — the same words whether the period is still
+        # running or ended after the last export (never today's date)
+        sub = f"through {as_of:%b} {as_of.day}"
+    elif p == first and not is_covered(p, data_start):
+        sub = f"data starts {data_start:%b} {data_start.day}"
     elif p == last:
         sub = "latest complete " + FREQ_NOUN[freq]
     else:
@@ -1369,13 +1377,15 @@ def last_year_lines(s: dict, freq: str, last_year_unlabeled: float | None) -> di
     def _note(text):
         return dict.fromkeys(_LAST_YEAR_WORDS, html.Div(text, className="stat-delta"))
 
+    if s.get("last_year_partial"):
+        return _note(f"{name} only partly covered")
     if s["last_year"] is None:
         return _note(f"No data for {name}")
     if last_year_unlabeled is not None and last_year_unlabeled > UNLABELED_BLOCK:
         return _note(f"{name} isn't fully labeled")
     if s["partial"]:
         end = s["last_year_window"][1]
-        name += f" by {end:%b} {end.day}"
+        name += f" through {end:%b} {end.day}"
 
     out = {}
     for k, (up, down, up_is_good) in _LAST_YEAR_WORDS.items():
@@ -1500,7 +1510,7 @@ def update_stats(store, theme, _refresh):
                 ly_share = unlabeled_share(s["last_year"]["exp"], unreviewed_amounts(ly_rows)[0])
         vs = last_year_lines(s, freq, ly_share)
 
-    so_far = " SO FAR" if s["partial"] else ""
+    so_far = f" THROUGH {s['through']:%b} {s['through'].day}".upper() if s["partial"] else ""
     cards = [
         _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [vs["exp"], _unreviewed(out_unrev)]),
         _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [vs["inc"], _unreviewed(in_unrev)]),
