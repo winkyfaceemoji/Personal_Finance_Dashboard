@@ -277,11 +277,13 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .label-group { padding: 16px 18px; margin-bottom: 12px; }
 .lg-main { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lg-info { min-width: 0; flex: 1 1 260px; }   /* below 260px the buttons drop under it */
-.lg-field { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-bottom: 4px; }
-.lg-field-label { flex: 0 0 100%; font-size: 10px; letter-spacing: 0.04em; font-weight: 500; color: var(--subtext); }
-.lg-name { font-weight: 600; font-size: 14px; }
+.lg-title { margin-bottom: 4px; }
+.lg-name { font-weight: 600; font-size: 15px; }
+.lg-text { font-size: 12px; margin-bottom: 4px; overflow-wrap: anywhere; }
+.lg-tag { color: var(--subtext); margin-right: 8px; }
+.lg-more { color: var(--subtext); margin-left: 8px; white-space: nowrap; }
 .lg-badge { margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 999px; padding: 1px 8px; }
-.lg-example { font-size: 12px; overflow-wrap: anywhere; }   /* the bank's text in full, never cut */
+.lg-example { overflow-wrap: anywhere; }   /* the bank's text in full, never cut */
 .lg-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
 /* Suggested: filled and starred — plain buttons are only outlined */
 .btn-secondary.suggested { background: var(--accent-weak); color: var(--text); font-weight: 600; }
