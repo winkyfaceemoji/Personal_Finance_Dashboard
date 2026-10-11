@@ -36,7 +36,7 @@ A period is **in progress** when it contains the newest transaction date and run
 
 ## Header
 
-- **Wordmark** — `FINANCE` in text colour, `DASHBOARD` in the accent.
+- **Wordmark** — `Finance` in text colour, `Dashboard` in the muted grey.
 - **Data line** (`data-updated`) — the newest transaction date: `Data through Dec 26, 2025`.
 - **Attention line** (`attention`, red) — everything that needs you, on one line that wraps, hidden entirely when nothing fires. Built by `attention_parts`; each item shows only when it applies:
 
@@ -107,8 +107,8 @@ Hover a comparison for exactly what "typical" was measured over. While a period 
 
 One bar per period at the selected granularity: the latest **26 weeks**, **24 months**, or **every year** (`CHART_PERIODS`). If you've stepped back further than that, the window shifts to keep the selected period on screen.
 
-- **Metric dropdown** (`cashflow-metric`, doubles as the card title): Expenses (default, red), Income (green), or Net Cash Flow (green/red by sign, with a zero line).
-- **Selected period** — full opacity with an outline; the rest are dimmed.
+- **Metric dropdown** (`cashflow-metric`, doubles as the card title): Expenses (default) or Income, both drawn in grey ink, or Net Cash Flow (green/red by sign, with a zero line).
+- **Selected period** — full ink; the rest are grey.
 - **In-progress period** — hatched, so a short bar reads as "not over yet".
 - **Typical line** — dashed, at the median of the complete periods on screen (needs at least 3).
 - **Click a bar** to open that period. Hover shows the full period label and amount.

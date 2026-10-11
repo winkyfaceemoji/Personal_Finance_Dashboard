@@ -89,24 +89,27 @@ df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and M
 # The single source of colour. Plotly figures read these hex values directly;
 # theme_css() turns the same dict into CSS custom properties (--bg, --accent,
 # --accent-weak, …) on .dark-theme / .light-theme, which assets/app.css uses.
-# Light-theme accents are darkened so small text on --surface passes WCAG AA.
+# Neutral and monochrome: white / near-black surfaces, grey text, black or
+# white primary actions. Colour is reserved for meaning — red is bad (over
+# typical, warnings), green is good — and charts are drawn in ink (`bar`).
+# Every text colour passes WCAG AA (4.5:1) on bg and surface; see docs/design.md.
 _CHART = {
     "dark": {
-        "bg": "#0a0a0f", "surface": "#111318", "chip": "#0a0a0f", "border": "#252830",
-        "text": "#ffffff", "subtext": "#8a8fa8", "label": "#e0e2f0",
-        "accent": "#6c8aff", "accent2": "#ff6c8a", "accent3": "#6cffd4",
-        "accent_weak": "rgba(108,138,255,0.18)", "on_accent": "#0a0a0f",
-        "overlay": "rgba(10,10,15,0.9)",
-        "text_weak": "#c8cadb", "stroke_weak": "rgba(255,255,255,0.05)", "fill_active": "#2a2e3a",
+        "bg": "#111111", "surface": "#1a1a1a", "chip": "#111111", "border": "#2e2e2e",
+        "text": "#ececec", "subtext": "#a3a3a3", "label": "#a3a3a3",
+        "accent": "#ececec", "accent2": "#f87171", "accent3": "#4fbf7f",
+        "accent_weak": "#2a2a2a", "on_accent": "#111111", "bar": "#ececec",
+        "overlay": "rgba(17,17,17,0.9)",
+        "text_weak": "#c4c4c4", "stroke_weak": "rgba(255,255,255,0.06)", "fill_active": "#333333",
         "shade_strong": "rgba(0,0,0,0.5)", "shade_weak": "rgba(0,0,0,0.3)",
     },
     "light": {
-        "bg": "#ffffff", "surface": "#f0f1f5", "chip": "#ffffff", "border": "#dcdee8",
-        "text": "#0a0a0f", "subtext": "#5c5f72", "label": "#5c5f72",
-        "accent": "#3d5bd9", "accent2": "#c42a4f", "accent3": "#067a58",
-        "accent_weak": "rgba(61,91,217,0.12)", "on_accent": "#ffffff",
+        "bg": "#ffffff", "surface": "#ffffff", "chip": "#ffffff", "border": "#e5e5e5",
+        "text": "#0d0d0d", "subtext": "#5d5d5d", "label": "#5d5d5d",
+        "accent": "#0d0d0d", "accent2": "#c62828", "accent3": "#1a7f37",
+        "accent_weak": "#f2f2f2", "on_accent": "#ffffff", "bar": "#0d0d0d",
         "overlay": "rgba(255,255,255,0.9)",
-        "text_weak": "#5c5f72", "stroke_weak": "rgba(0,0,0,0.05)", "fill_active": "#d0d2e0",
+        "text_weak": "#5d5d5d", "stroke_weak": "rgba(0,0,0,0.06)", "fill_active": "#e8e8e8",
         "shade_strong": "rgba(0,0,0,0.2)", "shade_weak": "rgba(0,0,0,0.1)",
     },
 }
@@ -132,18 +135,21 @@ def theme_css() -> str:
     return "\n".join(blocks)
 
 
+_FONT = "Inter, system-ui, -apple-system, Segoe UI, sans-serif"
+
+
 def chart_template(theme="dark"):
     c = _CHART[theme]
     return dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=c["text"], family="IBM Plex Mono, monospace"),
+        font=dict(color=c["text"], family=_FONT),
         xaxis=dict(gridcolor=c["border"], zerolinecolor=c["border"]),
         yaxis=dict(gridcolor=c["border"], zerolinecolor=c["border"],
                    tickprefix="$", tickformat=",.0f"),
         legend=dict(bgcolor="rgba(0,0,0,0)"),
         hoverlabel=dict(bgcolor=c["surface"], bordercolor=c["border"],
-                        font=dict(color=c["text"], family="IBM Plex Mono, monospace")),
+                        font=dict(color=c["text"], family=_FONT)),
         margin=dict(l=48, r=20, t=24, b=40),
     )
 
@@ -449,7 +455,7 @@ app.index_string = '''
     <title>{%title%}</title>
     {%favicon%}
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>__THEME_CSS__</style>
     {%css%}
 </head>
@@ -515,7 +521,7 @@ app.layout = html.Div(
             id="setup-overlay",
             style=_OVERLAY_HIDDEN if (MASTER_PATH and MASTER_PATH.exists()) else _OVERLAY_VISIBLE,
             children=html.Div(className="app-card setup-card", children=[
-                html.H1(["FINANCE ", html.Span("DASHBOARD", className="accent")], className="wordmark"),
+                html.H1(["Finance ", html.Span("Dashboard", className="accent")], className="wordmark"),
                 html.P("Choose the folder that contains your RAW bank exports. "
                        "The dashboard keeps its SORTED output (and your labels) next to them.",
                        className="setup-copy"),
@@ -570,7 +576,7 @@ app.layout = html.Div(
 
         # ── Header: wordmark, data freshness, attention line; gear top-right ──
         html.Div(className="app-header", children=[
-            html.H1(["FINANCE ", html.Span("DASHBOARD", className="accent")], className="wordmark"),
+            html.H1(["Finance ", html.Span("Dashboard", className="accent")], className="wordmark"),
             html.P(id="data-updated", className="header-meta"),
             # One red line for everything that needs you — shown only when
             # something fires. Buttons stay in the layout (callbacks listen to
@@ -613,7 +619,7 @@ app.layout = html.Div(
                     # callbacks output to them) and shows a fullscreen spinner
                     # while they run, so it never overlaps the menu buttons.
                     dcc.Loading(
-                        id="data-op-loading", type="circle", color=_CHART["dark"]["accent"],
+                        id="data-op-loading", type="circle", color=_CHART["light"]["subtext"],  # visible on either overlay
                         fullscreen=True,
                         children=[
                             html.Span(id="reload-status", className="settings-status"),
@@ -1268,7 +1274,8 @@ def update_period_chart(store, metric, theme, _refresh):
     if metric == "net":
         colors = [c["accent3"] if v >= 0 else c["accent2"] for v in vals]
     else:
-        colors = [c["accent2"] if metric == "expenses" else c["accent3"]] * len(vals)
+        # Spending isn't "bad" and income isn't "good" — both are drawn in ink
+        colors = [c["bar"]] * len(vals)
 
     # The in-progress period gets a hatch so a short bar reads as "not over yet"
     as_of = _as_of()
@@ -1281,8 +1288,7 @@ def update_period_chart(store, metric, theme, _refresh):
         y=vals,
         marker=dict(
             color=colors,
-            opacity=[1.0 if q == p else 0.6 for q in win.index],
-            line=dict(width=[2 if q == p else 0 for q in win.index], color=c["text"]),
+            opacity=[1.0 if q == p else 0.45 for q in win.index],
             pattern=dict(shape=["/" if ip else "" for ip in in_progress],
                          fgcolor=c["surface"], fillmode="overlay", solidity=0.3),
         ),
@@ -1323,6 +1329,11 @@ def _category_split(pdf: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return top, rest["category"].tolist()
 
 
+def _category_opacity(names: list[str], selected) -> list[float]:
+    """Bars are grey ink; the clicked one is full ink, "Other" lighter still."""
+    return [1.0 if n_ == selected else 0.25 if n_.startswith("Other · ") else 0.45 for n_ in names]
+
+
 @app.callback(
     Output("category-chart", "figure"),
     Output("category-title", "children"),
@@ -1353,8 +1364,8 @@ def update_category_chart(store, theme, _refresh, sel_cat):
         y=names,
         x=top["total_expenses"],
         marker=dict(
-            color=[c["subtext"] if n_.startswith("Other · ") else c["accent"] for n_ in names],
-            opacity=[0.35 if sel_cat and n_ != sel_cat else 1.0 for n_ in names],
+            color=c["bar"],
+            opacity=_category_opacity(names, sel_cat),
         ),
         text=[f"{_dollar0(v)} · {v / total * 100:.0f}%" for v in top["total_expenses"]],
         textposition="outside",
@@ -1404,7 +1415,7 @@ def highlight_category(sel_cat, fig):
         return dash.no_update
     names = fig["data"][0].get("y") or []
     patched = Patch()
-    patched["data"][0]["marker"]["opacity"] = [0.35 if sel_cat and n_ != sel_cat else 1.0 for n_ in names]
+    patched["data"][0]["marker"]["opacity"] = _category_opacity(names, sel_cat)
     return patched
 
 
@@ -1457,7 +1468,7 @@ def category_drilldown(label, _theme, store):
             html.Div(className="divider"),
             html.Div([
                 "Largest: ",
-                html.Span(f"${big['amount']:,.2f}", className="warn-text", style={"fontWeight": "600"}),
+                html.Span(f"${big['amount']:,.2f}", style={"fontWeight": "600"}),
                 f" · {big['description']} · {big_date:%b} {big_date.day}",
             ], className="muted-text", style={"fontSize": "11px"}),
         ])
