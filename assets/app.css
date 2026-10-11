@@ -295,6 +295,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
 .lg-date { flex: 0 0 52px; color: var(--subtext); }
 .lg-desc { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.lg-desc-same { min-width: 0; }   /* no text to show: keep date and amount on one line */
 .lg-amt { flex: 0 0 90px; text-align: right; }
 .rule-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 /* Transfer pairs: the OUT and IN rows of one move between your accounts */
