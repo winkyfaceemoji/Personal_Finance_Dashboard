@@ -4,7 +4,9 @@ import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
 from Modules.labels import LAST_IMPORT_NAME, row_id
-from Modules.safety import atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_skipped
+from Modules.safety import (
+    atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_overlap_only, write_skipped,
+)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -35,6 +37,18 @@ FALLBACK_COLUMNS = ["date", "description", "amount", "source"]
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
 CHASE_CREDIT_HEADERS    = {"Transaction Date", "Post Date", "Description", "Category", "Type", "Amount", "Memo"}
 DISCOVER_CREDIT_HEADERS = {"Trans. Date", "Post Date", "Description", "Amount", "Category"}
+CAPITAL_ONE_CREDIT_HEADERS = {"Transaction Date", "Posted Date", "Card No.", "Description",
+                              "Category", "Debit", "Credit"}
+
+# Capital One took over the Discover card: its exports are that account,
+# whichever RAW/ folder they sit in (RAW/CapitalOne/ keeps them apart on disk)
+CAPITAL_ONE_ACCOUNT = "Discover"
+
+# Within one account, files of a higher-priority format own their dates
+# before any span comparison. The Discover-format history is a closed
+# archive — labeled, and never growing again — so a wide Capital One export
+# reaching back into it can't take its dates (and orphan its labels).
+FORMAT_PRIORITY = {"discover_credit": 1}
 
 
 def detect_format(df: pd.DataFrame) -> str | None:
@@ -46,6 +60,8 @@ def detect_format(df: pd.DataFrame) -> str | None:
         return "chase_credit"
     elif DISCOVER_CREDIT_HEADERS.issubset(cols):
         return "discover_credit"
+    elif CAPITAL_ONE_CREDIT_HEADERS.issubset(cols):
+        return "capital_one_credit"
     return None
 
 
@@ -116,10 +132,45 @@ def normalize_discover_credit(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _money(col: pd.Series) -> pd.Series:
+    """Dollar amounts that may carry "$" or thousands commas; blank is NaN."""
+    return pd.to_numeric(col.astype(str).str.replace(r"[$,\s]", "", regex=True),
+                         errors="coerce")
+
+
+def normalize_capital_one_credit(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Capital One credit columns:
+    Transaction Date, Posted Date, Card No., Description, Category, Debit, Credit
+
+    Capital One took over the Discover card, and its exports are the same
+    account in a new format — so the rows keep source "Discover Credit" and
+    a blank card_last4 (Card No. is ignored), and load_and_normalize files
+    them under the Discover institution (CAPITAL_ONE_ACCOUNT) whatever their
+    folder: an export overlapping the Discover history is merged by coverage
+    instead of counted twice. Charges are in Debit and payments / refunds in
+    Credit, both positive.
+    """
+    debit, credit = _money(df["Debit"]), _money(df["Credit"])
+    out = pd.DataFrame(columns=UNIFIED_COLUMNS)
+    out["date"]          = pd.to_datetime(df["Transaction Date"], errors="coerce")
+    out["post_date"]     = pd.to_datetime(df["Posted Date"], errors="coerce")
+    out["description"]   = _text(df["Description"])
+    out["amount"]        = (credit.fillna(0) - debit.fillna(0)).where(credit.notna() | debit.notna())
+    out["original_category"] = _text(df["Category"])
+    out["type"]          = None
+    out["balance"]       = None
+    out["memo"]          = None
+    out["check_or_slip"] = None
+    out["source"]        = "Discover Credit"
+    return out
+
+
 NORMALIZERS = {
-    "chase_debit":     normalize_chase_debit,
-    "chase_credit":    normalize_chase_credit,
-    "discover_credit": normalize_discover_credit,
+    "chase_debit":        normalize_chase_debit,
+    "chase_credit":       normalize_chase_credit,
+    "discover_credit":    normalize_discover_credit,
+    "capital_one_credit": normalize_capital_one_credit,
 }
 
 
@@ -157,7 +208,11 @@ def load_and_normalize(filepath: Path, input_folder: Path, skipped: list | None 
     # identity). Files dropped directly in RAW get a blank institution.
     rel = filepath.relative_to(input_folder).parts
     institution = rel[0] if len(rel) > 1 else ""
+    if fmt == "capital_one_credit":
+        institution = CAPITAL_ONE_ACCOUNT
     result["institution"] = institution
+    # For the coverage merge: format priority, and naming what it leaves out
+    result.attrs.update(format=fmt, file=rel_name)
 
     # Extract card last-4 from Chase filenames: ChaseXXXX_Activity... (no
     # separator between "Chase" and the digits — the regex requires that)
@@ -172,7 +227,7 @@ def load_and_normalize(filepath: Path, input_folder: Path, skipped: list | None 
     return result
 
 
-def _merge_by_coverage(file_dfs: list[pd.DataFrame]) -> pd.DataFrame:
+def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None = None) -> pd.DataFrame:
     """
     Merge multiple raw exports of the same physical account into one
     timeline, using each file's actual transaction-date coverage to decide
@@ -191,28 +246,69 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     copies, git checkouts, and drive migrations all rewrite mtimes without
     any relation to when a statement was actually downloaded. Instead, the
     file with the widest verified date span (derived from its own parsed
-    transactions) wins any date it covers; ties broken by row count.
+    transactions) wins any date it covers; ties broken by row count. A file of
+    a higher FORMAT_PRIORITY outranks any span (the Discover archive over
+    Capital One exports of the same card).
+
+    The rule assumes the winning file is complete for its dates. Where it
+    isn't — a charge still pending when the last Discover export was taken
+    shows up only in a Capital One export, dated inside Discover's range —
+    the losing file's row is dropped. Where a file of another format than the
+    winning one loses dates (Capital One under the Discover archive), its
+    dropped rows with no transaction of the same date and amount in the
+    merged result are appended to `overlap_only` (with their file), so they
+    are reported rather than silently lost. They aren't added back: a changed
+    amount (a tip on a pending charge) would then count one charge twice.
+    Re-downloads of one format (the usual overlapping statements) aren't
+    checked — the same export always carries the same rows.
     """
     def span(d: pd.DataFrame) -> pd.Timedelta:
         valid = d["date"].dropna()
         return valid.max() - valid.min() if not valid.empty else pd.Timedelta(0)
 
-    ordered = sorted(file_dfs, key=lambda d: (span(d), len(d)), reverse=True)
+    ordered = sorted(file_dfs, key=lambda d: (FORMAT_PRIORITY.get(d.attrs.get("format"), 0),
+                                              span(d), len(d)), reverse=True)
 
     covered: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-    kept = []
+    kept, dropped = [], []
     for d in ordered:
         already_covered = pd.Series(False, index=d.index)
         for lo, hi in covered:
             already_covered |= d["date"].between(lo, hi)
         new_rows = d[~already_covered]
+        if already_covered.any() and d.attrs.get("format") != ordered[0].attrs.get("format"):
+            dropped.append(d[already_covered].assign(file=d.attrs.get("file", "")))
         if not new_rows.empty:
             kept.append(new_rows)
             dated = new_rows["date"].dropna()
             if not dated.empty:
                 covered.append((dated.min(), dated.max()))
 
-    return pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
+    merged = pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
+    if overlap_only is not None and dropped:
+        missing = _only_in_dropped(merged, dropped)
+        if not missing.empty:
+            overlap_only.append(missing)
+    return merged
+
+
+def _only_in_dropped(merged: pd.DataFrame, dropped: list[pd.DataFrame]) -> pd.DataFrame:
+    """Dropped rows with no transaction of the same date and amount in the
+    merged result. Counted per (date, amount): if two losing files both hold
+    a charge the winner lacks, it's reported once."""
+    def keys(d: pd.DataFrame) -> pd.Series:
+        return pd.Series(list(zip(d["date"].dt.normalize(), d["amount"].round(2))), index=d.index)
+
+    have = keys(merged).value_counts()
+    need: dict = {}
+    for d in dropped:
+        d = d[d["amount"].notna()]
+        k = keys(d)
+        for key, n in k.value_counts().items():
+            if n > need.get(key, (0, None))[0]:
+                need[key] = (n, d[k == key])
+    out = [rows.head(n - have.get(key, 0)) for key, (n, rows) in need.items() if n > have.get(key, 0)]
+    return pd.concat(out, ignore_index=True) if out else merged.iloc[0:0]
 
 
 def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
@@ -401,6 +497,7 @@ def main(data_dir: Path | None = None):
     if not csv_files:
         print(f"No CSV files found in {input_folder}")
         write_skipped(master_file, skipped)
+        write_overlap_only(master_file, None)
         return
 
     print(f"Found {len(csv_files)} CSV file(s) in {input_folder}\n")
@@ -425,17 +522,25 @@ def main(data_dir: Path | None = None):
 
     if not groups:
         print("No valid files were processed. Exiting.")
+        write_overlap_only(master_file, None)
         return
 
     before = sum(len(d) for file_dfs in groups.values() for d in file_dfs)
 
     # Merge each account's exports by date-range ownership, so re-downloaded
     # overlapping statements don't collapse genuine same-day repeat transactions.
+    overlap_only: list[pd.DataFrame] = []
     combined = pd.concat(
-        [_merge_by_coverage(file_dfs) for file_dfs in groups.values()],
+        [_merge_by_coverage(file_dfs, overlap_only) for file_dfs in groups.values()],
         ignore_index=True,
     )
     after = len(combined)
+    left_out = pd.concat(overlap_only, ignore_index=True) if overlap_only else None
+    if left_out is not None:
+        left_out = left_out.assign(date=left_out["date"].dt.strftime("%Y-%m-%d"))
+        print(f"  ⚠ {len(left_out)} transaction(s) only in a Capital One export, on dates the "
+              f"Discover history owns — listed in SORTED/overlap_only.csv")
+    write_overlap_only(master_file, left_out)
 
     # Sort by date ascending
     combined.sort_values("date", inplace=True, ignore_index=True)
