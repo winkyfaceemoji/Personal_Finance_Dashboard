@@ -879,10 +879,16 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
     if can_remember and kept.get("remember") is not None:
         remember = kept["remember"]
 
+    # A nameless card's rows mostly repeat the transaction text shown above
+    # them: show a row's text only where it differs
+    def _row_text(r):
+        return "" if g["fallback"] and r["description"] == g["example"] else r["description"]
+
     rows = [html.Div(className="lg-row", children=[
                 html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
-                html.Span(r["description"] + (f"  ×{r['count']}" if r["count"] > 1 else ""),
-                          className="lg-desc", title=r["description"]),
+                html.Span(_row_text(r) + (f"  ×{r['count']}" if r["count"] > 1 else ""),
+                          className="lg-desc" + ("" if _row_text(r) else " lg-desc-same"),
+                          title=r["description"]),
                 html.Span(_dollar(r["amount"]), className="lg-amt"),
                 html.Div(className="lg-buttons", children=[_btn(c, r["row_id"]) for c in PREDEFINED_CATEGORIES]),
             ]) for r in g["rows"]]
@@ -918,13 +924,15 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
             dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
                       className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
                       value=kept.get("sub") or ""),
+            # Hidden, not left out, on a nameless card: it can never be ticked
+            # there, and the label callbacks read every card's checkbox
             dcc.Checklist(
                 id={"type": "lbl-remember", "group": key}, className="lg-remember",
                 options=[{"label": " Remember for future statements", "value": "yes",
                           "disabled": not can_remember}],
-                value=remember,
+                value=remember, style={"display": "none"} if g["fallback"] else None,
             ),
-            html.Span(note, className="hint"),
+            html.Span(note, className="hint") if not g["fallback"] else None,
         ]),
         # Row-by-row groups start open; any group the user opened stays open.
         # Dash doesn't report a <details> toggle, so the summary counts clicks

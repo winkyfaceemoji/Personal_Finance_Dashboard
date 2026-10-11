@@ -128,6 +128,11 @@ def test_nameless_group_card_says_no_clear_merchant(appmod):
     texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
              if isinstance(c, str)]
     assert "No clear merchant" in texts and "#1234" in texts     # the text itself, unaltered
+    assert texts.count("#1234") == 1                             # once, not again in the row
+    card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+    remember = next(c for c in _walk(card) if getattr(c, "id", None) == {"type": "lbl-remember", "group": g["key"]})
+    assert remember.style == {"display": "none"} and remember.value == []
+    assert not any("no recognizable" in t for t in texts)
 
 
 def _walk(component):
