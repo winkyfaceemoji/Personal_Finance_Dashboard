@@ -251,6 +251,20 @@ TYPICAL_LOOKBACK = {"week": 12, "month": 12, "year": None}
 # same week a year ago mostly measures where a payday fell.
 LAST_YEAR_STEP = {"month": 12, "year": 1}
 
+# A period counts as covered when the data starts within this many days of
+# its start: a quiet first few days isn't missing data, but exports that
+# begin Feb 16 leave February — and that year — only partly covered.
+COVERAGE_GRACE_DAYS = 7
+
+
+def is_covered(q: pd.Period, data_start) -> bool:
+    """Whether the data reaches back to (near enough) the start of q. A
+    partly covered period never counts toward "typical" and is never the
+    "last year" a total is compared with: its total is only part of one."""
+    return pd.isna(data_start) or (
+        pd.Timestamp(data_start).normalize()
+        <= q.start_time.normalize() + pd.Timedelta(days=COVERAGE_GRACE_DAYS))
+
 
 def to_period(ts, freq: str) -> pd.Period:
     """The week / month / year period containing a timestamp."""
@@ -352,15 +366,19 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     - cur: totals for p (to date, if p is still in progress)
     - partial / days_elapsed / days_total: whether p ends after `as_of`, the
       latest transaction date, and how far into it the data reaches
-    - typical: medians over previous_periods() — truncated to the same number
-      of days when p is partial, so a half-finished month isn't compared to
-      a full one; n_typical: how many periods that is
+    - typical: medians over previous_periods() that the data fully covers
+      (is_covered) — truncated to the same number of days when p is partial,
+      so a half-finished month isn't compared to a full one; typical_periods
+      / n_typical: which periods those are
+    - through: the last date p's data reaches while partial (as_of), else None
     - typical_full: typical *full*-period totals (the pace target)
     - last_year / last_year_period / last_year_window: the same month last
       year, or last year (the stat cards' comparison) — while p is in
       progress, only up to the same calendar date (Oct 1–26, or Jan 1 – Oct
       26); window is that (start, end). None for weeks, and when the data
-      doesn't reach back that far.
+      doesn't reach back that far; last_year_partial when the data reaches
+      only part of it (then last_year and its window are None too).
+    - data_start: the first transaction date
 
     typical is None when there is no earlier period in the data.
     """
@@ -372,7 +390,8 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
 
     dates = df["date"].dropna()
     first = to_period(dates.min(), freq) if not dates.empty else p
-    prevs = previous_periods(p, freq, first)
+    data_start = dates.min().normalize() if not dates.empty else pd.NaT
+    prevs = [q for q in previous_periods(p, freq, first) if is_covered(q, data_start)]
 
     def _totals(q: pd.Period) -> dict:
         return to_date_totals(df, q, days) if partial else window_totals(filter_period(df, q))
@@ -389,7 +408,8 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     ly = p - LAST_YEAR_STEP[freq] if LAST_YEAR_STEP.get(freq) else None
     if ly is not None and ly < first:
         ly = None
-    if ly is not None:
+    ly_partial = ly is not None and not is_covered(ly, data_start)
+    if ly is not None and not ly_partial:
         ly_start = ly.start_time.normalize()
         ly_end = ly.end_time.normalize()
         if partial:
@@ -400,8 +420,10 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     return {
         "cur": cur, "typical": typical, "typical_full": typical_full,
         "last_year": last_year, "last_year_period": ly, "last_year_window": last_year_window,
+        "last_year_partial": ly_partial,
         "partial": partial, "days_elapsed": days, "days_total": days_total,
-        "n_typical": len(prevs),
+        "through": as_of if partial else None,
+        "typical_periods": prevs, "n_typical": len(prevs), "data_start": data_start,
     }
 
 
