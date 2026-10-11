@@ -890,13 +890,22 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
     return html.Div(className="app-card label-group", children=[
         html.Div(className="lg-main", children=[
             html.Div(className="lg-info", children=[
-                html.Div([html.Span(g["merchant"], className="lg-name", title=g["example"]),
-                          html.Span("MIXED", className="lg-badge",
-                                    title="Has money in and out — check the rows")
-                          if g["mixed"] else None]),
+                # Who it's with (the name rows are grouped under) and, verbatim,
+                # what the bank wrote — labeled, so the two aren't confused
+                html.Div(className="lg-field", children=[
+                    html.Span("MERCHANT", className="lg-field-label"),
+                    html.Span(g["merchant"], className="lg-name"),
+                    html.Span("MIXED", className="lg-badge",
+                              title="Has money in and out — check the rows") if g["mixed"] else None,
+                ]),
+                html.Div(className="lg-field", children=[
+                    html.Span("TRANSACTION TEXT" + ("" if len({r["description"] for r in g["rows"]}) == 1
+                                                    else " · ONE OF SEVERAL"),
+                              className="lg-field-label"),
+                    html.Span(g["example"], className="lg-example"),
+                ]),
                 html.Div(f'{g["count"]} txn{"s" if g["count"] != 1 else ""} · '
                          f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
-                html.Div(g["example"], className="lg-example"),
             ]),
             html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
             else html.Div("Label these one at a time below", className="hint"),

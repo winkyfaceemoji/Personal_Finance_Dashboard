@@ -98,6 +98,26 @@ def test_group_card_row_ids_unique(appmod):
     assert len(ids) == len(set(ids))            # twins don't collide
 
 
+def test_group_card_shows_merchant_and_the_banks_text_apart(appmod):
+    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    raw = "CENTRAL BANK COLLECTION 590951122973920 WEB ID: 9886281493"
+    df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-03-01", "2025-04-01", "2025-05-01"]),
+        "description": [raw, raw.replace("590951122973920", "111"), raw.replace("590951122973920", "222")],
+        "amount": [-500.0, -500.0, -500.0], "master_category": [""] * 3, "sub_category": [""] * 3,
+        "source": ["Chase Debit"] * 3, "card_last4": [""] * 3,
+    })
+    g = unlabeled_groups(df)[0]
+    texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
+             if isinstance(c, str)]
+    assert {"MERCHANT", "CENTRAL BANK COLLECTION", "TRANSACTION TEXT · ONE OF SEVERAL"} <= set(texts)
+    assert raw in texts                                    # the bank's text, unaltered
+    one = unlabeled_groups(df.iloc[:1])[0]
+    texts = [c for c in _walk(appmod["_group_card"](one, rule_check(df.iloc[:1], read_rules("/none"), one)))
+             if isinstance(c, str)]
+    assert "TRANSACTION TEXT" in texts and "TRANSACTION TEXT · ONE OF SEVERAL" not in texts
+
+
 def _walk(component):
     stack = [component]
     while stack:
