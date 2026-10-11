@@ -223,6 +223,9 @@ def load_and_normalize(filepath: Path, input_folder: Path, skipped: list | None 
     if m:
         last4 = m.group(1)
     result["card_last4"] = last4 if last4 else ""
+    # The number in the file name, kept when a replacement card's rows are
+    # re-filed under the old number (the coverage merge's overlap check)
+    result.attrs["card"] = result["card_last4"].iat[0] if len(result) else ""
 
     tag = f" [{institution}]" if institution else ""
     print(f"  [OK]   {filepath.name} -> {fmt}{tag}" + (f" (card ...{last4})" if last4 else ""))
@@ -283,10 +286,11 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None =
     are reported rather than silently lost. They aren't added back: a changed
     amount (a tip on a pending charge) would then count one charge twice.
     Re-downloads of one format (the usual overlapping statements) aren't
-    checked — the same export always carries the same rows — unless
-    `check_all`: a replacement card's exports (linked_cards) are of another
-    card number, and a charge still pending when the old number's last export
-    was taken may only be in the new number's.
+    checked — the same export always carries the same rows, and a pending
+    charge that posted with a tip would read as left out. `check_all` (a
+    linked replacement card's account) adds the rows a file loses on dates
+    another card number's export owns: a charge still pending when the old
+    number's last export was taken may only be in the new number's.
     """
     def span(d: pd.DataFrame) -> pd.Timedelta:
         valid = d["date"].dropna()
@@ -295,20 +299,28 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None =
     ordered = sorted(file_dfs, key=lambda d: (FORMAT_PRIORITY.get(d.attrs.get("format"), 0),
                                               span(d), len(d)), reverse=True)
 
-    covered: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    covered: list[tuple[pd.Timestamp, pd.Timestamp, str]] = []   # (from, to, owner's card)
     kept, dropped = [], []
     for d in ordered:
+        card = d.attrs.get("card", "")
         already_covered = pd.Series(False, index=d.index)
-        for lo, hi in covered:
-            already_covered |= d["date"].between(lo, hi)
+        other_card = pd.Series(False, index=d.index)
+        for lo, hi, owner in covered:
+            inside = d["date"].between(lo, hi)
+            already_covered |= inside
+            if owner != card:
+                other_card |= inside
         new_rows = d[~already_covered]
-        if already_covered.any() and (check_all or d.attrs.get("format") != ordered[0].attrs.get("format")):
-            dropped.append(d[already_covered].assign(file=d.attrs.get("file", "")))
+        if already_covered.any():
+            if d.attrs.get("format") != ordered[0].attrs.get("format"):
+                dropped.append(d[already_covered].assign(file=d.attrs.get("file", "")))
+            elif check_all and other_card.any():
+                dropped.append(d[other_card].assign(file=d.attrs.get("file", "")))
         if not new_rows.empty:
             kept.append(new_rows)
             dated = new_rows["date"].dropna()
             if not dated.empty:
-                covered.append((dated.min(), dated.max()))
+                covered.append((dated.min(), dated.max(), card))
 
     merged = pd.concat(kept, ignore_index=True) if kept else ordered[0].iloc[0:0]
     if overlap_only is not None and dropped:
@@ -337,16 +349,15 @@ def _only_in_dropped(merged: pd.DataFrame, dropped: list[pd.DataFrame]) -> pd.Da
     return pd.concat(out, ignore_index=True) if out else merged.iloc[0:0]
 
 
-def _link_replacement_cards(groups: dict[tuple, list[pd.DataFrame]], master_file: Path
+def _link_replacement_cards(groups: dict[tuple, list[pd.DataFrame]], master_file: Path,
+                            links: pd.DataFrame
                             ) -> tuple[dict[tuple, list[pd.DataFrame]], dict[tuple[str, str], str]]:
     """Regroup a confirmed replacement card's exports under the number it
     replaced (Modules/linked_cards), so the coverage merge counts the charges
     both exports carry once. A newly spotted pair is only recorded, as
     "proposed", for the dashboard to ask about; returns the regrouped files
-    and the card map in force."""
-    links = read_links(master_file)
-    if links is None:
-        return groups, {}
+    and the card map in force. `links`: read_links' result (never None —
+    main stops when the file can't be read)."""
     accounts = {k: _merge_by_coverage(v) for k, v in groups.items()}
     found = find_replacements(accounts, links)
     if found:
@@ -511,11 +522,21 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path,
             have = defaultdict(set)
             for key, mc, sc in zip(fallback_key(combined), combined["master_category"], combined["sub_category"]):
                 have[key].add((mc or "", sc or ""))
+            # How many prior rows of a charge were a second number's copy: all
+            # its linked prior rows less the most any one number had. Only that
+            # many leftovers are duplicates; the rest are labels to keep.
+            cards_all = old_master["card_last4"].fillna("").astype(str).str.strip()
+            on_link = [(str(src), c) in linked for src, c in zip(old_master["source"], cards_all)]
+            per_card = (pd.DataFrame({"key": fallback_key(old_master)[on_link], "card": cards_all[on_link]})
+                        .groupby(["key", "card"]).size())
+            spare_copies = (per_card.groupby(level="key").sum() - per_card.groupby(level="key").max()).to_dict()
             leftover = old_master[labeled & ~old_master.index.isin(used)]
-            cards = leftover["card_last4"].fillna("").astype(str).str.strip()
+            cards = cards_all[leftover.index]
             for i, key, src, card in zip(leftover.index, fallback_key(leftover), leftover["source"], cards):
                 label = (old_master.at[i, "master_category"], old_master.at[i, "sub_category"])
-                if (str(src), card) in linked and label in have.get(key, ()):
+                if ((str(src), card) in linked and label in have.get(key, ())
+                        and spare_copies.get(key, 0) > 0):
+                    spare_copies[key] -= 1
                     used.add(i)
                     result["merged"] += 1
 
@@ -583,6 +604,15 @@ def main(data_dir: Path | None = None):
     if restored:
         print(f"Master file was missing or empty — restored labels from backup {restored.name}")
 
+    # A replacement card the user confirmed lives in linked_cards.csv. If that
+    # file can't be read, importing would split the card again and count its
+    # repeated charges twice — so stop before anything is written; the
+    # dashboard says why (links_unreadable)
+    links = read_links(master_file)
+    if links is None:
+        print("Import stopped: SORTED/linked_cards.csv can't be read — fix or close it, then reload.")
+        return
+
     csv_files = [f for f in input_folder.rglob("*") if f.suffix.lower() == ".csv"]
     skipped: list[tuple[str, str]] = []
     if not csv_files:
@@ -623,7 +653,7 @@ def main(data_dir: Path | None = None):
         write_overlap_only(master_file, None)
         return
 
-    groups, linked = _link_replacement_cards(groups, master_file)
+    groups, linked = _link_replacement_cards(groups, master_file, links)
 
     before = sum(len(d) for file_dfs in groups.values() for d in file_dfs)
 

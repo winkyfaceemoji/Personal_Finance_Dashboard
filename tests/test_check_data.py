@@ -52,6 +52,16 @@ def test_no_warning_when_the_card_is_one_account(tmp_path):
     assert "OK: no card is split across two accounts" in _report(tmp_path)
 
 
+def test_exit_code_says_whether_a_problem_was_found(tmp_path, capsys):
+    ok, split = tmp_path / "ok", tmp_path / "split"
+    _raw(ok, "Discover/Discover-Statement-20260827.csv", DISCOVER)
+    _raw(ok, "CapitalOne/2026-10-10_transaction_download.csv", CAPITAL_ONE)
+    assert check_data.main(["--data-dir", str(ok)]) == 0
+    _raw(split, "discover/Discover-Statement-20260827.csv", DISCOVER)        # the same card, split
+    _raw(split, "CapitalOne/2026-10-10_transaction_download.csv", CAPITAL_ONE)
+    assert check_data.main(["--data-dir", str(split)]) == 1
+
+
 def test_is_read_only_and_compares_saved_totals(tmp_path):
     _raw(tmp_path, "discover/Discover-Statement-20260827.csv", DISCOVER)
     run_pipeline(tmp_path)

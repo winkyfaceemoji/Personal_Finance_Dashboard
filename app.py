@@ -16,7 +16,9 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
-from Modules.linked_cards import answer_link, month_span, pending_duplicates, pending_links, recent_answers
+from Modules.linked_cards import (
+    answer_link, links_unreadable, month_span, pending_duplicates, pending_links, recent_answers,
+)
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
@@ -291,13 +293,15 @@ def overlap_text(left_out: pd.DataFrame | None) -> str:
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
                     skipped: list[tuple[str, str]], today=None,
                     left_out: pd.DataFrame | None = None,
-                    exported: dict | None = None) -> dict[str, str]:
+                    exported: dict | None = None, links_broken: bool = False) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
     transfers each come with a button; other is what has no in-app fix.
     exported: {source: date} its exports are known to reach (from their file
     names), so a quiet card with a recent download isn't "behind".
+    links_broken: SORTED/linked_cards.csv can't be read, so imports are
+    stopped (a confirmed replacement card would otherwise count twice).
     """
     u = unlabeled_summary(frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
@@ -306,6 +310,9 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     review = f"{need} new from the last import need a label" if need else ""
 
     other = []
+    if links_broken:
+        other.append("SORTED/linked_cards.csv can't be read — imports are paused so your card totals "
+                     "stay right. Fix or close it, then Reload")
     age = data_age(frame, today)
     if age is not None and age > STALE_DAYS:
         other.append(f"no transactions in {age} days — add newer statements and reload")
@@ -1166,6 +1173,7 @@ def update_attention(_refresh, card_ui):
         read_skipped(MASTER_PATH) if MASTER_PATH else [],
         left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
         exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
+        links_broken=links_unreadable(MASTER_PATH) if MASTER_PATH else False,
     )
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
@@ -1788,6 +1796,9 @@ def reload_data(_, trigger):
         # resolves, which differs when FINANCE_DATA_DIR is set
         _run_ingest_pipeline(MASTER_PATH.parent.parent)
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+        if links_unreadable(MASTER_PATH):
+            return ("⚠ Nothing imported: SORTED/linked_cards.csv can't be read — fix or close it, "
+                    "then reload."), (trigger or 0) + 1
         return "✓ Reloaded", (trigger or 0) + 1
     except PermissionError:
         return "⚠ A data file is open in another program (Excel?) — close it and reload again.", dash.no_update
