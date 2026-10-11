@@ -19,10 +19,10 @@ The decision record is in [decisions.md](../decisions.md#label-in-the-app-throug
 | Where | Button | Opens |
 |-------|--------|-------|
 | Attention line, unlabeled item (`att-unlabeled`) | `LABEL →` (`open-label-panel`) | every unlabeled row. Hidden when nothing is unlabeled |
-| Headline, when *Can't say yet* is about unlabeled money | `LABEL THEM →` (`headline-label`) | every unlabeled row |
+| Headline, when *Can't say yet* is about unlabeled money | `LABEL THEM →` (`headline-label`) | exactly the rows holding back that period's headline (`_blocking_rows`: its unlabeled money out that can count — no transfer-pair sides, no copies awaiting a card question), so labeling them clears *Can't say yet*; the summary adds `· in Oct 2026` |
 | Attention line, last-import item (`att-review`) | `REVIEW →` (`open-label-review`) | only the rows the last import added (the summary adds `· from the last import`). Hidden unless some of those rows are still unlabeled |
 
-These open on the **TO LABEL** tab (**CHECK →** opens TRANSFER PAIRS). **DONE** (`close-label-panel`) closes the panel and bumps `refresh-trigger`, so the headline, stat cards, attention line and every chart pick up what was labeled while it was open. The panel is `#label-panel`, fixed full-screen at z-index 90 (see [design.md](../design.md#layering)).
+These open on the **TO LABEL** tab (**CHECK →** opens TRANSFER PAIRS). Opened on a subset, **SHOW ALL** (`label-show-all`) next to the summary switches to every unlabeled row. **DONE** (`close-label-panel`) closes the panel and bumps `refresh-trigger`, so the headline, stat cards, attention line and every chart pick up what was labeled while it was open. The panel is `#label-panel`, fixed full-screen at z-index 90 (see [design.md](../design.md#layering)).
 
 The stat cards show what is still unlabeled in the period (`+ $292 unreviewed` under SPENT and INCOME) so the totals look incomplete rather than quietly short; see [overview-charts.md](overview-charts.md#stat-cards-period-stats).
 
