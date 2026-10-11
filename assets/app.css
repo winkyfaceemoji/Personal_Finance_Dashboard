@@ -301,16 +301,18 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 @media (max-width: 640px) { #label-panel { padding: 20px 16px; } .lg-sub { flex-basis: 100%; } }
 
 /* ── Recurring charges ───────────────────────────────────────────────────── */
-.recurring-row { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; flex-wrap: wrap; }
-.rc-name { flex: 1; min-width: 160px; font-weight: 600; }
-.rc-cadence { flex: 0 0 80px; color: var(--subtext); font-size: 12px; }
-.rc-amt { flex: 0 0 90px; text-align: right; }
-.rc-year { flex: 0 0 110px; text-align: right; color: var(--subtext); }
-.rc-last { flex: 0 0 130px; text-align: right; color: var(--subtext); font-size: 11px; }
-@media (max-width: 640px) { .rc-amt, .rc-year, .rc-last { flex-basis: auto; text-align: left; } }
-
-/* ── More (folded detail) ───────────────────────────────────────────────── */
-.more > summary {
-    cursor: pointer; font-size: 12px; letter-spacing: 0.04em; font-weight: 500; color: var(--label);
+/* Every row the same two lines, at any width: name and yearly cost, then
+   the price, how often and when it last charged */
+.recurring-row {
+    display: grid; grid-template-columns: 1fr auto; column-gap: 12px; row-gap: 2px;
+    padding: 10px 0; border-top: 1px solid var(--border); font-size: 13px;
 }
-.more[open] > summary { margin-bottom: 16px; }
+.rc-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.rc-year { text-align: right; white-space: nowrap; }
+.rc-detail { grid-column: 1 / -1; color: var(--subtext); font-size: 12px; }
+.rc-note { margin-bottom: 8px; }
+
+/* ── Recurring charges (folded; its summary carries the answer) ─────────── */
+.recurring > summary { cursor: pointer; display: list-item; }
+.rc-summary { font-size: 12px; color: var(--subtext); }
+.recurring[open] > summary { margin-bottom: 12px; }

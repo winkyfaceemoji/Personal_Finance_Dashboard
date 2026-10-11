@@ -501,32 +501,38 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     return _view(status, colour, legend, _track(spent, ref, c, over, marker)), False
 
 
-def recurring_view(items: list[dict]) -> tuple[list, str]:
-    """(rows for the RECURRING CHARGES card, its subtitle). Active charges
-    first; ones that stopped are folded away — still worth a glance when a
-    subscription you cancelled is still billing elsewhere."""
+def recurring_view(items: list[dict], as_of=None) -> tuple[list, str]:
+    """(rows for the Recurring charges card, the one-line summary its closed
+    fold shows). Each row: the name and what it costs a year, then in grey
+    the price, how often and when it last charged. Active charges first;
+    ones that stopped are folded away — worth a glance when a subscription
+    you cancelled may still be billing elsewhere."""
+    note = html.Div("Repeat charges found across all your history, not just this period.",
+                    className="hint rc-note")
     if not items:
-        return [html.Div("No regular charges found yet — a charge needs to repeat at least 3 times "
-                         "monthly, quarterly or yearly at a steady amount.", className="hint")], ""
+        return [note, html.Div("None found yet — a charge needs to repeat at least 3 times, "
+                               "monthly to yearly, at a steady amount.", className="hint")], \
+            " · none found yet"
+    year = pd.Timestamp(as_of).year if as_of is not None else None
 
     def _row(r):
+        d = r["last"]
+        when = f"{d:%b} {d.day}" + ("" if d.year == year else f", {d.year}")
         return html.Div(className="recurring-row", children=[
             html.Span(r["merchant"], className="rc-name", title=f"{r['count']} charges since "
                       f"{r['first']:%b} {r['first'].day}, {r['first'].year}"),
-            html.Span(r["cadence"], className="rc-cadence"),
-            html.Span(_dollar(r["amount"]), className="rc-amt"),
             html.Span(f"{_dollar0(r['yearly'])} / yr", className="rc-year"),
-            html.Span(f"last {r['last']:%b} {r['last'].day}, {r['last'].year}", className="rc-last"),
+            html.Span(f"{_dollar(r['amount'])} {r['cadence']} · last {when}", className="rc-detail"),
         ])
 
     active = [r for r in items if r["active"]]
     stopped = [r for r in items if not r["active"]]
-    rows = [_row(r) for r in active] or [html.Div("None active right now.", className="hint")]
+    rows = [note, *[_row(r) for r in active]] if active else \
+        [note, html.Div("None active right now.", className="hint")]
     if stopped:
         rows.append(html.Details(className="lg-rows", children=[
-            html.Summary(f"Stopped ({len(stopped)})"), *[_row(r) for r in stopped]]))
-    sub = f"{len(active)} active · {_dollar0(sum(r['yearly'] for r in active))} a year"
-    return rows, sub
+            html.Summary(f"No longer charging ({len(stopped)})"), *[_row(r) for r in stopped]]))
+    return rows, f" · {len(active)} · {_dollar0(sum(r['yearly'] for r in active))} a year"
 
 
 def last_import_text(frame: pd.DataFrame, ids) -> tuple[str, int]:
@@ -812,15 +818,11 @@ app.layout = html.Div(
             html.Div(id="category-drilldown"),
         ]),
 
-        # ── More: detail that isn't the high-level answer, folded away ───────
-        html.Details(className="app-card more", children=[
-            html.Summary("MORE"),
-            html.Div(className="card-head", children=[
-                html.Div([
-                    html.Div("RECURRING CHARGES", className="app-label"),
-                    html.Div(id="recurring-sub", className="hint"),
-                ]),
-            ]),
+        # ── Recurring charges: all history, not the period — folded away, its
+        # one-line answer on the fold ("RECURRING CHARGES · 7 · $3,149 a year")
+        html.Details(className="app-card recurring", children=[
+            html.Summary([html.Span("RECURRING CHARGES", className="app-label"),
+                          html.Span(id="recurring-sub", className="rc-summary")]),
             html.Div(id="recurring-list"),
         ]),
     ]
@@ -1807,7 +1809,7 @@ def update_recurring(_refresh):
     # sides of likely transfers (a fixed monthly move to savings) aren't charges
     pairs, suspects = _pair_lists()
     transfer_ids = {s["row_id"] for p in pairs + suspects for s in (p["out"], p["in"])}
-    return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids))
+    return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids), as_of=_as_of())
 
 
 # ── Import / export / reload ──────────────────────────────────────────────────
