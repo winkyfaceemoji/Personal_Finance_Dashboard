@@ -23,7 +23,7 @@ import pandas as pd
 
 from config import get_data_dir, get_master_path
 from main import _merge_by_coverage, filename_date, load_and_normalize
-from Modules.linked_cards import MIN_ROWS, MIN_SHARE, card_map, is_replacement, overlap_match, read_links
+from Modules.linked_cards import MIN_ROWS, MIN_SHARE, is_replacement, overlap_match, read_links, recorded
 from Modules.safety import orphan_count, read_overlap_only
 from Modules.transforms import load_transactions
 
@@ -200,22 +200,38 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
     if not splits:
         p("  OK: no card is split across two accounts")
     links = read_links(master) if master else None
-    linked = card_map(links)
+    if links is None and master and (master.parent / "linked_cards.csv").exists():
+        problems += 1
+        p("  WARNING: SORTED/linked_cards.csv can't be read - replacement cards aren't checked")
+    for source, old, new_, status in (links.attrs.get("unknown", []) if links is not None else []):
+        problems += 1
+        p(f"  WARNING: linked_cards.csv says \"{status}\" for {source} {old}/{new_} - not a status "
+          f"(proposed, same, different); the dashboard asks about it again")
     for s in same_charges(accounts):
         (_, source, ca), (_, _, cb) = s["a"], s["b"]
         p(f"  {account_name(s['a'])} and {account_name(s['b'])} both cover {_day(s['from'])} to "
           f"{_day(s['to'])} ({s['rows_a']} and {s['rows_b']} rows); {s['same']} charges are on both")
-        recorded = None if links is None else links[
-            (links["source"] == source) & links["old_card"].isin([ca, cb]) & links["new_card"].isin([ca, cb])]
-        if recorded is not None and not recorded.empty and recorded["status"].iat[-1] != "same":
-            p("    Marked as different cards in SORTED/linked_cards.csv - each counted on its own")
+        row = recorded(links, source, ca, cb) if links is not None else None
+        status = None if row is None else row["status"]
+        if status == "same":
+            p("    OK: you confirmed a replacement card - charges on both count once")
+        elif status == "different":
+            if is_replacement(s):
+                problems += 1
+                p(f"    WARNING: you said these are different cards, but they share almost every charge - "
+                  f"{_money(s['out'])} is counted twice. Undo on the dashboard (two weeks) or set the "
+                  f"line's status to same in SORTED/linked_cards.csv")
+            else:
+                p("    You said these are different cards - each counted on its own")
             continue
-        if linked.get((source, ca)) is not None and linked.get((source, ca)) == linked.get((source, cb)):
-            p("    OK: linked as one card (SORTED/linked_cards.csv) - charges on both count once")
+        elif status == "proposed":
+            problems += 1
+            p(f"    WAITING: answer the card question on the dashboard - until then these charges "
+              f"count twice ({_money(s['out'])} out)")
         elif is_replacement(s):
             problems += 1
-            p(f"    WARNING: a replacement card - these charges are counted twice ({_money(s['out'])} out) "
-              f"until the next import (Reload), which links the two numbers and counts them once")
+            p(f"    WARNING: looks like a replacement card - counted twice ({_money(s['out'])} out). "
+              f"The next import (Reload) asks you on the dashboard")
         else:
             p(f"    Different cards (a replacement repeats at least {MIN_SHARE:.0%} of the overlap, "
               f"{MIN_ROWS}+ rows): {'a few coincidences, ' if s['same'] else ''}nothing to do")
@@ -226,11 +242,12 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
         p(f"    Labels on the two copies: {labels['same']} same on both, {labels['one']} on one copy only, "
           f"{labels['neither']} on neither, {len(labels['different'])} different")
         if labels["different"]:
-            p("    Different labels - one is kept, the other shows as a label that matches no transaction:")
+            p("    Different labels - if you answer yes, one is kept and the other shows as a label "
+              "that matches no transaction:")
             for (d, desc, amt), la, lb in labels["different"][:15]:
                 p(f"      {d:%Y-%m-%d}  {_money(amt):>10}  {desc}: {ca} says {la}, {cb} says {lb}")
         if labels["transfer_one"]:
-            p("    Labeled Transfer on one copy only - after the merge that charge stays a Transfer "
+            p("    Labeled Transfer on one copy only - if you answer yes, that charge stays a Transfer "
               "(not spending). Check these are right:")
             for (d, desc, amt), lab in labels["transfer_one"][:15]:
                 p(f"      {d:%Y-%m-%d}  {_money(amt):>10}  {desc}: {lab}")

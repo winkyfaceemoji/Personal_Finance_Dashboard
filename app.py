@@ -16,7 +16,7 @@ from Modules.labels import (
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
-from Modules.linked_cards import recent_links
+from Modules.linked_cards import answer_link, month_span, pending_duplicates, pending_links, recent_answers
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
@@ -29,6 +29,7 @@ from Modules.transforms import (
     filter_period,
     period_label,
     period_short_label,
+    previous_periods,
     period_summary,
     period_totals,
     source_freshness,
@@ -290,16 +291,13 @@ def overlap_text(left_out: pd.DataFrame | None) -> str:
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
                     skipped: list[tuple[str, str]], today=None,
                     left_out: pd.DataFrame | None = None,
-                    exported: dict | None = None,
-                    linked: list[str] | None = None) -> dict[str, str]:
+                    exported: dict | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
     transfers each come with a button; other is what has no in-app fix.
     exported: {source: date} its exports are known to reach (from their file
     names), so a quiet card with a recent download isn't "behind".
-    linked: notes on replacement cards the import just linked — past totals
-    changed, so it says why.
     """
     u = unlabeled_summary(frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
@@ -327,7 +325,6 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
         other.append(skipped_text(skipped))
     if overlap_text(left_out):
         other.append(overlap_text(left_out))
-    other.extend(linked or [])
     return {"unlabeled": unlabeled, "review": review,
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
@@ -362,9 +359,12 @@ def unlabeled_share(spent: float, unlabeled_out: float) -> float:
 
 def cant_say_reasons(spent: float, freq: str, health: dict) -> tuple[list[str], bool]:
     """Why the page won't compare this period (headline and cards alike):
-    the newest data is stale, or too much of its money out is unlabeled.
-    Returns (reasons, whether unlabeled money is one of them)."""
+    the newest data is stale, too much of its money out is unlabeled, or a
+    card question is waiting (health["card_question"]). Returns (reasons,
+    whether unlabeled money is one of them)."""
     reasons = []
+    if health.get("card_question"):
+        reasons.append(health["card_question"])
     if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
         d = health["as_of"]
         reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
@@ -374,6 +374,56 @@ def cant_say_reasons(spent: float, freq: str, health: dict) -> tuple[list[str], 
         reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {FREQ_NOUN[freq]}'s money out "
                        f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
     return reasons, unlabeled
+
+
+def card_question_reason(pending: list[dict], freq: str, p: pd.Period, first) -> str | None:
+    """A replacement-card question still waiting whose overlap falls in this
+    period or in the periods its "typical" is measured over: those charges
+    may be counted twice in either, so the page won't compare until the
+    user answers (one tap)."""
+    if not pending:
+        return None
+    prev = previous_periods(p, freq, first) if first is not None else []
+    lo, hi = (prev[-1] if prev else p).start_time, p.end_time
+    for q in pending:
+        if pd.notna(q["from"]) and pd.notna(q["to"]) and q["from"] <= hi and q["to"] >= lo:
+            return (f"{q['n']} charges ({_dollar0(q['out'])}) may be counted twice — "
+                    f"answer the card question above")
+    return None
+
+
+def card_question_items(pending: list[dict], answered: list[dict], confirm: str | None) -> list:
+    """The attention line's replacement-card questions, first on the line:
+    asked about what happened (a new card), with the money it decides. NO on
+    a pair this alike asks once more; each answer can be undone for two
+    weeks (Modules/linked_cards)."""
+    def _buttons(pid, buttons):
+        return html.Span(className="q-buttons", children=[
+            html.Button(label, id={"type": "card-ans", "pair": pid, "act": act}, n_clicks=0,
+                        className="btn-secondary btn-small") for label, act in buttons])
+
+    items = []
+    for q in pending:
+        span = month_span(q["from"], q["to"])
+        if confirm == q["id"]:
+            text = f"Then {_dollar0(q['out'])} in {span} stays counted twice."
+            buttons = [("KEEP BOTH", "keep"), ("GO BACK", "back")]
+        else:
+            text = (f"Did {q['institution'] or q['source']} replace your card ending {q['old_card']} "
+                    f"with {q['new_card']}? {q['n']} charges ({_dollar0(q['out'])}, {span}) are on both "
+                    f"and count twice until you answer.")
+            buttons = [("YES, REPLACED", "yes"), ("NO, I HAVE BOTH", "no")]
+        items.append(html.Span(className="attention-item attention-question",
+                               children=[html.Span(text), _buttons(q["id"], buttons)]))
+    for a in answered:
+        span = month_span(a["from"], a["to"])
+        text = (f"{a['new_card']} counted as a replacement for {a['old_card']} — {span} no longer "
+                f"counts {_dollar0(a['out'])} twice." if a["status"] == "same" else
+                f"{a['old_card']} and {a['new_card']} kept apart — {_dollar0(a['out'])} in {span} "
+                f"stays counted twice.")
+        items.append(html.Span(className="attention-item attention-note",
+                               children=[html.Span(text), _buttons(a["id"], [("UNDO", "undo")])]))
+    return items
 
 
 def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool]:
@@ -532,6 +582,9 @@ app.layout = html.Div(
         # Data-freshness counter — incremented by any write operation so dependent
         # callbacks (charts, header notes) re-render automatically.
         dcc.Store(id="refresh-trigger", data=0),
+        # Replacement-card question: {"confirm": pair awaiting NO's second
+        # tap, "error": a failed answer's message}
+        dcc.Store(id="card-ui", data={}),
 
         dcc.Store(id="settings-menu-open", data=False),
 
@@ -616,6 +669,7 @@ app.layout = html.Div(
             # something fires. Buttons stay in the layout (callbacks listen to
             # them) and hide with their item.
             html.Div(id="attention", className="attention", style=_HIDDEN, children=[
+                html.Span(id="att-cards", className="attention-cards"),
                 _attention_item("att-unlabeled", "LABEL →", "open-label-panel"),
                 _attention_item("att-review", "REVIEW →", "open-label-review"),
                 _attention_item("att-transfers", "CHECK →", "open-transfer-check"),
@@ -1078,27 +1132,93 @@ def update_data_note(_refresh):
 _ATTENTION_ITEMS = ("unlabeled", "review", "transfers")
 
 
+def _pending() -> list[dict]:
+    return pending_links(MASTER_PATH) if MASTER_PATH else []
+
+
+def _without_pending_dups(frame: pd.DataFrame, pending: list[dict] | None = None) -> pd.DataFrame:
+    """frame without the new card's copies of charges in a replacement-card
+    pair still awaiting an answer: nobody should be asked to label a charge
+    that may be a duplicate (YES merges them; NO brings them back)."""
+    pending = _pending() if pending is None else pending
+    return frame[~pending_duplicates(frame, pending)] if pending else frame
+
+
 @app.callback(
     Output("attention", "style"),
     *[Output(f"att-{k}-item", "style") for k in _ATTENTION_ITEMS],
     *[Output(f"att-{k}", "children") for k in _ATTENTION_ITEMS],
     Output("att-other", "children"),
+    Output("att-cards", "children"),
     Input("refresh-trigger", "data"),
+    Input("card-ui", "data"),
 )
-def update_attention(_refresh):
+def update_attention(_refresh, card_ui):
+    card_ui = card_ui or {}
+    pending = _pending()
+    cards = card_question_items(pending, recent_answers(MASTER_PATH) if MASTER_PATH else [],
+                                card_ui.get("confirm"))
+    if card_ui.get("error"):
+        cards.append(html.Span(card_ui["error"], className="attention-item"))
     parts = attention_parts(
-        df, _suspects(), last_import_ids(MASTER_PATH),
+        _without_pending_dups(df, pending), _suspects(), last_import_ids(MASTER_PATH),
         orphan_count(MASTER_PATH) if MASTER_PATH else 0,
         read_skipped(MASTER_PATH) if MASTER_PATH else [],
         left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
         exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
-        linked=recent_links(MASTER_PATH) if MASTER_PATH else None,
     )
-    shown = {"display": "flex"} if any(parts.values()) else _HIDDEN
+    shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
             *[_SHOWN_INLINE if parts[k] else _HIDDEN for k in _ATTENTION_ITEMS],
             *[parts[k] for k in _ATTENTION_ITEMS],
-            parts["other"])
+            parts["other"], cards)
+
+
+@app.callback(
+    Output("card-ui",         "data"),
+    Output("refresh-trigger", "data", allow_duplicate=True),
+    Input({"type": "card-ans", "pair": ALL, "act": ALL}, "n_clicks"),
+    State("refresh-trigger", "data"),
+    prevent_initial_call=True,
+)
+def card_answer(_clicks, trigger):
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return dash.no_update, dash.no_update
+    return _do_card_answer(ctx.triggered_id["pair"], ctx.triggered_id["act"], trigger)
+
+
+def _do_card_answer(pid: str, act: str, trigger) -> tuple[dict, int]:
+    """Answer (or undo) a replacement-card question. Writes only if the pair
+    is still in the state the button was drawn for — a double tap or a stale
+    page is a no-op. YES, and undoing a YES, change which rows are merged,
+    so they re-run the import like Reload. Returns (card-ui, refresh)."""
+    global df
+    bump = (trigger or 0) + 1
+    if act == "no":
+        return {"confirm": pid}, bump           # a pair this alike: ask once more
+    if act == "back" or not MASTER_PATH:
+        return {}, bump
+    if act == "undo":
+        was = {a["id"]: a["status"] for a in recent_answers(MASTER_PATH)}.get(pid)
+        expect, status = (was, "proposed") if was else (None, None)
+    else:
+        expect, status = {"yes": ("proposed", "same"), "keep": ("proposed", "different")}.get(act, (None, None))
+    if expect is None:
+        return {}, bump
+    try:
+        with MASTER_LOCK:
+            changed = answer_link(MASTER_PATH, pid, expect, status)
+    except PermissionError:
+        return {"error": "SORTED/linked_cards.csv is open in another program (Excel?) — close it and "
+                         "answer again."}, bump
+    if changed and "same" in (expect, status):
+        try:
+            _run_ingest_pipeline(MASTER_PATH.parent.parent)
+            df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+        except Exception as e:
+            return {"error": f"Answer saved, but the reload failed ({e}) — close any open data file "
+                             f"and press Reload."}, bump
+    return {}, bump
 
 
 # ── Period navigation ─────────────────────────────────────────────────────────
@@ -1251,9 +1371,13 @@ def update_stats(store, theme, _refresh):
     s = period_summary(df, freq, p, as_of)
     cur = s["cur"]
 
+    pending = _pending()
+
     def _counted(rows):
         """Rows that can count, leaving out the sides of certain transfer
-        pairs: an unlabeled card payment isn't missing spending."""
+        pairs (an unlabeled card payment isn't missing spending) and a
+        replacement card's copies awaiting the card question."""
+        rows = _without_pending_dups(rows, pending)
         return rows[~row_ids(rows).isin(_pair_row_ids())] if not rows.empty else rows
 
     rows = _counted(filter_period(df, p))
@@ -1266,8 +1390,10 @@ def update_stats(store, theme, _refresh):
                         title="Unlabeled transactions in this period — not counted above")
 
     un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
+    first = to_period(df["date"].min(), freq) if df["date"].notna().any() else None
     health = {"current": p == to_period(as_of, freq), "age": data_age(df), "as_of": as_of,
-              "unlabeled_out": out_unrev, "unlabeled_n": int(len(un))}
+              "unlabeled_out": out_unrev, "unlabeled_n": int(len(un)),
+              "card_question": card_question_reason(pending, freq, p, first)}
 
     # Against last year — unless the page won't compare this period at all
     # (the headline says "Can't say yet"), so the cards never contradict it
@@ -1855,7 +1981,7 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             summary += f" · {len(suspects)} to check"
         return _pairs_view(shown, suspects), summary
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
-    groups = unlabeled_groups(df, only_row_ids=only)
+    groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
     n_rows = sum(g["count"] for g in groups)
     summary = (f"{n_rows:,} rows · {_dollar0(sum(g['abs_total'] for g in groups))} · "
                f"{len(groups)} merchants" + (" · from the last import" if only is not None else ""))
@@ -1945,7 +2071,7 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
     bumped = (version or 0) + 1
     stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
     only = last_import_ids(MASTER_PATH) if filt == "last" else None
-    groups = unlabeled_groups(df, only_row_ids=only)
+    groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
     group = next((g for g in groups if g["key"] == trig["group"]), None)
     if trig["type"] == "lbl-group":
         if group is None or group["sig"] != trig.get("sig"):
