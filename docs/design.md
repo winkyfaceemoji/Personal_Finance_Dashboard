@@ -31,11 +31,12 @@ Two themes — `dark` (default) and `light`. The choice is held in the `theme-st
 | `subtext` | `#a3a3a3` | `#5d5d5d` | labels, hints, muted text, drilldown bars |
 | `label` | `#a3a3a3` | `#5d5d5d` | card titles (`.app-label`) |
 | `accent` | `#ececec` | `#0d0d0d` | primary action: filled buttons (ink, not a hue) |
-| `accent2` | `#f87171` | `#c62828` | **bad** only: over typical, *Can't say yet*, warnings, negative net |
+| `accent2` | `#f87171` | `#c62828` | **bad** only: over typical (and the over-typical part of the track), the warning ⚠, worse than last year, negative net |
 | `accent3` | `#4fbf7f` | `#1a7f37` | **good** only: under / in line with typical, positive net, saved status |
 | `accent_weak` | `#2a2a2a` | `#f2f2f2` | selected pill, hover fill, empty part of tracks |
 | `on_accent` | `#111111` | `#ffffff` | text on an accent fill (primary button) |
 | `bar` | `#ececec` | `#0d0d0d` | chart marks: grey (45% opacity) for context, full ink for the selected bar |
+| `control` | `#737373` | `#858585` | outlines of buttons, the stepper, the dropdown and inputs — ≥ 3:1 against `bg` and `surface` (WCAG 1.4.11), unlike card borders |
 | `overlay` | 90% bg | 90% bg | loading-spinner backdrop |
 
 Plus the `--Dash-*` variables Dash 4 components theme themselves with, mapped onto these tokens by `_DASH_VARS`.
@@ -53,12 +54,13 @@ Plus the `--Dash-*` variables Dash 4 components theme themselves with, mapped on
 ## Component patterns
 
 - **Cards (`.app-card`)** — `surface` background, 1px `border`, 16px radius, 24px padding, no shadow. Text inside inherits `--text`; coloured text (deltas, warnings) just sets its own class. `card(children)` builds one.
-- **Pills** — `dcc.RadioItems` with `className="pills"` and the radio input hidden; each option is a chip. Pills are fully rounded with no outline; the selected one gets an `accent_weak` fill and `text` colour. Used for WEEK / MONTH / YEAR and the labeling panel's tabs. See gotcha #2.
+- **Pills** — `dcc.RadioItems` with `className="pills"` and the radio input hidden; each option is a chip. Pills are fully rounded with no outline; hover gets an `accent_weak` fill, and the selected one is an ink fill (`accent`, `on_accent` text) — a grey tint alone is ~1.1:1 against the page. The radios are visually hidden (not `display: none`), so pills are keyboard-focusable and show a focus ring. Used for WEEK / MONTH / YEAR and the labeling panel's tabs. See gotcha #2.
 - **Period bar (`.period-bar`)** — sticky row: pills on the left, `‹ label ›` stepper (`.step-btn`, 36px round, outlined) plus a LATEST button on the right. Wraps under 640px.
-- **Attention line (`.attention`)** — header line in `accent2`, a flex row that wraps; each `.attention-item` gets a ⚠ and hides when empty, and the whole line is hidden when nothing fires.
-- **Headline (`.pace-card`)** — muted label → `.headline-status` sentence (red over typical, green under or in line, red *Can't say yet*) → the pace track.
-- **Stat cards (`.stat-card`)** — muted title → big number → at most one `.stat-delta` comparison plus the unreviewed line. Delta colour comes from `.delta-good` / `.delta-bad` and means good/bad *for that metric*.
-- **Pace track** — an 8px track (`accent_weak`), a fill (spending, in the headline's colour), and a 2px `text`-coloured marker for typical.
+- **Attention line (`.attention`)** — header line in `text`, a flex row that wraps; each `.attention-item` gets a red (`accent2`) ⚠ and hides when empty, and the whole line is hidden when nothing fires. A warning is a chore, not overspending, so only the icon is red.
+- **Headline (`.pace-card`)** — muted label → `.headline-status` sentence (red over typical, green under or in line, ink *Can't say yet* — missing data isn't overspending) → the pace track.
+- **Stat cards (`.stat-card`)** — muted title → big number → one `.stat-delta` line against last year (`$450 more than Oct 2024 ($2,420)`) plus the unreviewed line. Only the amount-and-word span is coloured, by `.delta-good` / `.delta-bad`, meaning good/bad *for that metric*.
+- **Pace track** — an 8px track (`accent_weak`); spending up to typical is a grey (`subtext`) fill, and only the part past typical is red, when the headline says over; a 2px `text`-coloured marker for typical.
+- **Focus and affordance** — `button`, `input`, `summary` and the dropdown get a 2px `text` outline on `:focus-visible`; the clickable charts (spending over time, categories) show a pointer cursor.
 - **Buttons** — fully rounded. `.btn-primary` (ink fill, `on_accent` text) for the one main action (SAVE & LAUNCH); `.btn-secondary` (transparent, `border` outline, `text` label, `accent_weak` on hover) for everything else; `.btn-small` for compact ones; `.active` marks the current theme.
 - **Settings menu** — a `.app-card` panel under the gear. A transparent full-screen `#settings-backdrop` sits behind it while open, so a click anywhere outside closes it; theme / export / change-folder actions close it too. Reload and import leave it open so their status line stays visible.
 - **Labeling panel (`#label-panel`)** — fixed full-screen, `bg` background, scrolls on its own, 32px / 40px padding (20px / 16px under 640px). Content is capped at 1100px (`.label-panel-inner`). Built only from theme tokens and the existing `.app-card`, `.btn-secondary`, `.btn-small`, `.setup-input` and `.pills`. See [features/labeling-panel.md](features/labeling-panel.md).

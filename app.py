@@ -34,7 +34,7 @@ from Modules.transforms import (
     to_period,
     unlabeled_summary,
     PERIOD_FREQS,
-    TYPICAL_LOOKBACK,
+    filter_window,
     PREDEFINED_CATEGORIES,
 )
 
@@ -349,6 +349,28 @@ def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> 
     ])
 
 
+def unlabeled_share(spent: float, unlabeled_out: float) -> float:
+    """The share of a period's money out that's unlabeled."""
+    total = spent + unlabeled_out
+    return unlabeled_out / total if total > 0 else 0.0
+
+
+def cant_say_reasons(spent: float, freq: str, health: dict) -> tuple[list[str], bool]:
+    """Why the page won't compare this period (headline and cards alike):
+    the newest data is stale, or too much of its money out is unlabeled.
+    Returns (reasons, whether unlabeled money is one of them)."""
+    reasons = []
+    if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
+        d = health["as_of"]
+        reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
+    unlabeled = unlabeled_share(spent, health["unlabeled_out"]) > UNLABELED_BLOCK
+    if unlabeled:
+        n = health["unlabeled_n"]
+        reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {FREQ_NOUN[freq]}'s money out "
+                       f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
+    return reasons, unlabeled
+
+
 def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool]:
     """
     The one answer at the top: this period's spending against a typical one
@@ -373,16 +395,7 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
             html.Div(className="pace-legend", children=[html.Span(t) for t in legend]),
         ]
 
-    reasons = []
-    if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
-        d = health["as_of"]
-        reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
-    out_total = spent + health["unlabeled_out"]
-    unlabeled = out_total > 0 and health["unlabeled_out"] / out_total > UNLABELED_BLOCK
-    if unlabeled:
-        n = health["unlabeled_n"]
-        reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {noun}'s money out "
-                       f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
+    reasons, unlabeled = cant_say_reasons(spent, freq, health)
     if reasons:
         # Missing data isn't overspending: ink, not the "over" red
         return _view("Can't say yet", c["text"], ["; ".join(reasons)]), unlabeled
@@ -1148,49 +1161,54 @@ def update_period_header(store):
 
 # ── Headline + stat cards ─────────────────────────────────────────────────────
 
-def _pct_delta(cur, prior):
-    """Relative change, or None when either side is zero (a ▲/▼100% against
-    nothing says more about missing data than about your money)."""
-    if not prior or not cur:
-        return None
-    # Divide by |prior| so the arrow tracks the real direction of change: a
-    # negative prior (e.g. last period's net was negative) must not flip the
-    # sign of an improvement.
-    return (cur - prior) / abs(prior) * 100
+# How each card words a change against last year: (more, less) and whether
+# more is good. Net reads better / worse — "more" of a negative net is unclear.
+_LAST_YEAR_WORDS = {"exp": ("more", "less", False), "inc": ("more", "less", True),
+                    "net": ("better", "worse", True)}
 
 
-def _delta_line(change, suffix, higher_is_good, unit="%", tip=None):
-    # Colour signals good/bad for THIS metric, not merely up/down: more
-    # income is green, more spending is red.
-    if change is None:
-        body = [html.Span("—"), f" {suffix}"]
-    else:
-        up = change >= 0
-        cls = "delta-good" if up == higher_is_good else "delta-bad"
-        if unit == "$":
-            amount = _dollar0(abs(change))
-        elif unit == "%" and change >= 1000:
-            # Past +1000% a multiple reads better: ▲21× rather than ▲1977%
-            amount = f"{1 + change / 100:.0f}×"
-        else:
-            amount = f"{abs(change):.0f}{unit}"
-        body = [html.Span(f"{'▲' if up else '▼'}{amount}", className=cls), f" {suffix}"]
-    return html.Div(body, className="stat-delta", title=tip)
+def last_year_lines(s: dict, freq: str, last_year_unlabeled: float | None) -> dict:
+    """
+    The stat cards' comparison: each total against the same month last year,
+    or last year (while in progress, up to the same date). In dollars and
+    words, with last year's figure in brackets so it can be checked:
+    "$450 more than Oct 2024 ($2,420)". Colour means good or bad for that
+    card. {"exp"|"inc"|"net": line or None}.
 
+    It says why instead of showing a number when there's no data for last
+    year's period, or when over UNLABELED_BLOCK of that period's money out
+    is unlabeled (last_year_unlabeled is that share). Weeks get no line.
+    """
+    q = s["last_year_period"]
+    if q is None:
+        return dict.fromkeys(_LAST_YEAR_WORDS)
+    name = period_label(q, freq)
 
-def _net_line(change, partial: bool, freq: str, tip=None):
-    """Net against typical in words — "$198 better than a typical month" —
-    since a ▲ beside a negative net reads as good news while money is going
-    out."""
-    than = "typical by now" if partial else f"a typical {FREQ_NOUN[freq]}"
-    if change is None:
-        return html.Div([html.Span("—"), f" vs {than}"], className="stat-delta", title=tip)
-    if abs(change) < 0.5:
-        return html.Div(f"Same as {than}", className="stat-delta", title=tip)
-    better = change > 0
-    return html.Div([html.Span(f"{_dollar0(abs(change))} {'better' if better else 'worse'}",
-                               className="delta-good" if better else "delta-bad"),
-                     f" than {than}"], className="stat-delta", title=tip)
+    def _note(text):
+        return dict.fromkeys(_LAST_YEAR_WORDS, html.Div(text, className="stat-delta"))
+
+    if s["last_year"] is None:
+        return _note(f"No data for {name}")
+    if last_year_unlabeled is not None and last_year_unlabeled > UNLABELED_BLOCK:
+        return _note(f"{name} isn't fully labeled")
+    if s["partial"]:
+        end = s["last_year_window"][1]
+        name += f" by {end:%b} {end.day}"
+
+    out = {}
+    for k, (up, down, up_is_good) in _LAST_YEAR_WORDS.items():
+        was = s["last_year"][k]
+        change = s["cur"][k] - was
+        if abs(change) < 0.5:
+            out[k] = html.Div(f"Same as {name} ({_dollar0(was)})", className="stat-delta")
+            continue
+        good = (change > 0) == up_is_good
+        out[k] = html.Div([
+            html.Span(f"{_dollar0(abs(change))} {up if change > 0 else down}",
+                      className="delta-good" if good else "delta-bad"),
+            f" than {name} ({_dollar0(was)})",
+        ], className="stat-delta")
+    return out
 
 
 def _stat_card(title, value, lines):
@@ -1222,23 +1240,14 @@ def update_stats(store, theme, _refresh):
     freq, p = _selected_period(store)
     as_of = _as_of()
     s = period_summary(df, freq, p, as_of)
-    cur, typ = s["cur"], s["typical"]
+    cur = s["cur"]
 
-    n = s["n_typical"]
-    lookback = TYPICAL_LOOKBACK[freq]
-    if n:
-        typ_tip = f"Median of the previous {n} {FREQ_NOUN[freq]}{'s' if n != 1 else ''}"
-        if lookback:
-            typ_tip += f" (looks back up to {lookback})"
-        if s["partial"]:
-            typ_tip += f", over their first {s['days_elapsed']} days"
-    else:
-        typ_tip = "No earlier periods in your data to compare against"
-    typ_sfx = "vs typical by now" if s["partial"] else f"vs typical {FREQ_NOUN[freq]}"
+    def _counted(rows):
+        """Rows that can count, leaving out the sides of certain transfer
+        pairs: an unlabeled card payment isn't missing spending."""
+        return rows[~row_ids(rows).isin(_pair_row_ids())] if not rows.empty else rows
 
-    rows = filter_period(df, p)
-    if not rows.empty:
-        rows = rows[~row_ids(rows).isin(_pair_row_ids())]
+    rows = _counted(filter_period(df, p))
     out_unrev, in_unrev = unreviewed_amounts(rows)
 
     def _unreviewed(amount):
@@ -1247,23 +1256,31 @@ def update_stats(store, theme, _refresh):
         return html.Div(f"+ {_dollar0(amount)} unreviewed", className="stat-delta unreviewed",
                         title="Unlabeled transactions in this period — not counted above")
 
-    so_far = " SO FAR" if s["partial"] else ""
-    # Spending's comparison is the headline; income and net carry their own
-    cards = [
-        _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [_unreviewed(out_unrev)]),
-        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [
-            _delta_line(_pct_delta(cur["inc"], typ["inc"]) if typ else None, typ_sfx, True,
-                        tip=typ_tip),
-            _unreviewed(in_unrev)]),
-        # Net often sits near zero or flips sign, where a % change explodes
-        # (▼9205%) — compare it in dollars instead
-        _stat_card("NET" + so_far, _dollar(cur["net"]), [
-            _net_line(cur["net"] - typ["net"] if typ else None, s["partial"], freq, typ_tip)]),
-    ]
-
     un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
     health = {"current": p == to_period(as_of, freq), "age": data_age(df), "as_of": as_of,
               "unlabeled_out": out_unrev, "unlabeled_n": int(len(un))}
+
+    # Against last year — unless the page won't compare this period at all
+    # (the headline says "Can't say yet"), so the cards never contradict it
+    if cant_say_reasons(cur["exp"], freq, health)[0]:
+        vs = dict.fromkeys(("exp", "inc", "net"))
+    else:
+        ly_share = None
+        if s["last_year_window"] is not None:
+            ly_rows = _counted(filter_window(df, *s["last_year_window"]))
+            if ly_rows.empty:
+                s = dict(s, last_year=None)            # nothing recorded then
+            else:
+                ly_share = unlabeled_share(s["last_year"]["exp"], unreviewed_amounts(ly_rows)[0])
+        vs = last_year_lines(s, freq, ly_share)
+
+    so_far = " SO FAR" if s["partial"] else ""
+    cards = [
+        _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [vs["exp"], _unreviewed(out_unrev)]),
+        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [vs["inc"], _unreviewed(in_unrev)]),
+        _stat_card("NET" + so_far, _dollar(cur["net"]), [vs["net"]]),
+    ]
+
     headline, label_fix = headline_view(s, freq, health, c)
     return cards, headline, (_SHOWN_INLINE if label_fix else _HIDDEN)
 
