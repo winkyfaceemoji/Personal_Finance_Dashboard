@@ -58,7 +58,7 @@ A period is **in progress** when it contains the newest transaction date and run
 |---------|----|-----------|
 | Granularity pills | `period-freq` | WEEK / MONTH / YEAR. Remembered across reloads (`persistence`, local storage). Default MONTH. |
 | Previous / next | `period-prev`, `period-next` | Step one period; disabled at the first / latest period with data. |
-| Period label | `period-label`, `period-sub` | `Dec 22 – 28, 2025` / `Dec 2025` / `2025`; the sub-line shows `in progress`, or `data ends Dec 26` when the period holding your newest data is really over (old exports), or `latest complete month` (the headline shows how far in). |
+| Period label | `period-label`, `period-sub` | `Dec 22 – 28, 2025` / `Dec 2025` / `2025`; the sub-line shows `through Oct 8` for the period holding your newest data — the same words whether it's still running or ended after your last export, never depending on today's date — `data starts Feb 16` for a first period your data only partly covers, or `latest complete month`. |
 | LATEST | `period-latest` | Jump back to the period containing the newest transaction. |
 
 The selection lives in the `period-store` Store as `{"freq": …, "start": "YYYY-MM-DD"}`, written only by `navigate_period`. **Switching granularity keeps your place**: from the week of Nov 10 you land on Nov 2025, and from a month on its year. Clicking a bar in the spending chart also navigates. The bar is `position: sticky` so it stays visible while you scroll the cards it drives.
@@ -67,15 +67,16 @@ The selection lives in the `period-store` Store as `{"freq": …, "start": "YYYY
 
 ## Headline (`headline`)
 
-One sentence answering "how is my spending?" for the selected period, against **typical** — the **median** of up to the previous 12 weeks or months, or of every earlier year (`TYPICAL_LOOKBACK`). A median, so one huge month doesn't define "normal". `headline_view` builds it:
+One sentence answering "how is my spending?" for the selected period, against **typical** — the **median** of up to the previous 12 weeks or months, or of every earlier year (`TYPICAL_LOOKBACK`), counting only periods your data fully covers (`is_covered`: the data starts within `COVERAGE_GRACE_DAYS` (7) of the period's start — a quiet first few days isn't missing data, but exports beginning Feb 16 leave that February and that year only partly there). A median, so one huge month doesn't define "normal". `headline_view` builds it:
 
 | Situation | Headline | Legend |
 |-----------|----------|--------|
-| In progress | `$782 over your typical pace` (red) / `$120 under your typical pace` (green) | spent · typical by now · typical full period |
+| In progress (title `SPENDING THROUGH OCT 8`) | `$782 over a typical month` (red) / `$120 under a typical month` (green) | spent · typical by Oct 8 · typical full period |
 | Finished | `$400 over a typical month` / `under` | spent · typical month |
 | Within 5% (`IN_LINE_SHARE`) of typical | `In line with a typical month` (green) | as above |
-| Before 15% of an in-progress period has passed (`EARLY_SHARE`: day 1 of a week, days 1–4 of a month) | `Too early to call — $80 so far` — a day or two of spending says nothing yet | typical full period |
-| No earlier period in the data | `$X spent` | `No earlier months to compare against yet` |
+| Before 15% of an in-progress period has passed (`EARLY_SHARE`: day 1 of a week, days 1–4 of a month) | `Too early to call — $80 spent` — a day or two of spending says nothing yet | typical full period |
+| Only one full earlier period | it's named, not called typical: `$1,200 over 2024` | spent · 2024 (by Oct 8 · all of 2024, in progress) |
+| No full earlier period | `$X spent` | `No full earlier month to compare against` |
 
 A bar under the sentence shows spending against typical (the marker): grey up to typical, and only the part past it red when the headline says over. While in progress, "typical" is measured over the same number of days of each earlier period, so a part-finished month is never compared with whole ones.
 
@@ -97,10 +98,11 @@ Three cards for the selected period — spent, income, net — each with one com
 | Year | last year | year to date vs the same date last year |
 | Week | — (no comparison: the same week a year ago mostly measures where a payday fell) | — |
 
-Each line is in **dollars and words, with last year's figure in brackets** so it can be checked: `$450 more than Oct 2024 ($2,420)` (Spent), `$700 less than Oct 2024 ($3,106)` (Income), `$1,150 worse than Oct 2024 ($686)` (Net). While in progress the name says where last year is measured to: `than Oct 2024 by Oct 26`. These are real last-year totals, so income − spent = net in both years. Colour means good or bad for that card (spending more, earning less, a worse net are red); the words carry the meaning too. Within $0.50 it reads `Same as Oct 2024 ($X)`.
+Each line is in **dollars and words, with last year's figure in brackets** so it can be checked: `$450 more than Oct 2024 ($2,420)` (Spent), `$700 less than Oct 2024 ($3,106)` (Income), `$1,150 worse than Oct 2024 ($686)` (Net). While in progress the name says where last year is measured to: `than Oct 2024 through Oct 26`. The cards' titles say the same: `SPENT THROUGH OCT 26`. These are real last-year totals, so income − spent = net in both years. Colour means good or bad for that card (spending more, earning less, a worse net are red); the words carry the meaning too. Within $0.50 it reads `Same as Oct 2024 ($X)`.
 
 Instead of a number, a card says why when:
 - there's no data for last year's period (the data starts later, or nothing was recorded then) — `No data for Oct 2024`;
+- your data covers only part of last year's period (`is_covered`) — `Feb 2023 only partly covered` / `2023 only partly covered`, since a total of part of it isn't last year's total;
 - over `UNLABELED_BLOCK` (10%) of that period's money out is unlabeled — `Oct 2024 isn't fully labeled` (unlabeled sides of certain transfer pairs don't count, as for the headline);
 - the headline says **Can't say yet** for this period (`cant_say_reasons`) — then no comparison line shows at all, so the cards never claim what the headline refuses to.
 

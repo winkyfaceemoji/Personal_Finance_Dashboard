@@ -100,7 +100,7 @@ def test_partial_period_compares_like_for_like():
 
 
 def test_complete_period_and_typical_median():
-    rows = [(f"2025-{m:02d}-15", -float(v), "Expense")
+    rows = [(f"2025-{m:02d}-05", -float(v), "Expense")      # day 5: each month covered
             for m, v in zip(range(1, 6), [100, 300, 200, 1000, 50])]
     df = _df(rows)
     may = to_period("2025-05-15", "month")
@@ -109,6 +109,36 @@ def test_complete_period_and_typical_median():
     assert s["cur"]["exp"] == 50.0
     assert s["typical"]["exp"] == 250.0          # median of 100, 300, 200, 1000
     assert s["n_typical"] == 4
+
+
+def test_partly_covered_periods_never_count_as_typical_or_last_year():
+    # Exports begin Feb 16 2023: Feb 2023 and the year 2023 are only partly there
+    df = _df([("2023-02-16", -100.0, "Expense"), ("2023-02-27", -50.0, "Expense"),
+              ("2023-03-02", -400.0, "Expense"),
+              ("2024-02-05", -900.0, "Expense"), ("2025-02-05", -1000.0, "Expense"),
+              ("2026-02-05", -1200.0, "Expense")])
+    s = period_summary(df, "year", to_period("2026-02-05", "year"), as_of="2026-12-31")
+    assert s["typical_periods"] == [to_period("2025-01-01", "year"), to_period("2024-01-01", "year")]
+    assert s["typical"]["exp"] == 950.0                       # median of 2025, 2024 — not 2023
+    s = period_summary(df, "year", to_period("2024-02-05", "year"), as_of="2024-12-31")
+    assert s["n_typical"] == 0 and s["typical"] is None        # 2023 is the only earlier year
+    assert s["last_year_partial"] and s["last_year"] is None and s["last_year_window"] is None
+    assert s["last_year_period"] == to_period("2023-01-01", "year")
+    s = period_summary(df, "month", to_period("2024-02-05", "month"), as_of="2024-02-29")
+    assert s["last_year_partial"]                              # Feb 2023 from the 16th
+    assert to_period("2023-02-01", "month") not in s["typical_periods"]
+    assert to_period("2023-03-01", "month") in s["typical_periods"]
+    s = period_summary(df, "month", to_period("2024-03-02", "month"), as_of="2024-03-31")
+    assert not s["last_year_partial"] and s["last_year"]["exp"] == 400.0
+
+
+def test_a_quiet_first_few_days_still_count_as_covered():
+    from Modules.transforms import is_covered
+    feb = to_period("2023-02-01", "month")
+    assert is_covered(feb, pd.Timestamp("2023-02-05"))        # nothing spent Feb 1–4
+    assert is_covered(feb, pd.Timestamp("2023-02-08"))
+    assert not is_covered(feb, pd.Timestamp("2023-02-15"))
+    assert is_covered(feb, pd.NaT)
 
 
 def test_first_period_has_no_comparison():
@@ -135,7 +165,7 @@ def test_month_compares_with_the_same_month_last_year():
 
 
 def test_year_compares_year_to_date_with_last_year():
-    df = _df([("2024-02-01", -100.0, "Expense"), ("2024-06-01", -900.0, "Expense"),
+    df = _df([("2024-01-03", -100.0, "Expense"), ("2024-06-01", -900.0, "Expense"),
               ("2025-02-01", -50.0, "Expense")])
     s = period_summary(df, "year", to_period("2025-03-15", "year"), as_of="2025-03-15")
     assert s["last_year"]["exp"] == 100.0                    # Jan 1 – Mar 15, 2024
