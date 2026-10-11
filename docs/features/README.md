@@ -19,7 +19,7 @@ Bank CSVs (RAW/)
        │
        ▼
   main.py  ──────────────────────────────────────────────────────────────
-  │  detect format (Chase Debit / Chase Credit / Discover Credit)
+  │  detect format (Chase Debit / Chase Credit / Discover Credit / Capital One → Discover Credit)
   │  normalise to unified schema
   │  merge overlapping exports by date coverage (per account)
   │  rebuild the master from RAW, carrying forward master_category / sub_category

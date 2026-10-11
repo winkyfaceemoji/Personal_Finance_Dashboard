@@ -296,9 +296,9 @@ def test_unrecognized_and_broken_files_are_recorded_not_silent(tmp_path, monkeyp
     from Modules.safety import read_skipped
     import main as main_mod
     _raw_file(tmp_path, "Chase/Chase3094_Activity_20260110.CSV", GOOD_CHASE)
-    _raw_file(tmp_path, "CapitalOne/CapitalOne_2026.csv",
-              "Transaction Date,Posted Date,Card No.,Description,Category,Debit,Credit\n"
-              "2026-01-05,2026-01-06,1234,SHOP,Merchandise,12.00,\n")
+    _raw_file(tmp_path, "Amex/Amex_2026.csv",
+              "Date,Description,Card Member,Account #,Amount\n"
+              "01/05/2026,SHOP,A B,-12345,12.00\n")
 
     # A normalizer that blows up on one file must skip that file, not the import
     real = main_mod.NORMALIZERS["discover_credit"]
@@ -312,13 +312,13 @@ def test_unrecognized_and_broken_files_are_recorded_not_silent(tmp_path, monkeyp
     master = tmp_path / "SORTED" / "edited_combined_transactions.csv"
     assert pd.read_csv(master)["description"].tolist() == ["CAFE"]     # the good file imported
     skipped = dict(read_skipped(master))
-    assert set(skipped) == {str(Path("CapitalOne/CapitalOne_2026.csv")),
+    assert set(skipped) == {str(Path("Amex/Amex_2026.csv")),
                             str(Path("Discover/Discover-Statement-20260127.csv"))}
-    assert skipped[str(Path("CapitalOne/CapitalOne_2026.csv"))] == "unrecognized format"
+    assert skipped[str(Path("Amex/Amex_2026.csv"))] == "unrecognized format"
     assert "bad row" in skipped[str(Path("Discover/Discover-Statement-20260127.csv"))]
 
     # Fixed (or removed) files clear the record on the next run
-    (tmp_path / "RAW" / "CapitalOne" / "CapitalOne_2026.csv").unlink()
+    (tmp_path / "RAW" / "Amex" / "Amex_2026.csv").unlink()
     (tmp_path / "RAW" / "Discover" / "Discover-Statement-20260127.csv").unlink()
     run_pipeline(tmp_path)
     assert read_skipped(master) == []

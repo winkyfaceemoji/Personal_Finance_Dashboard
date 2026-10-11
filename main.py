@@ -35,6 +35,8 @@ FALLBACK_COLUMNS = ["date", "description", "amount", "source"]
 CHASE_DEBIT_HEADERS     = {"Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"}
 CHASE_CREDIT_HEADERS    = {"Transaction Date", "Post Date", "Description", "Category", "Type", "Amount", "Memo"}
 DISCOVER_CREDIT_HEADERS = {"Trans. Date", "Post Date", "Description", "Amount", "Category"}
+CAPITAL_ONE_CREDIT_HEADERS = {"Transaction Date", "Posted Date", "Card No.", "Description",
+                              "Category", "Debit", "Credit"}
 
 
 def detect_format(df: pd.DataFrame) -> str | None:
@@ -46,6 +48,8 @@ def detect_format(df: pd.DataFrame) -> str | None:
         return "chase_credit"
     elif DISCOVER_CREDIT_HEADERS.issubset(cols):
         return "discover_credit"
+    elif CAPITAL_ONE_CREDIT_HEADERS.issubset(cols):
+        return "capital_one_credit"
     return None
 
 
@@ -116,10 +120,44 @@ def normalize_discover_credit(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _money(col: pd.Series) -> pd.Series:
+    """Dollar amounts that may carry "$" or thousands commas; blank is NaN."""
+    return pd.to_numeric(col.astype(str).str.replace(r"[$,\s]", "", regex=True),
+                         errors="coerce")
+
+
+def normalize_capital_one_credit(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Capital One credit columns:
+    Transaction Date, Posted Date, Card No., Description, Category, Debit, Credit
+
+    Capital One took over the Discover card, and its exports are the same
+    account in a new format — so the rows keep source "Discover Credit" and
+    a blank card_last4 (Card No. is ignored), giving them Discover's account
+    key: kept in RAW/Discover/, an export overlapping the Discover history
+    is merged by coverage instead of counted twice. Charges are in Debit and
+    payments / refunds in Credit, both positive.
+    """
+    debit, credit = _money(df["Debit"]), _money(df["Credit"])
+    out = pd.DataFrame(columns=UNIFIED_COLUMNS)
+    out["date"]          = pd.to_datetime(df["Transaction Date"], errors="coerce")
+    out["post_date"]     = pd.to_datetime(df["Posted Date"], errors="coerce")
+    out["description"]   = _text(df["Description"])
+    out["amount"]        = (credit.fillna(0) - debit.fillna(0)).where(credit.notna() | debit.notna())
+    out["original_category"] = _text(df["Category"])
+    out["type"]          = None
+    out["balance"]       = None
+    out["memo"]          = None
+    out["check_or_slip"] = None
+    out["source"]        = "Discover Credit"
+    return out
+
+
 NORMALIZERS = {
-    "chase_debit":     normalize_chase_debit,
-    "chase_credit":    normalize_chase_credit,
-    "discover_credit": normalize_discover_credit,
+    "chase_debit":        normalize_chase_debit,
+    "chase_credit":       normalize_chase_credit,
+    "discover_credit":    normalize_discover_credit,
+    "capital_one_credit": normalize_capital_one_credit,
 }
 
 
