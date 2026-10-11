@@ -57,19 +57,65 @@ DISCOVER = ("Trans. Date,Post Date,Description,Amount,Category\n"
             "08/20/2026,08/21/2026,GROCER,35.00,Supermarkets\n")
 
 
-def test_overlap_with_discover_history_is_not_counted_twice(tmp_path):
-    # Both exports hold Aug 14–20 (worded differently); the wider one owns
-    # the dates they share, and each date's rows come from one file only
+def _master(tmp_path):
+    return pd.read_csv(tmp_path / "SORTED" / "edited_combined_transactions.csv", keep_default_na=False)
+
+
+def test_capital_one_folder_is_the_discover_account(tmp_path):
+    # RAW/CapitalOne/ keeps the files apart on disk; they're still the Discover
+    # card, so the dates both exports cover are counted once — Discover's copy
     _raw(tmp_path, "Discover/Discover-Statement-20260827.csv", DISCOVER)
-    _raw(tmp_path, "Discover/CapitalOne_2026-09.csv",
+    _raw(tmp_path, "CapitalOne/CapitalOne_2026-09.csv",
          SAMPLE + "2026-08-20,2026-08-21,8255,GROCER #12,Groceries,35.00,\n")
     run_pipeline(tmp_path)
-    master = pd.read_csv(tmp_path / "SORTED" / "edited_combined_transactions.csv")
-    assert set(master["source"]) == {"Discover Credit"}
-    aug16 = master[master["date"] == "2026-08-16"]
-    assert len(aug16) == 1                                        # one copy, not two
-    assert master["date"].tolist() == ["2026-08-01", "2026-08-14", "2026-08-16", "2026-08-20",
-                                       "2026-09-02", "2026-09-08"]
+    master = _master(tmp_path)
+    assert set(master["source"]) == {"Discover Credit"} and set(master["institution"]) == {"Discover"}
+    assert master["date"].tolist() == ["2026-08-01", "2026-08-16", "2026-08-20", "2026-09-02", "2026-09-08"]
+    assert master.loc[master["date"] == "2026-08-20", "description"].tolist() == ["GROCER"]
+
+
+def test_a_charge_only_capital_one_has_is_reported_not_dropped_silently(tmp_path):
+    from Modules.safety import read_overlap_only
+    _raw(tmp_path, "Discover/Discover-Statement-20260827.csv", DISCOVER)
+    _raw(tmp_path, "CapitalOne/CapitalOne_2026-09.csv",
+         SAMPLE + "2026-08-20,2026-08-21,8255,GROCER #12,Groceries,35.00,\n")
+    run_pipeline(tmp_path)
+    master_path = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    # Aug 14 OBSIDIAN is inside Discover's dates but not in its export; Aug 16
+    # and Aug 20 are in both (worded differently) and aren't reported
+    left = read_overlap_only(master_path)
+    assert left["description"].tolist() == ["OBSIDIAN"]
+    assert left["amount"].tolist() == [-52.26] and left["date"].tolist() == ["2026-08-14"]
+    assert left["file"].tolist() == [str(Path("CapitalOne/CapitalOne_2026-09.csv"))]
+    # Gone once the exports agree
+    _raw(tmp_path, "Discover/Discover-Statement-20260827.csv",
+         DISCOVER + "08/14/2026,08/15/2026,OBSIDIAN,52.26,Services\n")
+    run_pipeline(tmp_path)
+    assert read_overlap_only(master_path).empty
+
+
+def test_a_wider_capital_one_export_never_takes_labeled_discover_dates(tmp_path):
+    from Modules.safety import orphan_count
+    _raw(tmp_path, "Discover/Discover-Statement-20260827.csv", DISCOVER)
+    run_pipeline(tmp_path)
+    path = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    master = pd.read_csv(path)
+    master["master_category"] = "Expense"
+    master.to_csv(path, index=False)
+
+    # "Download everything": Capital One reaching back past the Discover history
+    _raw(tmp_path, "CapitalOne/CapitalOne_all.csv", HEADER + (
+        "2026-09-08,2026-09-09,8255,ANTHROPIC* CLAUDE SUB,Merchandise,103.33,\n"
+        "2026-08-20,2026-08-21,8255,GROCER #12,Groceries,35.00,\n"
+        "2026-08-16,2026-08-17,8255,ANTHROPIC* CLAUDE SUB,Merchandise,21.78,\n"
+        "2026-08-01,2026-08-02,8255,GROCER #12,Groceries,40.00,\n"
+        "2026-07-03,2026-07-04,8255,BOOKSHOP,Merchandise,12.00,\n"))
+    run_pipeline(tmp_path)
+    master = _master(tmp_path)
+    old = master[master["date"].between("2026-08-01", "2026-08-20")]
+    assert len(old) == 3 and (old["master_category"] == "Expense").all()
+    assert orphan_count(path) == 0
+    assert master["date"].tolist() == ["2026-07-03", "2026-08-01", "2026-08-16", "2026-08-20", "2026-09-08"]
 
 
 def test_labels_on_the_discover_history_survive_adding_capital_one(tmp_path):
@@ -87,3 +133,25 @@ def test_labels_on_the_discover_history_survive_adding_capital_one(tmp_path):
     old = master[master["date"] < "2026-09-01"]
     assert len(old) == 3 and (old["master_category"] == "Expense").all()
     assert master.loc[master["date"] == "2026-09-08", "master_category"].tolist() == [""]
+
+
+def test_a_charge_two_losing_exports_share_is_reported_once(tmp_path):
+    from Modules.safety import read_overlap_only
+    _raw(tmp_path, "Discover/Discover-AllAvailable.csv", DISCOVER)
+    extra = "2026-08-14,2026-08-15,8255,OBSIDIAN,Internet,52.26,\n"
+    _raw(tmp_path, "CapitalOne/a.csv", HEADER + extra)
+    _raw(tmp_path, "CapitalOne/b.csv", HEADER + extra
+         + "2026-08-16,2026-08-17,8255,ANTHROPIC* CLAUDE SUB,Merchandise,21.78,\n")
+    run_pipeline(tmp_path)
+    left = read_overlap_only(tmp_path / "SORTED" / "edited_combined_transactions.csv")
+    assert left["description"].tolist() == ["OBSIDIAN"]
+
+
+def test_overlapping_re_downloads_of_one_format_are_not_reported(tmp_path):
+    from Modules.safety import overlap_path
+    _raw(tmp_path, "Discover/Discover-AllAvailable.csv", DISCOVER)
+    _raw(tmp_path, "Discover/Discover-Statement-a.csv",
+         "Trans. Date,Post Date,Description,Amount,Category\n"
+         "08/14/2026,08/15/2026,SOMETHING ELSE,9.99,Services\n")
+    run_pipeline(tmp_path)
+    assert not overlap_path(tmp_path / "SORTED" / "edited_combined_transactions.csv").exists()

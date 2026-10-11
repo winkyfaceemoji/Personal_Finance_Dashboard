@@ -18,8 +18,8 @@ from Modules.labels import (
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
-    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_skipped, restore_backup,
-    snapshot_master,
+    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_overlap_only, read_skipped,
+    restore_backup, snapshot_master,
 )
 from Modules.transforms import (
     load_transactions,
@@ -266,8 +266,21 @@ def data_age(frame: pd.DataFrame, today=None) -> int | None:
     return (today - dates.max().normalize()).days
 
 
+def overlap_text(left_out: pd.DataFrame | None) -> str:
+    """Attention-line item for transactions the import left out where two
+    exports of one account overlap: the export that owns those dates doesn't
+    have them (e.g. a charge pending when the last Discover export was taken,
+    which only a Capital One export has)."""
+    if left_out is None or left_out.empty:
+        return ""
+    n = len(left_out)
+    return (f"{n} transaction{'s' if n != 1 else ''} ({_dollar0(left_out['amount'].abs().sum())}) "
+            f"left out where two exports overlap — listed in SORTED/overlap_only.csv")
+
+
 def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orphans: int,
-                    skipped: list[tuple[str, str]], today=None) -> dict[str, str]:
+                    skipped: list[tuple[str, str]], today=None,
+                    left_out: pd.DataFrame | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
@@ -293,6 +306,8 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
                      f"(kept in SORTED/orphaned_labels.csv)")
     if skipped:
         other.append(skipped_text(skipped))
+    if overlap_text(left_out):
+        other.append(overlap_text(left_out))
     return {"unlabeled": unlabeled, "review": review,
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
@@ -1028,6 +1043,7 @@ def update_attention(_refresh):
         df, _suspects(), last_import_ids(MASTER_PATH),
         orphan_count(MASTER_PATH) if MASTER_PATH else 0,
         read_skipped(MASTER_PATH) if MASTER_PATH else [],
+        left_out=read_overlap_only(MASTER_PATH) if MASTER_PATH else None,
     )
     shown = {"display": "flex"} if any(parts.values()) else _HIDDEN
     return (shown,
