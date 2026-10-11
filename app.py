@@ -879,24 +879,43 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
     if can_remember and kept.get("remember") is not None:
         remember = kept["remember"]
 
+    # A nameless card's rows mostly repeat the transaction text shown above
+    # them: show a row's text only where it differs
+    def _row_text(r):
+        return "" if g["fallback"] and r["description"] == g["example"] else r["description"]
+
     rows = [html.Div(className="lg-row", children=[
                 html.Span(f"{pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day}", className="lg-date"),
-                html.Span(r["description"] + (f"  ×{r['count']}" if r["count"] > 1 else ""),
-                          className="lg-desc", title=r["description"]),
+                html.Span(_row_text(r) + (f"  ×{r['count']}" if r["count"] > 1 else ""),
+                          className="lg-desc" + ("" if _row_text(r) else " lg-desc-same"),
+                          title=r["description"]),
                 html.Span(_dollar(r["amount"]), className="lg-amt"),
                 html.Div(className="lg-buttons", children=[_btn(c, r["row_id"]) for c in PREDEFINED_CATEGORIES]),
             ]) for r in g["rows"]]
 
+    others = len({r["description"] for r in g["rows"]}) - 1     # the bank's other wordings
     return html.Div(className="app-card label-group", children=[
         html.Div(className="lg-main", children=[
             html.Div(className="lg-info", children=[
-                html.Div([html.Span(g["merchant"], className="lg-name", title=g["example"]),
-                          html.Span("MIXED", className="lg-badge",
-                                    title="Has money in and out — check the rows")
-                          if g["mixed"] else None]),
+                # Who it's with (the name rows are grouped under) as the title,
+                # and under it, verbatim and tagged, what the bank wrote
+                html.Div(className="lg-title", children=[
+                    # A nameless (fallback) group has no merchant to show — its
+                    # title would only repeat the transaction text below
+                    html.Span("No clear merchant", className="lg-name lg-unclear",
+                              title="Label each row by what its transaction text says")
+                    if g["fallback"] else html.Span(g["merchant"], className="lg-name", title="Merchant"),
+                    html.Span("MIXED", className="lg-badge",
+                              title="Has money in and out — check the rows") if g["mixed"] else None,
+                ]),
+                html.Div(className="lg-text", children=[
+                    html.Span("Transaction text", className="lg-tag"),
+                    html.Span(g["example"], className="lg-example"),
+                    html.Span(f"+{others} other wording{'s' if others != 1 else ''}", className="lg-more")
+                    if others else None,
+                ]),
                 html.Div(f'{g["count"]} txn{"s" if g["count"] != 1 else ""} · '
                          f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
-                html.Div(g["example"], className="lg-example"),
             ]),
             html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
             else html.Div("Label these one at a time below", className="hint"),
@@ -905,13 +924,15 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
             dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
                       className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
                       value=kept.get("sub") or ""),
+            # Hidden, not left out, on a nameless card: it can never be ticked
+            # there, and the label callbacks read every card's checkbox
             dcc.Checklist(
                 id={"type": "lbl-remember", "group": key}, className="lg-remember",
                 options=[{"label": " Remember for future statements", "value": "yes",
                           "disabled": not can_remember}],
-                value=remember,
+                value=remember, style={"display": "none"} if g["fallback"] else None,
             ),
-            html.Span(note, className="hint"),
+            html.Span(note, className="hint") if not g["fallback"] else None,
         ]),
         # Row-by-row groups start open; any group the user opened stays open.
         # Dash doesn't report a <details> toggle, so the summary counts clicks
