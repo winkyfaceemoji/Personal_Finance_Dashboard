@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 from config import get_data_dir, get_master_path
 from Modules.labels import LAST_IMPORT_NAME, row_id
+from Modules.linked_cards import card_map, find_replacements, read_links, write_links
 from Modules.safety import (
     atomic_write_csv, backup_master, orphans_path, restore_if_missing, write_exported_through,
     write_overlap_only, write_skipped,
@@ -248,7 +249,8 @@ def filename_date(name: str, today=None) -> pd.Timestamp | None:
     return max(found) if found else None
 
 
-def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None = None) -> pd.DataFrame:
+def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None = None,
+                       check_all: bool = False) -> pd.DataFrame:
     """
     Merge multiple raw exports of the same physical account into one
     timeline, using each file's actual transaction-date coverage to decide
@@ -281,7 +283,10 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None =
     are reported rather than silently lost. They aren't added back: a changed
     amount (a tip on a pending charge) would then count one charge twice.
     Re-downloads of one format (the usual overlapping statements) aren't
-    checked — the same export always carries the same rows.
+    checked — the same export always carries the same rows — unless
+    `check_all`: a replacement card's exports (linked_cards) are of another
+    card number, and a charge still pending when the old number's last export
+    was taken may only be in the new number's.
     """
     def span(d: pd.DataFrame) -> pd.Timedelta:
         valid = d["date"].dropna()
@@ -297,7 +302,7 @@ def _merge_by_coverage(file_dfs: list[pd.DataFrame], overlap_only: list | None =
         for lo, hi in covered:
             already_covered |= d["date"].between(lo, hi)
         new_rows = d[~already_covered]
-        if already_covered.any() and d.attrs.get("format") != ordered[0].attrs.get("format"):
+        if already_covered.any() and (check_all or d.attrs.get("format") != ordered[0].attrs.get("format")):
             dropped.append(d[already_covered].assign(file=d.attrs.get("file", "")))
         if not new_rows.empty:
             kept.append(new_rows)
@@ -332,7 +337,44 @@ def _only_in_dropped(merged: pd.DataFrame, dropped: list[pd.DataFrame]) -> pd.Da
     return pd.concat(out, ignore_index=True) if out else merged.iloc[0:0]
 
 
-def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
+def _link_replacement_cards(groups: dict[tuple, list[pd.DataFrame]], master_file: Path
+                            ) -> tuple[dict[tuple, list[pd.DataFrame]], dict[tuple[str, str], str]]:
+    """Regroup a confirmed replacement card's exports under the number it
+    replaced (Modules/linked_cards), so the coverage merge counts the charges
+    both exports carry once. A newly spotted pair is only recorded, as
+    "proposed", for the dashboard to ask about; returns the regrouped files
+    and the card map in force."""
+    links = read_links(master_file)
+    if links is None:
+        return groups, {}
+    accounts = {k: _merge_by_coverage(v) for k, v in groups.items()}
+    found = find_replacements(accounts, links)
+    if found:
+        links = pd.concat([links, pd.DataFrame([{k: f[k] for k in links.columns} for f in found])],
+                          ignore_index=True)
+        try:
+            write_links(master_file, links)
+        except OSError as e:
+            print(f"  ⚠ Could not update SORTED/linked_cards.csv ({e})")
+        for f in found:
+            print(f"  {f['source']} {f['new_card']} looks like a replacement for {f['old_card']} "
+                  f"({f['matched']} charges where both overlap are the same) — answer the question "
+                  f"on the dashboard; until then they count twice")
+    cards = card_map(links)
+    if not cards:
+        return groups, cards
+    regrouped: dict[tuple, list[pd.DataFrame]] = defaultdict(list)
+    for (institution, source, card), file_dfs in groups.items():
+        canon = cards.get((source, card), card)
+        if canon != card:
+            for d in file_dfs:
+                d["card_last4"] = canon
+        regrouped[(institution, source, canon)].extend(file_dfs)
+    return dict(regrouped), cards
+
+
+def rebuild_master(combined: pd.DataFrame, master_file: Path,
+                   linked: set[tuple[str, str]] | None = None) -> dict:
     """
     Rebuild edited_combined_transactions.csv from the freshly-merged combined
     data, carrying forward existing master_category / sub_category
@@ -344,6 +386,14 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
     more times in the new combined data than in the prior master inherits
     the categorization of existing occurrences, in order; any occurrence
     beyond what the prior master had is genuinely new and starts blank.
+    Labeled prior rows are offered first, so an unlabeled twin never takes a
+    match ahead of a labeled one.
+
+    linked: (source, card) of every linked replacement-card number. Before
+    the link, a charge on both numbers' exports was in the master twice; now
+    it's once. A leftover prior copy whose label the remaining row already
+    carries is that duplicate, not a lost label — it isn't orphaned. A copy
+    with a different label is: the user sees it and decides.
 
     Label safety: the prior master is *copied* to SORTED/backups/ (never
     renamed away), a master missing after a failed run is restored from the
@@ -374,7 +424,7 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         return pd.Series(list(zip(parts["date"], parts["description"], amount, parts["source"])),
                          index=d.index)
 
-    result = {"carried": 0, "rescued": 0, "orphaned": 0, "restored_from": None}
+    result = {"carried": 0, "rescued": 0, "orphaned": 0, "merged": 0, "restored_from": None}
     orphans = None   # set once a prior master is read; written only after the master is
     new_ids = None   # rows this import added; set only when a prior master existed
 
@@ -426,9 +476,12 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
             combined.at[idx, "sub_category"]    = old_master.at[i, "sub_category"] or None
             used.add(i)
 
-        # Pass 1: exact key, in order (same-day repeats inherit in sequence)
+        # Pass 1: exact key, in order (same-day repeats inherit in sequence),
+        # labeled rows first: rows sharing a key are indistinguishable, so
+        # which one inherits is free — and a label is never lost to a blank
         exact = defaultdict(deque)
-        for i, key in zip(old_master.index, row_key(old_master)):
+        first = old_master.index[labeled.to_numpy()].append(old_master.index[~labeled.to_numpy()])
+        for i, key in zip(first, row_key(old_master.loc[first])):
             exact[key].append(i)
         used, matched = set(), set()
         for idx, key in zip(combined.index, row_key(combined)):
@@ -452,6 +505,20 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
                 rescued.add(idx)
                 result["rescued"] += 1
 
+        # A replacement card's repeat of a charge, now counted once: its
+        # label is already on the remaining row
+        if linked:
+            have = defaultdict(set)
+            for key, mc, sc in zip(fallback_key(combined), combined["master_category"], combined["sub_category"]):
+                have[key].add((mc or "", sc or ""))
+            leftover = old_master[labeled & ~old_master.index.isin(used)]
+            cards = leftover["card_last4"].fillna("").astype(str).str.strip()
+            for i, key, src, card in zip(leftover.index, fallback_key(leftover), leftover["source"], cards):
+                label = (old_master.at[i, "master_category"], old_master.at[i, "sub_category"])
+                if (str(src), card) in linked and label in have.get(key, ()):
+                    used.add(i)
+                    result["merged"] += 1
+
         # Whatever's still unplaced is kept and reported, never silently dropped
         orphans = old_master[labeled & ~old_master.index.isin(used)]
         result["orphaned"] = len(orphans)
@@ -461,6 +528,9 @@ def rebuild_master(combined: pd.DataFrame, master_file: Path) -> dict:
         new_ids = [row_id(r) for r in combined.loc[fresh].to_dict("records")]
         print(f"  Categorization carried over for {result['carried']}/{len(combined)} row(s)"
               f"; {result['rescued']} rescued by the fallback match")
+        if result["merged"]:
+            print(f"  {result['merged']} label(s) were on a replacement card's repeat of a charge "
+                  f"— the remaining copy carries them")
 
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     combined.sort_values("date", inplace=True, ignore_index=True, kind="stable")
@@ -553,21 +623,24 @@ def main(data_dir: Path | None = None):
         write_overlap_only(master_file, None)
         return
 
+    groups, linked = _link_replacement_cards(groups, master_file)
+
     before = sum(len(d) for file_dfs in groups.values() for d in file_dfs)
 
     # Merge each account's exports by date-range ownership, so re-downloaded
     # overlapping statements don't collapse genuine same-day repeat transactions.
     overlap_only: list[pd.DataFrame] = []
     combined = pd.concat(
-        [_merge_by_coverage(file_dfs, overlap_only) for file_dfs in groups.values()],
+        [_merge_by_coverage(file_dfs, overlap_only, check_all=(key[1], key[2]) in linked)
+         for key, file_dfs in groups.items()],
         ignore_index=True,
     )
     after = len(combined)
     left_out = pd.concat(overlap_only, ignore_index=True) if overlap_only else None
     if left_out is not None:
         left_out = left_out.assign(date=left_out["date"].dt.strftime("%Y-%m-%d"))
-        print(f"  ⚠ {len(left_out)} transaction(s) only in a Capital One export, on dates the "
-              f"Discover history owns — listed in SORTED/overlap_only.csv")
+        print(f"  ⚠ {len(left_out)} transaction(s) left out where two exports overlap, on dates "
+              f"another export owns — listed in SORTED/overlap_only.csv")
     write_overlap_only(master_file, left_out)
 
     # Sort by date ascending
@@ -585,7 +658,7 @@ def main(data_dir: Path | None = None):
 
     # Rebuild the master file, carrying forward existing categorization
     print(f"\nRebuilding master file...")
-    rebuild_master(combined, master_file)
+    rebuild_master(combined, master_file, linked=set(linked))
 
 
 if __name__ == "__main__":
