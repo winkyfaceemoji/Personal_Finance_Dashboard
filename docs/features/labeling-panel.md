@@ -91,8 +91,9 @@ The checkbox's starting state (`_group_card`):
 
 | Card | Checkbox |
 |------|----------|
-| All four checks pass, **2 or more** transactions | enabled, ticked |
-| All four checks pass, **one** transaction | enabled, unticked; the note adds `only one transaction — tick to remember anyway`. One row is thin evidence for a rule that labels every future match, so it is the user's call |
+| All four checks pass, seen in **3 or more different months** (`REMEMBER_MONTHS`) | enabled, ticked: a regular, worth labeling automatically |
+| All four checks pass, seen in **1 or 2 months** | enabled, unticked; the note adds `seen in 2 months — tick to remember anyway`. A few charges close together (a trip) are thin evidence for a rule that labels every future match, so it is the user's call |
+| All four checks pass, **one** transaction | enabled, unticked; the note adds `only one transaction — tick to remember anyway` |
 | A blocking reason | disabled, unticked |
 | No group buttons (fallback or mixed — labeled row by row) | disabled, unticked. Remember only acts on a group click, and row clicks never create rules, so a ticked box there could never do anything |
 

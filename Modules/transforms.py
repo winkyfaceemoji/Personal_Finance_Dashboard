@@ -251,6 +251,11 @@ TYPICAL_LOOKBACK = {"week": 12, "month": 12, "year": None}
 # same week a year ago mostly measures where a payday fell.
 LAST_YEAR_STEP = {"month": 12, "year": 1}
 
+# A period with over this share of its money out unlabeled reads short, so
+# it isn't compared (the headline's "Can't say yet") and isn't part of
+# "typical" either: one barely labeled month would pull the median down
+UNLABELED_BLOCK = 0.10
+
 # A period counts as covered when the data starts within this many days of
 # its start: a quiet first few days isn't missing data, but exports that
 # begin Feb 16 leave February — and that year — only partly covered.
@@ -359,7 +364,14 @@ def to_date_totals(df: pd.DataFrame, p: pd.Period, days_elapsed: int) -> dict:
     return window_totals(filter_window(df, start, end))
 
 
-def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
+def unlabeled_share(spent: float, unlabeled_out: float) -> float:
+    """The share of a period's money out that's unlabeled."""
+    total = spent + unlabeled_out
+    return unlabeled_out / total if total > 0 else 0.0
+
+
+def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of,
+                   unlabeled_out=None) -> dict:
     """
     Everything the stat cards need for one period:
 
@@ -367,9 +379,12 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     - partial / days_elapsed / days_total: whether p ends after `as_of`, the
       latest transaction date, and how far into it the data reaches
     - typical: medians over previous_periods() that the data fully covers
-      (is_covered) — truncated to the same number of days when p is partial,
-      so a half-finished month isn't compared to a full one; typical_periods
-      / n_typical: which periods those are
+      (is_covered) and that are labeled — over UNLABELED_BLOCK of a period's
+      money out unlabeled leaves it out (unlabeled_out(rows) gives a slice's
+      unlabeled money out; without it every period counts). Truncated to the
+      same number of days when p is partial, so a half-finished month isn't
+      compared to a full one; typical_periods / n_typical: which periods
+      those are; left_out_unlabeled: how many were left out as unlabeled
     - through: the last date p's data reaches while partial (as_of), else None
     - typical_full: typical *full*-period totals (the pace target)
     - last_year / last_year_period / last_year_window: the same month last
@@ -392,6 +407,14 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
     first = to_period(dates.min(), freq) if not dates.empty else p
     data_start = dates.min().normalize() if not dates.empty else pd.NaT
     prevs = [q for q in previous_periods(p, freq, first) if is_covered(q, data_start)]
+    if unlabeled_out is not None:
+        def _labeled(q):
+            rows = filter_period(df, q)
+            return unlabeled_share(window_totals(rows)["exp"], unlabeled_out(rows)) <= UNLABELED_BLOCK
+        kept = [q for q in prevs if _labeled(q)]
+        left_out, prevs = len(prevs) - len(kept), kept
+    else:
+        left_out = 0
 
     def _totals(q: pd.Period) -> dict:
         return to_date_totals(df, q, days) if partial else window_totals(filter_period(df, q))
@@ -423,7 +446,8 @@ def period_summary(df: pd.DataFrame, freq: str, p: pd.Period, as_of) -> dict:
         "last_year_partial": ly_partial,
         "partial": partial, "days_elapsed": days, "days_total": days_total,
         "through": as_of if partial else None,
-        "typical_periods": prevs, "n_typical": len(prevs), "data_start": data_start,
+        "typical_periods": prevs, "n_typical": len(prevs), "left_out_unlabeled": left_out,
+        "data_start": data_start,
     }
 
 
