@@ -122,4 +122,10 @@ The page answers one question at the top — this period's spending against a ty
 
 **Why:** chosen by the user after a council review of a simplification plan. Two strips that disagreed (red "over your typical pace", green "on track for budget") made the page say two things at once; the user tracks budgets on their own and wants the dashboard to show total spending, so "typical" is the only reference. A verdict over stale or largely unlabeled data is confidently wrong, so it is blocked rather than flagged — the trade-off is that a messy ledger shows *Can't say yet* often until it is labeled. Seasonality was cut for simplicity; note that "typical" is a 12-period median, so a month that is always expensive (December) will read as over typical.
 
+## Stat cards compare with the same period last year, in dollars
+
+Spent, income and net each compare with the same month last year (month view) or last year (year view) — like-for-like days while in progress — as `$450 more than Oct 2024 ($2,420)`. The week view has none. A card says "No data for …" or "… isn't fully labeled" instead of a number, and shows nothing while the headline says *Can't say yet*.
+
+**Why:** chosen by the user after a council review. The old lines compared with the median of the previous 12 periods, as a percentage: income arrives in a few big months, so its median sat near zero and a normal month showed `▲564%` — even when last year's income was higher. Medians of income, spending and net also don't add up, so the cards couldn't be reconciled. The user wanted to see how they compare with last year; real last-year totals in dollars are checkable (last year's figure is shown) and always reconcile. The headline keeps its typical-period comparison.
+
 > New load-bearing decision? Add it here with the *why* — future-you will want the reasoning, not just the outcome.

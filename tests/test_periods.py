@@ -118,6 +118,40 @@ def test_first_period_has_no_comparison():
     assert s["prev"] is None and s["typical"] is None
 
 
+def test_month_compares_with_the_same_month_last_year():
+    df = _df([
+        ("2024-10-05", -400.0, "Expense"), ("2024-10-25", -100.0, "Expense"),
+        ("2024-10-15", 3000.0, "Income"),
+        ("2025-10-07", -450.0, "Expense"),
+    ])
+    oct25 = to_period("2025-10-07", "month")
+    s = period_summary(df, "month", oct25, as_of="2025-10-31")
+    assert s["last_year_period"] == to_period("2024-10-01", "month")
+    assert s["last_year"] == {"exp": 500.0, "inc": 3000.0, "net": 2500.0}
+    assert s["last_year_window"] == (pd.Timestamp("2024-10-01"), pd.Timestamp("2024-10-31"))
+    # In progress: the same days last year (Oct 1–10), not the whole month
+    s = period_summary(df, "month", oct25, as_of="2025-10-10")
+    assert s["last_year"] == {"exp": 400.0, "inc": 0.0, "net": -400.0}
+    assert s["last_year_window"] == (pd.Timestamp("2024-10-01"), pd.Timestamp("2024-10-10"))
+
+
+def test_year_compares_year_to_date_with_last_year():
+    df = _df([("2024-02-01", -100.0, "Expense"), ("2024-06-01", -900.0, "Expense"),
+              ("2025-02-01", -50.0, "Expense")])
+    s = period_summary(df, "year", to_period("2025-03-15", "year"), as_of="2025-03-15")
+    assert s["last_year"]["exp"] == 100.0                    # Jan 1 – Mar 15, 2024
+    assert s["last_year_window"] == (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-03-15"))
+
+
+def test_no_last_year_comparison_for_weeks_or_before_the_data():
+    df = _df([("2024-10-05", -10.0, "Expense"), ("2025-10-07", -20.0, "Expense")])
+    s = period_summary(df, "week", to_period("2025-10-07", "week"), as_of="2025-10-12")
+    assert s["last_year"] is None and s["last_year_period"] is None
+    df = _df([("2025-01-15", -10.0, "Expense"), ("2025-10-07", -20.0, "Expense")])
+    s = period_summary(df, "month", to_period("2025-10-07", "month"), as_of="2025-10-31")
+    assert s["last_year"] is None                            # data starts Jan 2025
+
+
 def test_savings_rate():
     df = _df([("2025-01-10", 1000.0, "Income"), ("2025-01-11", -250.0, "Expense")])
     s = period_summary(df, "month", to_period("2025-01-10", "month"), as_of="2025-01-31")

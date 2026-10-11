@@ -34,7 +34,7 @@ from Modules.transforms import (
     to_period,
     unlabeled_summary,
     PERIOD_FREQS,
-    TYPICAL_LOOKBACK,
+    filter_window,
     PREDEFINED_CATEGORIES,
 )
 
@@ -89,24 +89,29 @@ df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and M
 # The single source of colour. Plotly figures read these hex values directly;
 # theme_css() turns the same dict into CSS custom properties (--bg, --accent,
 # --accent-weak, …) on .dark-theme / .light-theme, which assets/app.css uses.
-# Light-theme accents are darkened so small text on --surface passes WCAG AA.
+# Neutral and monochrome: white / near-black surfaces, grey text, black or
+# white primary actions. Colour is reserved for meaning — red is bad (over
+# typical), green is good — and charts are drawn in ink (`bar`). `control`
+# outlines buttons and inputs: 3:1 against bg and surface, so they read as
+# controls (card borders don't need to). Every text colour passes WCAG AA
+# (4.5:1) on bg and surface; see docs/design.md.
 _CHART = {
     "dark": {
-        "bg": "#0a0a0f", "surface": "#111318", "chip": "#0a0a0f", "border": "#252830",
-        "text": "#ffffff", "subtext": "#8a8fa8", "label": "#e0e2f0",
-        "accent": "#6c8aff", "accent2": "#ff6c8a", "accent3": "#6cffd4",
-        "accent_weak": "rgba(108,138,255,0.18)", "on_accent": "#0a0a0f",
-        "overlay": "rgba(10,10,15,0.9)",
-        "text_weak": "#c8cadb", "stroke_weak": "rgba(255,255,255,0.05)", "fill_active": "#2a2e3a",
+        "bg": "#111111", "surface": "#1a1a1a", "chip": "#111111", "border": "#2e2e2e",
+        "text": "#ececec", "subtext": "#a3a3a3", "label": "#a3a3a3",
+        "accent": "#ececec", "accent2": "#f87171", "accent3": "#4fbf7f",
+        "accent_weak": "#2a2a2a", "on_accent": "#111111", "bar": "#ececec", "control": "#737373",
+        "overlay": "rgba(17,17,17,0.9)",
+        "text_weak": "#c4c4c4", "stroke_weak": "rgba(255,255,255,0.06)", "fill_active": "#333333",
         "shade_strong": "rgba(0,0,0,0.5)", "shade_weak": "rgba(0,0,0,0.3)",
     },
     "light": {
-        "bg": "#ffffff", "surface": "#f0f1f5", "chip": "#ffffff", "border": "#dcdee8",
-        "text": "#0a0a0f", "subtext": "#5c5f72", "label": "#5c5f72",
-        "accent": "#3d5bd9", "accent2": "#c42a4f", "accent3": "#067a58",
-        "accent_weak": "rgba(61,91,217,0.12)", "on_accent": "#ffffff",
+        "bg": "#ffffff", "surface": "#ffffff", "chip": "#ffffff", "border": "#e5e5e5",
+        "text": "#0d0d0d", "subtext": "#5d5d5d", "label": "#5d5d5d",
+        "accent": "#0d0d0d", "accent2": "#c62828", "accent3": "#1a7f37",
+        "accent_weak": "#f2f2f2", "on_accent": "#ffffff", "bar": "#0d0d0d", "control": "#858585",
         "overlay": "rgba(255,255,255,0.9)",
-        "text_weak": "#5c5f72", "stroke_weak": "rgba(0,0,0,0.05)", "fill_active": "#d0d2e0",
+        "text_weak": "#5d5d5d", "stroke_weak": "rgba(0,0,0,0.06)", "fill_active": "#e8e8e8",
         "shade_strong": "rgba(0,0,0,0.2)", "shade_weak": "rgba(0,0,0,0.1)",
     },
 }
@@ -132,18 +137,21 @@ def theme_css() -> str:
     return "\n".join(blocks)
 
 
+_FONT = "Inter, system-ui, -apple-system, Segoe UI, sans-serif"
+
+
 def chart_template(theme="dark"):
     c = _CHART[theme]
     return dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=c["text"], family="IBM Plex Mono, monospace"),
+        font=dict(color=c["text"], family=_FONT),
         xaxis=dict(gridcolor=c["border"], zerolinecolor=c["border"]),
         yaxis=dict(gridcolor=c["border"], zerolinecolor=c["border"],
                    tickprefix="$", tickformat=",.0f"),
         legend=dict(bgcolor="rgba(0,0,0,0)"),
         hoverlabel=dict(bgcolor=c["surface"], bordercolor=c["border"],
-                        font=dict(color=c["text"], family="IBM Plex Mono, monospace")),
+                        font=dict(color=c["text"], family=_FONT)),
         margin=dict(l=48, r=20, t=24, b=40),
     )
 
@@ -319,18 +327,48 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
 
-def _track(spent: float, ref: float, colour: str, marker_title: str) -> html.Div:
-    """Spending as a bar, with the typical level as a marker. Refunds can push
-    a period's spending below zero; the bar then stays empty."""
+def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> html.Div:
+    """Spending as a bar, with the typical level as a marker. Spending up to
+    typical is ordinary, so it's grey; only the part past typical is red, and
+    only when the headline calls it over. Refunds can push a period's
+    spending below zero; the bar then stays empty."""
     scale = max(spent, ref, 0) * 1.05 or 1
 
     def _pct(v):
         return f"{min(max(v / scale, 0), 1) * 100:.1f}%"
 
+    fills = [html.Div(className="pace-fill",
+                      style={"left": "0%", "width": _pct(min(spent, ref) if over else spent),
+                             "background": c["subtext"]})]
+    if over:
+        fills.append(html.Div(className="pace-fill pace-over",
+                              style={"left": _pct(ref), "width": _pct(spent - ref),
+                                     "background": c["accent2"]}))
     return html.Div(className="pace-track", children=[
-        html.Div(className="pace-fill", style={"width": _pct(spent), "background": colour}),
-        html.Div(className="pace-marker", title=marker_title, style={"left": _pct(ref)}),
+        *fills, html.Div(className="pace-marker", title=marker_title, style={"left": _pct(ref)}),
     ])
+
+
+def unlabeled_share(spent: float, unlabeled_out: float) -> float:
+    """The share of a period's money out that's unlabeled."""
+    total = spent + unlabeled_out
+    return unlabeled_out / total if total > 0 else 0.0
+
+
+def cant_say_reasons(spent: float, freq: str, health: dict) -> tuple[list[str], bool]:
+    """Why the page won't compare this period (headline and cards alike):
+    the newest data is stale, or too much of its money out is unlabeled.
+    Returns (reasons, whether unlabeled money is one of them)."""
+    reasons = []
+    if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
+        d = health["as_of"]
+        reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
+    unlabeled = unlabeled_share(spent, health["unlabeled_out"]) > UNLABELED_BLOCK
+    if unlabeled:
+        n = health["unlabeled_n"]
+        reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {FREQ_NOUN[freq]}'s money out "
+                       f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
+    return reasons, unlabeled
 
 
 def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool]:
@@ -357,18 +395,10 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
             html.Div(className="pace-legend", children=[html.Span(t) for t in legend]),
         ]
 
-    reasons = []
-    if health["current"] and health["age"] is not None and health["age"] > STALE_DAYS:
-        d = health["as_of"]
-        reasons.append(f"your data ends {d:%b} {d.day}, {d.year} — {health['age']} days ago")
-    out_total = spent + health["unlabeled_out"]
-    unlabeled = out_total > 0 and health["unlabeled_out"] / out_total > UNLABELED_BLOCK
-    if unlabeled:
-        n = health["unlabeled_n"]
-        reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {noun}'s money out "
-                       f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
+    reasons, unlabeled = cant_say_reasons(spent, freq, health)
     if reasons:
-        return _view("Can't say yet", c["accent2"], ["; ".join(reasons)]), unlabeled
+        # Missing data isn't overspending: ink, not the "over" red
+        return _view("Can't say yet", c["text"], ["; ".join(reasons)]), unlabeled
 
     typ, full = s["typical"], s["typical_full"]
     if not typ or not full:
@@ -380,12 +410,14 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
 
     ref = typ["exp"]                   # the same point in a typical period, or a full one
     diff = spent - ref
+    over = False
     if abs(diff) <= max(1.0, IN_LINE_SHARE * ref):
         status, colour = f"In line with a typical {noun}", c["accent3"]
     else:
         where = "your typical pace" if s["partial"] else f"a typical {noun}"
         status = f"{_dollar0(abs(diff))} {'over' if diff > 0 else 'under'} {where}"
         colour = c["accent2"] if diff > 0 else c["accent3"]
+        over = diff > 0
     if s["partial"]:
         legend = [f"Spent {_dollar0(spent)}", f"│ typical by now {_dollar0(ref)}",
                   f"typical full {noun} {_dollar0(full['exp'])}"]
@@ -393,7 +425,7 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     else:
         legend = [f"Spent {_dollar0(spent)}", f"│ typical {noun} {_dollar0(ref)}"]
         marker = f"Typical {noun}"
-    return _view(status, colour, legend, _track(spent, ref, colour, marker)), False
+    return _view(status, colour, legend, _track(spent, ref, c, over, marker)), False
 
 
 def recurring_view(items: list[dict]) -> tuple[list, str]:
@@ -449,7 +481,7 @@ app.index_string = '''
     <title>{%title%}</title>
     {%favicon%}
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>__THEME_CSS__</style>
     {%css%}
 </head>
@@ -468,7 +500,10 @@ _MENU_VISIBLE    = {"display": "flex"}
 _HIDDEN          = {"display": "none"}
 _SHOWN_INLINE    = {"display": "inline-block"}
 
-_PILL_INPUT = {"display": "none"}
+# Visually hidden, not display:none — the radios stay focusable, so the pills
+# work from the keyboard (app.css shows a focus ring)
+_PILL_INPUT = {"position": "absolute", "opacity": 0, "width": "1px", "height": "1px",
+               "margin": 0, "pointerEvents": "none"}
 
 
 def _attention_item(id_, button, button_id):
@@ -515,7 +550,7 @@ app.layout = html.Div(
             id="setup-overlay",
             style=_OVERLAY_HIDDEN if (MASTER_PATH and MASTER_PATH.exists()) else _OVERLAY_VISIBLE,
             children=html.Div(className="app-card setup-card", children=[
-                html.H1(["FINANCE ", html.Span("DASHBOARD", className="accent")], className="wordmark"),
+                html.H1(["Finance ", html.Span("Dashboard", className="accent")], className="wordmark"),
                 html.P("Choose the folder that contains your RAW bank exports. "
                        "The dashboard keeps its SORTED output (and your labels) next to them.",
                        className="setup-copy"),
@@ -570,7 +605,7 @@ app.layout = html.Div(
 
         # ── Header: wordmark, data freshness, attention line; gear top-right ──
         html.Div(className="app-header", children=[
-            html.H1(["FINANCE ", html.Span("DASHBOARD", className="accent")], className="wordmark"),
+            html.H1(["Finance ", html.Span("Dashboard", className="accent")], className="wordmark"),
             html.P(id="data-updated", className="header-meta"),
             # One red line for everything that needs you — shown only when
             # something fires. Buttons stay in the layout (callbacks listen to
@@ -613,7 +648,7 @@ app.layout = html.Div(
                     # callbacks output to them) and shows a fullscreen spinner
                     # while they run, so it never overlaps the menu buttons.
                     dcc.Loading(
-                        id="data-op-loading", type="circle", color=_CHART["dark"]["accent"],
+                        id="data-op-loading", type="circle", color=_CHART["light"]["subtext"],  # visible on either overlay
                         fullscreen=True,
                         children=[
                             html.Span(id="reload-status", className="settings-status"),
@@ -1126,34 +1161,54 @@ def update_period_header(store):
 
 # ── Headline + stat cards ─────────────────────────────────────────────────────
 
-def _pct_delta(cur, prior):
-    """Relative change, or None when either side is zero (a ▲/▼100% against
-    nothing says more about missing data than about your money)."""
-    if not prior or not cur:
-        return None
-    # Divide by |prior| so the arrow tracks the real direction of change: a
-    # negative prior (e.g. last period's net was negative) must not flip the
-    # sign of an improvement.
-    return (cur - prior) / abs(prior) * 100
+# How each card words a change against last year: (more, less) and whether
+# more is good. Net reads better / worse — "more" of a negative net is unclear.
+_LAST_YEAR_WORDS = {"exp": ("more", "less", False), "inc": ("more", "less", True),
+                    "net": ("better", "worse", True)}
 
 
-def _delta_line(change, suffix, higher_is_good, unit="%", tip=None):
-    # Colour signals good/bad for THIS metric, not merely up/down: more
-    # income is green, more spending is red.
-    if change is None:
-        body = [html.Span("—"), f" {suffix}"]
-    else:
-        up = change >= 0
-        cls = "delta-good" if up == higher_is_good else "delta-bad"
-        if unit == "$":
-            amount = _dollar0(abs(change))
-        elif unit == "%" and change >= 1000:
-            # Past +1000% a multiple reads better: ▲21× rather than ▲1977%
-            amount = f"{1 + change / 100:.0f}×"
-        else:
-            amount = f"{abs(change):.0f}{unit}"
-        body = [html.Span(f"{'▲' if up else '▼'}{amount}", className=cls), f" {suffix}"]
-    return html.Div(body, className="stat-delta", title=tip)
+def last_year_lines(s: dict, freq: str, last_year_unlabeled: float | None) -> dict:
+    """
+    The stat cards' comparison: each total against the same month last year,
+    or last year (while in progress, up to the same date). In dollars and
+    words, with last year's figure in brackets so it can be checked:
+    "$450 more than Oct 2024 ($2,420)". Colour means good or bad for that
+    card. {"exp"|"inc"|"net": line or None}.
+
+    It says why instead of showing a number when there's no data for last
+    year's period, or when over UNLABELED_BLOCK of that period's money out
+    is unlabeled (last_year_unlabeled is that share). Weeks get no line.
+    """
+    q = s["last_year_period"]
+    if q is None:
+        return dict.fromkeys(_LAST_YEAR_WORDS)
+    name = period_label(q, freq)
+
+    def _note(text):
+        return dict.fromkeys(_LAST_YEAR_WORDS, html.Div(text, className="stat-delta"))
+
+    if s["last_year"] is None:
+        return _note(f"No data for {name}")
+    if last_year_unlabeled is not None and last_year_unlabeled > UNLABELED_BLOCK:
+        return _note(f"{name} isn't fully labeled")
+    if s["partial"]:
+        end = s["last_year_window"][1]
+        name += f" by {end:%b} {end.day}"
+
+    out = {}
+    for k, (up, down, up_is_good) in _LAST_YEAR_WORDS.items():
+        was = s["last_year"][k]
+        change = s["cur"][k] - was
+        if abs(change) < 0.5:
+            out[k] = html.Div(f"Same as {name} ({_dollar0(was)})", className="stat-delta")
+            continue
+        good = (change > 0) == up_is_good
+        out[k] = html.Div([
+            html.Span(f"{_dollar0(abs(change))} {up if change > 0 else down}",
+                      className="delta-good" if good else "delta-bad"),
+            f" than {name} ({_dollar0(was)})",
+        ], className="stat-delta")
+    return out
 
 
 def _stat_card(title, value, lines):
@@ -1185,23 +1240,14 @@ def update_stats(store, theme, _refresh):
     freq, p = _selected_period(store)
     as_of = _as_of()
     s = period_summary(df, freq, p, as_of)
-    cur, typ = s["cur"], s["typical"]
+    cur = s["cur"]
 
-    n = s["n_typical"]
-    lookback = TYPICAL_LOOKBACK[freq]
-    if n:
-        typ_tip = f"Median of the previous {n} {FREQ_NOUN[freq]}{'s' if n != 1 else ''}"
-        if lookback:
-            typ_tip += f" (looks back up to {lookback})"
-        if s["partial"]:
-            typ_tip += f", over their first {s['days_elapsed']} days"
-    else:
-        typ_tip = "No earlier periods in your data to compare against"
-    typ_sfx = "vs typical by now" if s["partial"] else f"vs typical {FREQ_NOUN[freq]}"
+    def _counted(rows):
+        """Rows that can count, leaving out the sides of certain transfer
+        pairs: an unlabeled card payment isn't missing spending."""
+        return rows[~row_ids(rows).isin(_pair_row_ids())] if not rows.empty else rows
 
-    rows = filter_period(df, p)
-    if not rows.empty:
-        rows = rows[~row_ids(rows).isin(_pair_row_ids())]
+    rows = _counted(filter_period(df, p))
     out_unrev, in_unrev = unreviewed_amounts(rows)
 
     def _unreviewed(amount):
@@ -1210,24 +1256,31 @@ def update_stats(store, theme, _refresh):
         return html.Div(f"+ {_dollar0(amount)} unreviewed", className="stat-delta unreviewed",
                         title="Unlabeled transactions in this period — not counted above")
 
-    so_far = " SO FAR" if s["partial"] else ""
-    # Spending's comparison is the headline; income and net carry their own
-    cards = [
-        _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [_unreviewed(out_unrev)]),
-        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [
-            _delta_line(_pct_delta(cur["inc"], typ["inc"]) if typ else None, typ_sfx, True,
-                        tip=typ_tip),
-            _unreviewed(in_unrev)]),
-        # Net often sits near zero or flips sign, where a % change explodes
-        # (▼9205%) — compare it in dollars instead
-        _stat_card("NET" + so_far, _dollar(cur["net"]), [
-            _delta_line(cur["net"] - typ["net"] if typ else None, typ_sfx, True, unit="$",
-                        tip=typ_tip)]),
-    ]
-
     un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
     health = {"current": p == to_period(as_of, freq), "age": data_age(df), "as_of": as_of,
               "unlabeled_out": out_unrev, "unlabeled_n": int(len(un))}
+
+    # Against last year — unless the page won't compare this period at all
+    # (the headline says "Can't say yet"), so the cards never contradict it
+    if cant_say_reasons(cur["exp"], freq, health)[0]:
+        vs = dict.fromkeys(("exp", "inc", "net"))
+    else:
+        ly_share = None
+        if s["last_year_window"] is not None:
+            ly_rows = _counted(filter_window(df, *s["last_year_window"]))
+            if ly_rows.empty:
+                s = dict(s, last_year=None)            # nothing recorded then
+            else:
+                ly_share = unlabeled_share(s["last_year"]["exp"], unreviewed_amounts(ly_rows)[0])
+        vs = last_year_lines(s, freq, ly_share)
+
+    so_far = " SO FAR" if s["partial"] else ""
+    cards = [
+        _stat_card("SPENT" + so_far, _dollar(cur["exp"]), [vs["exp"], _unreviewed(out_unrev)]),
+        _stat_card("INCOME" + so_far, _dollar(cur["inc"]), [vs["inc"], _unreviewed(in_unrev)]),
+        _stat_card("NET" + so_far, _dollar(cur["net"]), [vs["net"]]),
+    ]
+
     headline, label_fix = headline_view(s, freq, health, c)
     return cards, headline, (_SHOWN_INLINE if label_fix else _HIDDEN)
 
@@ -1268,7 +1321,8 @@ def update_period_chart(store, metric, theme, _refresh):
     if metric == "net":
         colors = [c["accent3"] if v >= 0 else c["accent2"] for v in vals]
     else:
-        colors = [c["accent2"] if metric == "expenses" else c["accent3"]] * len(vals)
+        # Spending isn't "bad" and income isn't "good" — both are drawn in ink
+        colors = [c["bar"]] * len(vals)
 
     # The in-progress period gets a hatch so a short bar reads as "not over yet"
     as_of = _as_of()
@@ -1281,8 +1335,7 @@ def update_period_chart(store, metric, theme, _refresh):
         y=vals,
         marker=dict(
             color=colors,
-            opacity=[1.0 if q == p else 0.6 for q in win.index],
-            line=dict(width=[2 if q == p else 0 for q in win.index], color=c["text"]),
+            opacity=[1.0 if q == p else 0.45 for q in win.index],
             pattern=dict(shape=["/" if ip else "" for ip in in_progress],
                          fgcolor=c["surface"], fillmode="overlay", solidity=0.3),
         ),
@@ -1294,8 +1347,11 @@ def update_period_chart(store, metric, theme, _refresh):
     complete = [v for v, ip in zip(vals, in_progress) if not ip]
     if len(complete) >= 3:
         typical = float(pd.Series(complete).median())
+        # "median", not "typical": the headline's typical is a different measure
+        # (the previous 12 periods), and two different "typical" numbers on one
+        # screen read as an error
         fig.add_hline(y=typical, line_dash="dash", line_color=c["subtext"], line_width=1,
-                      annotation_text=f"typical {_dollar0(typical)}", annotation_position="top left",
+                      annotation_text=f"median {_dollar0(typical)}", annotation_position="top right",
                       annotation_font=dict(color=c["subtext"], size=11))
     if metric == "net":
         fig.add_hline(y=0, line_color=c["border"], line_width=1)
@@ -1321,6 +1377,11 @@ def _category_split(pdf: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             "total_expenses": rest["total_expenses"].sum(),
         }])], ignore_index=True)
     return top, rest["category"].tolist()
+
+
+def _category_opacity(names: list[str], selected) -> list[float]:
+    """Bars are grey ink; the clicked one is full ink, "Other" lighter still."""
+    return [1.0 if n_ == selected else 0.25 if n_.startswith("Other · ") else 0.45 for n_ in names]
 
 
 @app.callback(
@@ -1353,8 +1414,8 @@ def update_category_chart(store, theme, _refresh, sel_cat):
         y=names,
         x=top["total_expenses"],
         marker=dict(
-            color=[c["subtext"] if n_.startswith("Other · ") else c["accent"] for n_ in names],
-            opacity=[0.35 if sel_cat and n_ != sel_cat else 1.0 for n_ in names],
+            color=c["bar"],
+            opacity=_category_opacity(names, sel_cat),
         ),
         text=[f"{_dollar0(v)} · {v / total * 100:.0f}%" for v in top["total_expenses"]],
         textposition="outside",
@@ -1404,7 +1465,7 @@ def highlight_category(sel_cat, fig):
         return dash.no_update
     names = fig["data"][0].get("y") or []
     patched = Patch()
-    patched["data"][0]["marker"]["opacity"] = [0.35 if sel_cat and n_ != sel_cat else 1.0 for n_ in names]
+    patched["data"][0]["marker"]["opacity"] = _category_opacity(names, sel_cat)
     return patched
 
 
@@ -1457,7 +1518,7 @@ def category_drilldown(label, _theme, store):
             html.Div(className="divider"),
             html.Div([
                 "Largest: ",
-                html.Span(f"${big['amount']:,.2f}", className="warn-text", style={"fontWeight": "600"}),
+                html.Span(f"${big['amount']:,.2f}", style={"fontWeight": "600"}),
                 f" · {big['description']} · {big_date:%b} {big_date.day}",
             ], className="muted-text", style={"fontSize": "11px"}),
         ])

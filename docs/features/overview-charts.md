@@ -13,7 +13,7 @@ The dashboard answers two questions — **"am I on track?"** and **"where did th
 1. **Header** — wordmark, data date, one red **attention line** (only when something needs you), settings gear
 2. **Period bar** — `WEEK | MONTH | YEAR` pills and a `‹ period ›` stepper (sticky while scrolling)
 3. **Headline** — this period's spending against a typical one, in one sentence — or *Can't say yet* when the data can't support an answer
-4. **Stat cards** — spent, income, net for the selected period
+4. **Stat cards** — spent, income, net for the selected period, each against the same period last year
 5. **Spending over time** — one bar per week / month / year; click a bar to open that period
 6. **Spend by category** — for the selected period, with a click drilldown (see [category-breakdown.md](category-breakdown.md))
 7. **More** (folded) — recurring charges: subscriptions, rent, utilities, and what they cost a year
@@ -36,9 +36,9 @@ A period is **in progress** when it contains the newest transaction date and run
 
 ## Header
 
-- **Wordmark** — `FINANCE` in text colour, `DASHBOARD` in the accent.
+- **Wordmark** — `Finance` in text colour, `Dashboard` in the muted grey.
 - **Data line** (`data-updated`) — the newest transaction date: `Data through Dec 26, 2025`.
-- **Attention line** (`attention`, red) — everything that needs you, on one line that wraps, hidden entirely when nothing fires. Built by `attention_parts`; each item shows only when it applies:
+- **Attention line** (`attention`, ink text with a red ⚠) — everything that needs you, on one line that wraps, hidden entirely when nothing fires. Built by `attention_parts`; each item shows only when it applies:
 
   | Item | Says | Button |
   |------|------|--------|
@@ -76,9 +76,9 @@ One sentence answering "how is my spending?" for the selected period, against **
 | Before 15% of an in-progress period has passed (`EARLY_SHARE`: day 1 of a week, days 1–4 of a month) | `Too early to call — $80 so far` — a day or two of spending says nothing yet | typical full period |
 | No earlier period in the data | `$X spent` | `No earlier months to compare against yet` |
 
-A bar under the sentence shows spending (fill) against typical (marker). While in progress, "typical" is measured over the same number of days of each earlier period, so a part-finished month is never compared with whole ones.
+A bar under the sentence shows spending against typical (the marker): grey up to typical, and only the part past it red when the headline says over. While in progress, "typical" is measured over the same number of days of each earlier period, so a part-finished month is never compared with whole ones.
 
-**Can't say yet.** The headline refuses to answer — red *Can't say yet*, with the reasons — when:
+**Can't say yet.** The headline refuses to answer — *Can't say yet* in ink (missing data isn't overspending), with the reasons — when:
 
 - the period holds your newest data and that data is over `STALE_DAYS` (14) days old (`your data ends Dec 26, 2025 — 288 days ago`), or
 - over `UNLABELED_BLOCK` (10%) of the period's money out is unlabeled (`$319 of this month's money out (7 transactions) isn't labeled`). Unlabeled sides of certain transfer pairs don't count — an unlabeled card payment isn't missing spending. A **LABEL THEM →** button (`headline-label`) opens the labeling panel.
@@ -87,19 +87,24 @@ A confident verdict over missing data is worse than none; past periods are judge
 
 ## Stat cards (`period-stats`)
 
-Three cards for the selected period:
+Three cards for the selected period — spent, income, net — each with one comparison: **the same period last year** (`last_year_lines`). The headline compares spending with a *typical* period; the cards answer the other question, "how does this compare with last year?"
 
-| Card | Value | Compared with typical as | Higher is… |
-|------|-------|--------------------------|-----------|
-| Spent | Expense-labeled total | — (the headline is its comparison) | — |
-| Income | Income-labeled total | % change | good |
-| Net | Income − spent | **dollar** change (net hovers around zero and flips sign, where a % explodes) | good |
+| View | Compared with | While in progress |
+|------|---------------|-------------------|
+| Month | the same month last year (Oct 2025 vs Oct 2024) | the same days: Oct 1–26 vs Oct 1–26 |
+| Year | last year | year to date vs the same date last year |
+| Week | — (no comparison: the same week a year ago mostly measures where a payday fell) | — |
 
-Hover a comparison for exactly what "typical" was measured over. While a period is in progress the cards read `SO FAR` and compare `vs typical by now`.
+Each line is in **dollars and words, with last year's figure in brackets** so it can be checked: `$450 more than Oct 2024 ($2,420)` (Spent), `$700 less than Oct 2024 ($3,106)` (Income), `$1,150 worse than Oct 2024 ($686)` (Net). While in progress the name says where last year is measured to: `than Oct 2024 by Oct 26`. These are real last-year totals, so income − spent = net in both years. Colour means good or bad for that card (spending more, earning less, a worse net are red); the words carry the meaning too. Within $0.50 it reads `Same as Oct 2024 ($X)`.
+
+Instead of a number, a card says why when:
+- there's no data for last year's period (the data starts later, or nothing was recorded then) — `No data for Oct 2024`;
+- over `UNLABELED_BLOCK` (10%) of that period's money out is unlabeled — `Oct 2024 isn't fully labeled` (unlabeled sides of certain transfer pairs don't count, as for the headline);
+- the headline says **Can't say yet** for this period (`cant_say_reasons`) — then no comparison line shows at all, so the cards never claim what the headline refuses to.
+
+Percentages were dropped: against a small or lumpy base (income that arrives in a few big months) they exploded into numbers like `▲564%` that didn't match last year at all.
 
 **Unreviewed line.** The Spent and Income cards add a muted italic line, `+ $292 unreviewed` (`unreviewed_amounts`): the unlabeled money out (Spent) or in (Income) in the selected period, leaving out unlabeled sides of certain transfer pairs. It is **not** included in the value above it; it only makes an incomplete total look incomplete. It is hidden under $0.50.
-
-**Delta colour means good or bad for that metric**, not merely up or down. The % divides by `|prior|` so the arrow stays correct when the prior value was negative. A comparison shows `—` when either side is $0 (a ▲/▼100% against nothing describes missing data, not your money). Changes over +1000% are written as a multiple (`▲21×`).
 
 ---
 
@@ -107,10 +112,10 @@ Hover a comparison for exactly what "typical" was measured over. While a period 
 
 One bar per period at the selected granularity: the latest **26 weeks**, **24 months**, or **every year** (`CHART_PERIODS`). If you've stepped back further than that, the window shifts to keep the selected period on screen.
 
-- **Metric dropdown** (`cashflow-metric`, doubles as the card title): Expenses (default, red), Income (green), or Net Cash Flow (green/red by sign, with a zero line).
-- **Selected period** — full opacity with an outline; the rest are dimmed.
+- **Metric dropdown** (`cashflow-metric`, doubles as the card title): Expenses (default) or Income, both drawn in grey ink, or Net Cash Flow (green/red by sign, with a zero line).
+- **Selected period** — full ink; the rest are grey.
 - **In-progress period** — hatched, so a short bar reads as "not over yet".
-- **Typical line** — dashed, at the median of the complete periods on screen (needs at least 3).
+- **Median line** — dashed, at the median of the complete periods on screen (needs at least 3), labelled `median $1,167` at its right end. It's called median, not typical, because the headline's typical is a different measure (the previous 12 periods).
 - **Click a bar** to open that period. Hover shows the full period label and amount.
 
 Gap periods (no labeled transactions) appear as zero bars rather than disappearing, and count toward "typical".
