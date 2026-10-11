@@ -74,3 +74,18 @@ def test_is_read_only_and_compares_saved_totals(tmp_path):
     # A missing saved file is reported, not a crash
     report = _report(tmp_path, against=tmp_path.parent / "no-such-file.csv")
     assert "can't read" in report and "save one first with --save" in report
+
+
+def test_finds_charges_on_both_an_old_and_a_replacement_card(tmp_path):
+    head = "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
+    _raw(tmp_path, "Chase/Chase6236_Activity_20260401.csv", head +
+         "01/05/2026,01/06/2026,COFFEE,Food & Drink,Sale,-4.50,\n"
+         "02/10/2026,02/11/2026,GROCER,Groceries,Sale,-60.00,\n"
+         "03/27/2026,03/28/2026,BOOKS,Shopping,Sale,-15.00,\n")
+    _raw(tmp_path, "Chase/Chase9956_Activity_20261010.csv", head +
+         "02/10/2026,02/11/2026,GROCER,Groceries,Sale,-60.00,\n"
+         "03/27/2026,03/28/2026,BOOKS,Shopping,Sale,-15.00,\n"
+         "05/01/2026,05/02/2026,GAS,Gas,Sale,-30.00,\n")
+    report = _report(tmp_path)
+    assert "Chase Credit 6236 (folder: Chase) and Chase Credit 9956 (folder: Chase) both cover" in report
+    assert "2 charges are on both" in report and "$75.00 out" in report

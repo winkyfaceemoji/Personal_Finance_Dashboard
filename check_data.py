@@ -85,6 +85,32 @@ def split_cards(accounts: dict[tuple, pd.DataFrame]) -> list[dict]:
     return out
 
 
+def same_charges(accounts: dict[tuple, pd.DataFrame]) -> list[dict]:
+    """Two card numbers of the same kind (e.g. a replacement card) whose
+    exports overlap: charges with the same date, amount and description on
+    both are in the dashboard twice, since each card is its own account."""
+    keys = sorted(accounts)
+    out = []
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            if a[:2] != b[:2] or a[2] == b[2]:
+                continue
+            da, db = accounts[a], accounts[b]
+            lo = max(da["date"].min(), db["date"].min())
+            hi = min(da["date"].max(), db["date"].max())
+            if not lo <= hi:
+                continue
+            cols = ["date", "amount", "description"]
+            ca = da[da["date"].between(lo, hi)].groupby(cols).size()
+            cb = db[db["date"].between(lo, hi)].groupby(cols).size()
+            both = pd.concat([ca, cb], axis=1, join="inner").min(axis=1)
+            amounts = both.index.get_level_values("amount")
+            out.append({"a": a, "b": b, "from": lo, "to": hi,
+                         "rows_a": int(ca.sum()), "rows_b": int(cb.sum()), "same": int(both.sum()),
+                         "out": float((-amounts[amounts < 0] * both[amounts < 0]).sum())})
+    return out
+
+
 def snapshot(master: Path, rules: Path) -> pd.DataFrame:
     """What the dashboard counts: labeled spending and income per account
     (source) per month, with rules applied as the app applies them."""
@@ -156,6 +182,16 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
             p("    Their dates don't overlap, so nothing is counted twice yet.")
     if not splits:
         p("  OK: no card is split across two accounts")
+    for s in same_charges(accounts):
+        name_a, name_b = account_name(s["a"]), account_name(s["b"])
+        p(f"  {name_a} and {name_b} both cover {_day(s['from'])} to {_day(s['to'])} "
+          f"({s['rows_a']} and {s['rows_b']} rows)")
+        if s["same"]:
+            problems += 1
+            p(f"    WARNING: {s['same']} charges are on both (same date, amount, description) and are "
+              f"counted twice today: {_money(s['out'])} out")
+        else:
+            p("    OK: no charge is on both")
 
     p("\n3. FIRST MONTH AND YEAR OF EACH ACCOUNT")
     for k, d in sorted(accounts.items()):
