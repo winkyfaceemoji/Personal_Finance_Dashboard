@@ -615,6 +615,10 @@ def test_attention_line_is_silent_when_healthy(appmod):
     assert got["unlabeled"] == "1 unlabeled ($5) not counted"
     assert "no transactions in 41 days" in got["other"]
     assert "Chase Debit only through Oct 1" in got["other"]
+    # ...unless its export was downloaded later: then it was just quiet
+    quiet = parts(frame, [], None, 0, [], pd.Timestamp("2026-11-30"),
+                  exported={"Chase Debit": pd.Timestamp("2026-10-19")})
+    assert "Chase Debit" not in quiet["other"]
     assert "2 labels match no transaction" in got["other"] and "x.csv" in got["other"]
     left = pd.DataFrame({"file": ["CapitalOne/c.csv"] * 2, "date": ["2026-08-14"] * 2,
                          "description": ["A", "B"], "amount": [-52.26, -10.0]})

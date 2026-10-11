@@ -155,3 +155,29 @@ def test_overlapping_re_downloads_of_one_format_are_not_reported(tmp_path):
          "08/14/2026,08/15/2026,SOMETHING ELSE,9.99,Services\n")
     run_pipeline(tmp_path)
     assert not overlap_path(tmp_path / "SORTED" / "edited_combined_transactions.csv").exists()
+
+
+def test_filename_dates():
+    from main import filename_date
+    today = pd.Timestamp("2026-10-11")
+    assert filename_date("2026-10-10_transaction_download.csv", today) == pd.Timestamp("2026-10-10")
+    assert filename_date("Chase3094_Activity20240411_20260411_20260411.CSV", today) == pd.Timestamp("2026-04-11")
+    assert filename_date("Discover-Statement-20230527.csv", today) == pd.Timestamp("2023-05-27")
+    assert filename_date("Chase4823_Activity_20250210.CSV", today) == pd.Timestamp("2025-02-10")
+    assert filename_date("Discover-2026-YearToDateSummary.csv", today) is None
+    assert filename_date("statement_20261301.csv", today) is None          # no month 13
+    assert filename_date("export_20990101.csv", today) is None             # after today
+
+
+def test_a_quiet_card_with_a_recent_download_is_not_behind(tmp_path):
+    from Modules.safety import read_exported_through
+    _raw(tmp_path, "Discover/Discover-Statement-20260827.csv", DISCOVER)
+    _raw(tmp_path, "CapitalOne/2026-10-10_transaction_download.csv", SAMPLE)
+    _raw(tmp_path, "Chase/Chase3094_Activity_20261009.CSV",
+         "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
+         "10/09/2026,10/09/2026,CAFE,Food,Sale,-4.50,\n")
+    run_pipeline(tmp_path)
+    master_path = tmp_path / "SORTED" / "edited_combined_transactions.csv"
+    through = read_exported_through(master_path)
+    assert through["Discover Credit"] == pd.Timestamp("2026-10-10")
+    assert through["Chase Credit"] == pd.Timestamp("2026-10-09")
