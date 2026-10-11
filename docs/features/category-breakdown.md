@@ -10,7 +10,7 @@ updated: 2026-10-09
 
 The categories card (`category-chart`) shows **spending by category for the selected period** — the week, month, or year picked in the period bar (see [overview-charts.md](overview-charts.md#period-bar)). It's titled `SPEND BY CATEGORY · DEC 2025`; there is no separate control.
 
-- **Sorted horizontal bars** — largest category on top, each labeled `$843 · 41%` (share of the period's spend). Bars rank and compare more accurately than pie slices, and need no per-category colours: every bar is the accent, so there's no palette to tell apart.
+- **Sorted horizontal bars** — largest category on top, each labeled `$843 · 41%` (share of the period's spend). Bars rank and compare more accurately than pie slices, and need no per-category colours: every bar is grey ink and the clicked one is full ink ("Other" lighter grey), so there's no palette to tell apart.
 - **Top 9 + Other** — the nine largest categories get their own bar; the rest collapse into a muted `Other · {n} categories` bar. The cut is the shared `CAT_TOP_N` constant.
 - The category is `category_display` (your `sub_category`, else the bank's category). Only rows labeled `Expense` count, matching every other total. Categories that net to zero or below (refunds only) get no bar.
 - A muted hint under the title advertises the drilldown. With no labeled expenses in the period, the chart says so instead of rendering empty.
@@ -19,7 +19,7 @@ The categories card (`category-chart`) shows **spending by category for the sele
 
 ## Click drilldown (`category-drilldown`)
 
-Clicking a bar **highlights it** (the others dim) and opens a compact panel below the chart, scoped to that category and the selected period — a merchant summary, not a transaction table:
+Clicking a bar **highlights it** (it turns full ink) and opens a compact panel below the chart, scoped to that category and the selected period — a merchant summary, not a transaction table:
 
 | Element | Detail |
 |---------|--------|
@@ -41,4 +41,4 @@ The clicked bar is held in a `selected-category` `dcc.Store`, not read from `cli
 
 - `select_category` writes the bar's label to the store and resets `clickData` to `None`, so re-clicking the same bar registers as a change. A `period-store` change clears it.
 - `highlight_category` `Patch`es only the bars' opacities — a click doesn't rebuild the chart.
-- `update_category_chart` reads the store as `State` to keep the highlight across theme changes, but ignores it when the *period* triggered the rebuild — the selection is being cleared in parallel, and reading the stale value would dim the new period's bars.
+- `update_category_chart` reads the store as `State` to keep the highlight across theme changes, but ignores it when the *period* triggered the rebuild — the selection is being cleared in parallel, and reading the stale value would highlight a bar in the new period that was never clicked.
