@@ -118,6 +118,18 @@ def test_group_card_shows_merchant_and_the_banks_text_apart(appmod):
     assert "Transaction text" in texts and not any("other wording" in t for t in texts)
 
 
+def test_nameless_group_card_says_no_clear_merchant(appmod):
+    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-03-01"]), "description": ["#1234"], "amount": [-4.5],
+        "master_category": [""], "sub_category": [""], "source": ["Chase Credit"], "card_last4": [""],
+    })
+    g = unlabeled_groups(df)[0]
+    texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
+             if isinstance(c, str)]
+    assert "No clear merchant" in texts and "#1234" in texts     # the text itself, unaltered
+
+
 def _walk(component):
     stack = [component]
     while stack:

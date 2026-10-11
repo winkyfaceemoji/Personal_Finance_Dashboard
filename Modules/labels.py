@@ -112,6 +112,13 @@ _ID_TAIL  = re.compile(r" (?:web id|ppd id|ccd id|id:|ach )")
 # ACH reference codes like "rtl-tppsgd" — narrow on purpose: a generic
 # "xx-…" pattern would also eat names like "wal-mart"
 _CODE     = re.compile(r"\b(?:rtl|ppd|ccd|web)-\S+")
+# Card processors put their name before the merchant's ('TST* 7TH STREET
+# BURGER', 'PAYPAL *EBAY'), so the merchant is the word after it
+_PROCESSORS = {"tst", "sq", "sp", "paypal"}
+# Payment networks that name only themselves, not who paid: a sportsbook
+# payout, a paycheck or a refund can all arrive this way, so their rows are
+# never grouped together (labeled one at a time)
+_NO_PAYEE = re.compile(r"real time payment ")
 _TRANSFER = re.compile(r"payment thank|autopay|online transfer|transfer to|transfer from"
                        r"|epay|card payment|directpay|internet payment")
 
@@ -121,8 +128,13 @@ def _leading_words(text: str) -> str:
     store numbers and dates drop off, but a name that starts with a number
     ('7-eleven', '99 ranch', '1-800-flowers') survives."""
     words = text.split()
-    keep = words[:1]
-    for w in words[1:]:
+    keep, rest = words[:1], words[1:]
+    # After a processor prefix the next word is the merchant's, digit or not
+    # ('tst 7th street burger') — if it has a letter: a bare number there
+    # ('paypal 4029357733') is a phone number, not a name
+    if keep and keep[0] in _PROCESSORS and rest and re.search(r"[a-z]", rest[0]):
+        keep.append(rest.pop(0))
+    for w in rest:
         if re.search(r"\d", w):
             break
         keep.append(w)
@@ -134,8 +146,11 @@ def merchant_key(description) -> str:
     ACH codes, so one merchant's rows group together: 'STARBUCKS STORE 01234
     SEATTLE' and '… 09876 NEW YORK' are both 'starbucks store'. Returns ''
     when no name with a letter is left (e.g. '#1234') — the caller must not
-    lump those together."""
+    lump those together. '' too for a payment network that doesn't say who
+    paid (_NO_PAYEE)."""
     s = normalize_description(description)
+    if _NO_PAYEE.match(s):
+        return ""
     s = _ID_TAIL.split(s, maxsplit=1)[0]
     s = _CODE.sub("", s)
     s = _leading_words(s).strip(" -.,/")
