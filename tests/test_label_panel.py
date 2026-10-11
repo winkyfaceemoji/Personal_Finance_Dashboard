@@ -110,12 +110,12 @@ def test_group_card_shows_merchant_and_the_banks_text_apart(appmod):
     g = unlabeled_groups(df)[0]
     texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
              if isinstance(c, str)]
-    assert {"MERCHANT", "CENTRAL BANK COLLECTION", "TRANSACTION TEXT · ONE OF SEVERAL"} <= set(texts)
+    assert {"CENTRAL BANK COLLECTION", "Transaction text", "+2 other wordings"} <= set(texts)
     assert raw in texts                                    # the bank's text, unaltered
     one = unlabeled_groups(df.iloc[:1])[0]
     texts = [c for c in _walk(appmod["_group_card"](one, rule_check(df.iloc[:1], read_rules("/none"), one)))
              if isinstance(c, str)]
-    assert "TRANSACTION TEXT" in texts and "TRANSACTION TEXT · ONE OF SEVERAL" not in texts
+    assert "Transaction text" in texts and not any("other wording" in t for t in texts)
 
 
 def _walk(component):
