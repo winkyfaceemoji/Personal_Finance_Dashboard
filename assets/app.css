@@ -52,8 +52,8 @@ html, body {
     border: 1px solid var(--control); background: transparent; color: var(--text);
     font-family: inherit; font-size: 18px; line-height: 1; transition: background 0.15s;
 }
-.step-btn:hover:not(:disabled) { background: var(--accent-weak); }
-.step-btn:disabled { opacity: 0.35; cursor: default; }
+@media (hover: hover) { .step-btn:hover:not(:disabled) { background: var(--accent-weak); } }
+.step-btn:disabled { color: var(--subtext); border-color: var(--border); opacity: 0.6; cursor: not-allowed; }
 @media (max-width: 640px) {
     .stepper { width: 100%; }
     .period-text { min-width: 0; flex: 1; }
@@ -64,18 +64,31 @@ html, body {
 /* Dash 4 renders each option as <label class="dash-options-list-option">,
    with .selected on the chosen one (see docs/design.md, gotcha #2). */
 .pills { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; }
-.pills label {
-    padding: 6px 14px; white-space: nowrap; border-radius: 999px; cursor: pointer;
+/* The pills own every state. Dash 4's built-in rule colours a hovered or
+   focused option with --Dash-Fill-Interactive-Strong (our ink) at
+   specificity 0,3,1 — on the ink-filled selected pill that was ink on ink,
+   blank until focus moved away. #app-root puts these rules above any Dash
+   state rule; tests/test_ui_states.py checks every state in a browser. */
+#app-root .pills label {
+    position: relative; padding: 6px 14px; white-space: nowrap; border-radius: 999px; cursor: pointer;
     font-size: 13px; font-weight: 500;
     color: var(--subtext); background: transparent; border: 1px solid transparent;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
 }
-.pills label:hover { color: var(--text); }
-.pills label:hover:not(.selected) { background: var(--accent-weak); }
-/* Selected = ink fill: a grey tint alone is ~1.1:1 against the page */
-.pills .dash-options-list-option.selected { color: var(--on-accent); background: var(--accent); }
-.pills label { position: relative; }
-.pills label:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
+#app-root .pills label:is(:hover, :focus-within, :active) { color: var(--text); }
+/* Hover fill only where there is a pointer: a phone keeps :hover on the
+   last tapped pill, which would then look half-selected */
+@media (hover: hover) {
+    #app-root .pills label:not(.selected):hover { background: var(--accent-weak); }
+}
+/* Selected = ink fill, in every state, and bold: the weight marks it without
+   colour too (forced-colors mode drops the fill, so it also gets a border) */
+#app-root .pills label.selected,
+#app-root .pills label.selected:is(:hover, :focus-within, :active) {
+    color: var(--on-accent); background: var(--accent); font-weight: 600;
+}
+@media (forced-colors: active) { #app-root .pills label.selected { border-color: CanvasText; } }
+#app-root .pills label:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 .app-card {
@@ -150,10 +163,18 @@ html, body {
 }
 .btn-primary { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }
 .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--control); }
-.btn-primary:hover { opacity: 0.85; }
-.btn-secondary:hover:not(:disabled) { background: var(--accent-weak); }
-.btn-secondary:disabled { opacity: 0.35; cursor: default; }
-.btn-secondary.active { background: var(--accent-weak); color: var(--text); }
+@media (hover: hover) {
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-secondary:hover:not(:disabled):not(.active) { background: var(--accent-weak); }
+}
+/* Off, and looks it: no outline to press, muted label, not-allowed cursor */
+.btn-secondary:disabled { color: var(--subtext); border-color: var(--border); background: transparent;
+                          opacity: 0.6; cursor: not-allowed; }
+/* "Current" looks the same everywhere: ink fill, like the selected pill
+   (the light grey fill is hover, and the labeling panel's "suggested") */
+.btn-secondary.active, .btn-secondary.active:hover {
+    background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
+}
 .btn-small { font-size: 13px; padding: 6px 14px; }
 /* Keyboard focus is always visible */
 button:focus-visible, input:focus-visible, .dash-dropdown:focus-visible,
@@ -176,7 +197,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     mask: var(--gear-icon) center / contain no-repeat;
 }
 #settings-menu-panel {
-    position: absolute; top: 56px; right: 0; min-width: 240px;
+    position: absolute; top: 56px; right: 0; min-width: 280px;
     flex-direction: column; gap: 8px; padding: 16px; margin: 0;
     box-shadow: 0 8px 24px var(--shade-weak);
 }
@@ -187,6 +208,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .settings-status { font-size: 12px; color: var(--accent3); }
 .settings-row { display: flex; gap: 8px; }
 .settings-row > * { flex: 1; }
+#settings-menu-panel .btn-small { white-space: nowrap; }
 
 /* ── Setup overlay ──────────────────────────────────────────────────────── */
 #setup-overlay { position: fixed; inset: 0; z-index: 100; background: var(--bg); align-items: center; justify-content: center; }
@@ -213,6 +235,9 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .dash-dropdown-option, .dash-dropdown-value, .dash-dropdown-search { color: var(--text) !important; }
 .dash-dropdown-search { background: transparent !important; }
 .dash-dropdown-option:hover, .dash-dropdown-option:focus { background-color: var(--accent-weak) !important; }
+/* The current choice is marked in the open list: bold, with a check */
+.dash-dropdown-option.selected { font-weight: 600; }
+.dash-dropdown-option.selected::after { content: "✓"; margin-left: auto; padding-left: 12px; }
 .dash-dropdown-placeholder, .dash-dropdown-clear, .dash-dropdown-trigger-icon { color: var(--subtext) !important; }
 /* Metric dropdown styled as a card title — matches the .app-label headers */
 .title-dropdown .dash-dropdown-value {

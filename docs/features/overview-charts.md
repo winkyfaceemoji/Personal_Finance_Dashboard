@@ -57,7 +57,7 @@ A period is **in progress** when it contains the newest transaction date and run
 |---------|----|-----------|
 | Granularity pills | `period-freq` | WEEK / MONTH / YEAR. Remembered across reloads (`persistence`, local storage). Default MONTH. |
 | Previous / next | `period-prev`, `period-next` | Step one period; disabled at the first / latest period with data. |
-| Period label | `period-label`, `period-sub` | `Dec 22 – 28, 2025` / `Dec 2025` / `2025`; the sub-line shows `in progress` or `latest complete month` (the headline shows how far in). |
+| Period label | `period-label`, `period-sub` | `Dec 22 – 28, 2025` / `Dec 2025` / `2025`; the sub-line shows `in progress`, or `data ends Dec 26` when the period holding your newest data is really over (old exports), or `latest complete month` (the headline shows how far in). |
 | LATEST | `period-latest` | Jump back to the period containing the newest transaction. |
 
 The selection lives in the `period-store` Store as `{"freq": …, "start": "YYYY-MM-DD"}`, written only by `navigate_period`. **Switching granularity keeps your place**: from the week of Nov 10 you land on Nov 2025, and from a month on its year. Clicking a bar in the spending chart also navigates. The bar is `position: sticky` so it stays visible while you scroll the cards it drives.
