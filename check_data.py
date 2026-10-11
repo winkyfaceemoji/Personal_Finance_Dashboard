@@ -34,7 +34,7 @@ def _money(v: float) -> str:
 
 
 def _day(d) -> str:
-    return "—" if pd.isna(d) else f"{d:%Y-%m-%d}"
+    return "-" if pd.isna(d) else f"{d:%Y-%m-%d}"
 
 
 def read_raw(raw: Path) -> tuple[list[dict], list[tuple[str, str]]]:
@@ -116,7 +116,7 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
     raw = data_dir / "RAW"
     master = get_master_path(data_dir)
     rules = Path(os.environ.get("FINANCE_RULES_PATH") or BASE_DIR / "rules.csv")
-    p(f"FINANCE DATA CHECK — read-only{' (saves ' + str(save) + ')' if save else ''}")
+    p(f"FINANCE DATA CHECK - read-only{' (saves ' + str(save) + ')' if save else ''}")
     p(f"Data folder: {data_dir}\n")
     problems = 0
 
@@ -129,10 +129,10 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
     for (folder, fmt, key), fs in sorted(by_folder.items()):
         firsts = [f["first"] for f in fs if pd.notna(f["first"])]
         lasts = [f["last"] for f in fs if pd.notna(f["last"])]
-        p(f"  {folder}: {len(fs)} {fmt} file{'s' if len(fs) != 1 else ''} → {account_name(key)} · "
-          f"{_day(min(firsts) if firsts else pd.NaT)} … {_day(max(lasts) if lasts else pd.NaT)}")
+        p(f"  {folder}: {len(fs)} {fmt} file{'s' if len(fs) != 1 else ''} -> {account_name(key)} | "
+          f"{_day(min(firsts) if firsts else pd.NaT)} to {_day(max(lasts) if lasts else pd.NaT)}")
     for name, why in skipped:
-        p(f"  ⚠ {name}: not imported ({why})")
+        p(f"  WARNING: {name}: not imported ({why})")
     if not files:
         p("  (no files the import can read)")
 
@@ -143,19 +143,19 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
 
     p("\n2. ACCOUNTS (after merging each account's overlapping exports)")
     for k, d in sorted(accounts.items()):
-        p(f"  {account_name(k)}: {len(d)} rows · {_day(d['date'].min())} … {_day(d['date'].max())}")
+        p(f"  {account_name(k)}: {len(d)} rows | {_day(d['date'].min())} to {_day(d['date'].max())}")
     splits = split_cards(accounts)
     for s in splits:
         problems += 1
-        p(f"  ⚠ SAME CARD, TWO ACCOUNTS: {account_name(s['a'])} and {account_name(s['b'])}")
+        p(f"  WARNING: SAME CARD, TWO ACCOUNTS: {account_name(s['a'])} and {account_name(s['b'])}")
         if s["overlap"]:
-            p(f"    Both cover {_day(s['from'])} … {_day(s['to'])}; today every row there is counted twice:")
+            p(f"    Both cover {_day(s['from'])} to {_day(s['to'])}; today every row there is counted twice:")
             for k, n, out_ in s["overlap"]:
                 p(f"      {account_name(k)}: {n} rows, {_money(out_)} out")
         else:
             p("    Their dates don't overlap, so nothing is counted twice yet.")
     if not splits:
-        p("  ✓ no card is split across two accounts")
+        p("  OK: no card is split across two accounts")
 
     p("\n3. FIRST MONTH AND YEAR OF EACH ACCOUNT")
     for k, d in sorted(accounts.items()):
@@ -166,7 +166,7 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
         year_note = "complete" if (first.month, first.day) == (1, 1) else f"starts {first:%b %d} (partly covered)"
         p(f"  {account_name(k)}: first month {first:%b %Y} {month_note}; first year {first.year} {year_note}")
 
-    p("\n4. IS EACH CARD UP TO DATE? (the dashboard's \"only through …\" warning)")
+    p("\n4. IS EACH CARD UP TO DATE? (the dashboard's \"only through ...\" warning)")
     # Today the dashboard treats a card as up to date through the newest date
     # in ANY of its export file names — a download date, not where data ends
     by_source = defaultdict(list)
@@ -176,21 +176,21 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
         ends = max((f["last"] for f in fs if pd.notna(f["last"])), default=pd.NaT)
         named = [f for f in fs if f["name_date"] is not None]
         if not named:
-            p(f"  {source}: data ends {_day(ends)} · no dates in its file names")
+            p(f"  {source}: data ends {_day(ends)} | no dates in its file names")
             continue
         newest = max(named, key=lambda f: f["name_date"])
         gap = (newest["name_date"] - ends).days if pd.notna(ends) else 0
-        line = (f"  {source}: data ends {_day(ends)} · treated as up to date through "
+        line = (f"  {source}: data ends {_day(ends)} | treated as up to date through "
                 f"{_day(newest['name_date'])} (from {Path(newest['file']).name})")
         if gap > 7:
-            line += (f"\n    ⚠ {gap} days later than the data — a \"behind\" warning for this card "
-                     f"can be hidden")
+            line += (f"\n    NOTE: {gap} days later than the data - fine if the card had no charges "
+                     f"since; otherwise its \"behind\" warning is hidden")
         p(line)
 
     p("\n5. ROWS LEFT OUT WHERE EXPORTS OVERLAP (SORTED/overlap_only.csv)")
     left = read_overlap_only(master) if master else pd.DataFrame()
     if left.empty:
-        p("  ✓ none")
+        p("  OK: none")
     else:
         p(f"  {len(left)} rows ({_money(left['amount'].abs().sum())}):")
         for r in left.head(15).itertuples():
@@ -198,12 +198,12 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
 
     p("\n6. WHAT THE DASHBOARD COUNTS NOW")
     if not master or not master.exists():
-        p("  (no master file yet — run the import or open the dashboard first)")
+        p("  (no master file yet - run the import or open the dashboard first)")
         return problems
     snap = snapshot(master, rules)
     for source, g in snap.groupby("source"):
-        p(f"  {source}: {int(g['rows'].sum())} rows · spent {_money(g['spent'].sum())} · "
-          f"income {_money(g['income'].sum())} · {g['month'].min()} … {g['month'].max()}")
+        p(f"  {source}: {int(g['rows'].sum())} rows | spent {_money(g['spent'].sum())} | "
+          f"income {_money(g['income'].sum())} | {g['month'].min()} to {g['month'].max()}")
     p(f"  Unmatched labels (the red line's \"match no transaction\"): {orphan_count(master)}")
 
     if save:
@@ -216,14 +216,14 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
             before = pd.read_csv(against, dtype={"month": str})
             changed = compare(before, snap)
         except (OSError, ValueError, KeyError) as e:
-            p(f"  ⚠ can't read {against} ({e.__class__.__name__}) — save one first with --save")
+            p(f"  WARNING: can't read {against} ({e.__class__.__name__}) - save one first with --save")
             return problems
         if changed.empty:
-            p("  ✓ no account's monthly rows, spending or income changed")
+            p("  OK: no account's monthly rows, spending or income changed")
         for r in changed.itertuples():
-            p(f"  {r.source} {r.month}: rows {int(r.rows_before)}→{int(r.rows_after)} · "
-              f"spent {_money(r.spent_before)}→{_money(r.spent_after)} · "
-              f"income {_money(r.income_before)}→{_money(r.income_after)}")
+            p(f"  {r.source} {r.month}: rows {int(r.rows_before)}->{int(r.rows_after)} | "
+              f"spent {_money(r.spent_before)}->{_money(r.spent_after)} | "
+              f"income {_money(r.income_before)}->{_money(r.income_after)}")
     return problems
 
 
@@ -233,12 +233,12 @@ def main(argv=None) -> int:
     ap.add_argument("--save", type=Path, help="save per-account monthly totals to this CSV")
     ap.add_argument("--compare", type=Path, help="compare with totals saved earlier by --save")
     args = ap.parse_args(argv)
-    # A Windows console or redirected file may not take ⚠ / ✓ / …
+    # Plain ASCII output; this only guards paths and descriptions a console can't show
     with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(errors="replace")
     data_dir = args.data_dir or get_data_dir()
     if not data_dir:
-        print("No data folder configured — open the dashboard once, or pass --data-dir.")
+        print("No data folder configured - open the dashboard once, or pass --data-dir.")
         return 2
     run(Path(data_dir), save=args.save, against=args.compare)
     return 0
