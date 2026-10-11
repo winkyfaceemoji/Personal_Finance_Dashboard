@@ -38,7 +38,7 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ## Prerequisites
 
 - Python 3.12+
-- Supported bank CSV formats: Chase Debit, Chase Credit, Discover Credit
+- Supported bank CSV formats: Chase Debit, Chase Credit, Discover Credit, and Capital One's exports of the Discover card (put those in `RAW/Discover/` too)
 
 ---
 

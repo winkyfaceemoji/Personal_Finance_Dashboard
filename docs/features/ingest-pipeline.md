@@ -53,19 +53,22 @@ RAW/
   <institution>/ ...
 ```
 
-`RAW/` is walked recursively (`rglob`), so files can sit at any depth. The **top-level folder under `RAW/` is the institution** and is recorded on every row as the `institution` column (folder-authoritative identity; files dropped directly in `RAW/` get a blank institution). The CSV **format** is still auto-detected from the column headers — independent of the folder — so a single institution folder can hold multiple formats (e.g. Chase debit and Chase credit together). Three formats are supported:
+`RAW/` is walked recursively (`rglob`), so files can sit at any depth. The **top-level folder under `RAW/` is the institution** and is recorded on every row as the `institution` column (folder-authoritative identity; files dropped directly in `RAW/` get a blank institution). The CSV **format** is still auto-detected from the column headers — independent of the folder — so a single institution folder can hold multiple formats (e.g. Chase debit and Chase credit together). Four formats are supported:
 
 | Format constant | Source | Key columns used |
 |----------------|--------|-----------------|
 | `chase_debit` | Chase chequing/debit | `Posting Date`, `Description`, `Amount`, `Type`, `Balance`, `Check or Slip #` |
 | `chase_credit` | Chase credit card | `Transaction Date`, `Post Date`, `Description`, `Category`, `Type`, `Amount`, `Memo` |
 | `discover_credit` | Discover credit card | `Trans. Date`, `Post Date`, `Description`, `Amount`, `Category` |
+| `capital_one_credit` | The Discover card, exported by Capital One since it took the card over | `Transaction Date`, `Posted Date`, `Description`, `Category`, `Debit`, `Credit` (`Card No.` is ignored) |
 
 A file that can't be used — unreadable, unrecognised headers, or a normalizer error on a malformed statement — is skipped with a `[SKIP]` log line and recorded, with its reason, in `SORTED/skipped_files.csv`; the dashboard header turns that into a red warning, because a skipped file's whole account is missing from every total. One bad file never aborts the import of the others. The record describes the latest run only (written even when nothing could be imported, removed when nothing was skipped). Multiple files from the same account — including overlapping re-exports of its history — can coexist; the pipeline resolves the overlap itself (see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage) below). Each account is keyed by `(institution, source, card_last4)`, so two institutions that happen to export the same CSV format never collapse into one account.
 
 **Chase file naming:** Chase exports follow the pattern `Chase{last4}_Activity...csv`. The pipeline extracts the 4-digit card number from the filename and stores it in the `card_last4` column. (No per-card subfolder is needed — the last-4 comes from the filename.)
 
 **Discover amount signs:** Discover CSVs record purchases as positive and credits as negative — the opposite of Chase. The pipeline negates all Discover amounts on normalisation so the sign convention is consistent (`amount < 0` = expense, `amount > 0` = income/credit).
+
+**Capital One = the Discover card.** Capital One took over the Discover card, so its exports are the same account in a new format. `normalize_capital_one_credit` gives those rows `source = "Discover Credit"` and a blank `card_last4` (the `Card No.` column is ignored) — Discover's account key — so **keep Capital One files in `RAW/Discover/`**: an export overlapping the Discover history is then merged by coverage rather than counted twice. In a separate folder it would be a different institution, i.e. a separate account. Charges come in `Debit` and payments / refunds in `Credit`, both positive; the amount is `Credit − Debit`, and `$` signs and thousands commas are tolerated. Where a Capital One export wins dates that labeled Discover rows covered, the wording differs (`ANTHROPIC* CLAUDE SUB` vs `ANTHROPIC CLAUDE SUB`), so those labels go to `orphaned_labels.csv` instead of carrying — the widest export wins, so a long Discover "all available" export keeps its dates.
 
 ---
 
@@ -85,7 +88,7 @@ Every normalised row has these columns:
 | `memo` | str | Additional memo (Chase Credit only) |
 | `check_or_slip` | str | Chase Debit only |
 | `institution` | str | Top-level `RAW/` folder the file came from (e.g. `Chase`, `Discover`); blank if the file sat directly in `RAW/` |
-| `source` | str | Account type / format: `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` |
+| `source` | str | Account type / format: `"Chase Debit"`, `"Chase Credit"`, or `"Discover Credit"` (Discover and Capital One exports of the Discover card) |
 | `card_last4` | str | Last 4 digits of card number (Chase only; blank for Discover) |
 
 ---
