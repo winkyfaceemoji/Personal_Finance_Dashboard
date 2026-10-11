@@ -68,7 +68,9 @@ A file that can't be used — unreadable, unrecognised headers, or a normalizer 
 
 **Discover amount signs:** Discover CSVs record purchases as positive and credits as negative — the opposite of Chase. The pipeline negates all Discover amounts on normalisation so the sign convention is consistent (`amount < 0` = expense, `amount > 0` = income/credit).
 
-**Capital One = the Discover card.** Capital One took over the Discover card, so its exports are the same account in a new format. `normalize_capital_one_credit` gives those rows `source = "Discover Credit"` and a blank `card_last4` (the `Card No.` column is ignored) — Discover's account key — so **keep Capital One files in `RAW/Discover/`**: an export overlapping the Discover history is then merged by coverage rather than counted twice. In a separate folder it would be a different institution, i.e. a separate account. Charges come in `Debit` and payments / refunds in `Credit`, both positive; the amount is `Credit − Debit`, and `$` signs and thousands commas are tolerated. Where a Capital One export wins dates that labeled Discover rows covered, the wording differs (`ANTHROPIC* CLAUDE SUB` vs `ANTHROPIC CLAUDE SUB`), so those labels go to `orphaned_labels.csv` instead of carrying — the widest export wins, so a long Discover "all available" export keeps its dates.
+**Capital One = the Discover card.** Capital One took over the Discover card, so its exports are the same account in a new format. `normalize_capital_one_credit` gives those rows `source = "Discover Credit"` and a blank `card_last4` (the `Card No.` column is ignored), and `load_and_normalize` sets their institution to `Discover` (`CAPITAL_ONE_ACCOUNT`) **whatever folder they're in** — `RAW/CapitalOne/` keeps them apart on disk, and they still share Discover's account key, so an export overlapping the Discover history is merged by coverage rather than counted twice. This is the one exception to folder-authoritative identity. Charges come in `Debit` and payments / refunds in `Credit`, both positive; the amount is `Credit − Debit`, and `$` signs and thousands commas are tolerated.
+
+Where the two overlap, **the Discover history keeps its dates** (`FORMAT_PRIORITY`, see [Merging overlapping exports](#merging-overlapping-exports-_merge_by_coverage)): it's labeled and will never grow again, so a Capital One "download everything" export reaching back into it can't replace those rows — Capital One words merchants differently (`ANTHROPIC* CLAUDE SUB` vs `ANTHROPIC CLAUDE SUB`), and its rows would orphan the labels. A Capital One transaction on a date the Discover history owns, with no Discover transaction of the same date and amount (a charge still pending when the last Discover export was taken), is left out and listed in `SORTED/overlap_only.csv`, which the dashboard's attention line reports.
 
 ---
 
@@ -124,7 +126,7 @@ Earlier versions of this pipeline deduplicated by comparing row values (date, de
 
 ```
 For each (institution, source, card_last4) account:
-  Sort that account's files by (date span, row count) descending
+  Sort that account's files by (format priority, date span, row count) descending
     — i.e. the file with the widest verified date range goes first;
     file modification time is deliberately NOT used, since bulk copies,
     git checkouts, and drive migrations rewrite mtimes with no relation
@@ -137,6 +139,10 @@ For each (institution, source, card_last4) account:
 ```
 
 Whichever file owns a date contributes *all* of its rows for that date — duplicates included — so genuine repeat transactions on the same day survive intact. Rows with an unparseable date are always kept, since their coverage can't be checked.
+
+**Format priority.** `FORMAT_PRIORITY` puts Discover-format files ahead of any span, so in the Discover account the Discover history owns its dates and Capital One exports fill the rest. It only matters in an account that mixes formats; every other account has one format, where span decides as before.
+
+**Overlap check.** The rule assumes the winning file is complete for its dates. Re-downloads of one format always are, but at the switch from Discover to Capital One a charge can exist only in the losing file. When a file of another format than the winner loses dates, its dropped rows with no transaction of the same date and amount in the merged result are written to `SORTED/overlap_only.csv` (file, date, description, amount; one entry per charge even if several losing files hold it). They are reported, not added back: a pending charge whose amount changed when it posted (a tip) would otherwise count twice.
 
 ---
 
@@ -183,6 +189,7 @@ The new master is written atomically (temp file + `os.replace`), so a crash mid-
 | `SORTED/orphaned_labels.csv` | Every rebuild: labels not yet placed (removed when empty) | Re-tried on the next rebuild; attention line |
 | `SORTED/not_transfers.csv` | Labeling panel: pairs you marked NOT A TRANSFER | Those pairs are never flagged again |
 | `SORTED/skipped_files.csv` | Every import: RAW files that couldn't be used, with the reason (removed when none) | Attention line |
+| `SORTED/overlap_only.csv` | Every import: Capital One transactions left out on dates the Discover history owns, with no Discover match (removed when none) | Attention line |
 | `SORTED/last_import.csv` | A rebuild that added rows: their `row_id`s (left alone when nothing is new) | The attention line's `N new from the last import need a label` and the labeling panel's `REVIEW →` filter |
 | `SORTED/backups/before-labeling-YYYY-MM-DD.csv` | The app, when the labeling panel first opens that day (outside the backup rotation, never pruned) | Manual rollback to the state before that day's labeling |
 

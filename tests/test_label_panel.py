@@ -616,6 +616,10 @@ def test_attention_line_is_silent_when_healthy(appmod):
     assert "no transactions in 41 days" in got["other"]
     assert "Chase Debit only through Oct 1" in got["other"]
     assert "2 labels match no transaction" in got["other"] and "x.csv" in got["other"]
+    left = pd.DataFrame({"file": ["CapitalOne/c.csv"] * 2, "date": ["2026-08-14"] * 2,
+                         "description": ["A", "B"], "amount": [-52.26, -10.0]})
+    got = parts(frame, [], None, 0, [], today, left_out=left)
+    assert "2 transactions ($62) left out where two exports overlap" in got["other"]
 
 
 def test_every_callback_id_is_in_the_layout(appmod):
