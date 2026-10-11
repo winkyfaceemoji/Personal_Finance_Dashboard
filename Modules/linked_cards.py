@@ -39,11 +39,13 @@ def links_path(master: Path) -> Path:
     return Path(master).parent / LINKS_NAME
 
 
-def read_links(master: Path) -> pd.DataFrame | None:
+def read_links(master: Path, quiet: bool = False) -> pd.DataFrame | None:
     """The recorded pairs (empty when none). None when the file exists but
-    can't be read: the import then neither proposes nor rewrites it, so a
-    hand-edit gone wrong never loses the user's answers. A status it doesn't
-    recognise reads as "proposed"; those rows are listed in attrs["unknown"]."""
+    can't be read: the import then stops before writing anything (a confirmed
+    replacement would otherwise split again and count twice) and never
+    rewrites the file, so a hand-edit gone wrong never loses the user's
+    answers. A status it doesn't recognise reads as "proposed"; those rows
+    are listed in attrs["unknown"]."""
     p = links_path(master)
     if not p.exists():
         return pd.DataFrame(columns=LINK_COLUMNS)
@@ -62,8 +64,15 @@ def read_links(master: Path) -> pd.DataFrame | None:
         d.attrs["unknown"] = unknown
         return d
     except Exception as e:
-        print(f"  ⚠ Could not read {p} ({e}) — replacement cards aren't checked this run")
+        if not quiet:
+            print(f"  ⚠ Could not read {p} ({e})")
         return None
+
+
+def links_unreadable(master: Path) -> bool:
+    """linked_cards.csv exists but can't be read: imports are stopped until
+    it's fixed, and the dashboard says so."""
+    return links_path(master).exists() and read_links(master, quiet=True) is None
 
 
 def write_links(master: Path, links: pd.DataFrame) -> None:
@@ -169,7 +178,7 @@ def _info(r) -> dict:
 
 def pending_links(master: Path) -> list[dict]:
     """Pairs waiting for the user's answer (status "proposed")."""
-    links = read_links(master)
+    links = read_links(master, quiet=True)
     if links is None or links.empty:
         return []
     return [_info(r) for _, r in links[links["status"] == "proposed"].iterrows()]
@@ -178,7 +187,7 @@ def pending_links(master: Path) -> list[dict]:
 def recent_answers(master: Path, today=None, days: int = ANSWER_DAYS) -> list[dict]:
     """Pairs the user answered in the last `days` days — still undoable from
     the dashboard."""
-    links = read_links(master)
+    links = read_links(master, quiet=True)
     if links is None or links.empty:
         return []
     today = pd.Timestamp(today if today is not None else pd.Timestamp.today()).normalize()
@@ -193,7 +202,7 @@ def recent_answers(master: Path, today=None, days: int = ANSWER_DAYS) -> list[di
 def answer_link(master: Path, pid: str, expect: str, status: str, today=None) -> bool:
     """Set a pair's status to `status` — only if it is still `expect`, so a
     double tap or a stale page can't answer twice. True when written."""
-    links = read_links(master)
+    links = read_links(master, quiet=True)
     if links is None:
         return False
     hit = [i for i, r in links.iterrows() if pair_id(r) == pid and r["status"] == expect]
