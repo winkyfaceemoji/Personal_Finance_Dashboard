@@ -91,14 +91,16 @@ df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and M
 # --accent-weak, …) on .dark-theme / .light-theme, which assets/app.css uses.
 # Neutral and monochrome: white / near-black surfaces, grey text, black or
 # white primary actions. Colour is reserved for meaning — red is bad (over
-# typical, warnings), green is good — and charts are drawn in ink (`bar`).
-# Every text colour passes WCAG AA (4.5:1) on bg and surface; see docs/design.md.
+# typical), green is good — and charts are drawn in ink (`bar`). `control`
+# outlines buttons and inputs: 3:1 against bg and surface, so they read as
+# controls (card borders don't need to). Every text colour passes WCAG AA
+# (4.5:1) on bg and surface; see docs/design.md.
 _CHART = {
     "dark": {
         "bg": "#111111", "surface": "#1a1a1a", "chip": "#111111", "border": "#2e2e2e",
         "text": "#ececec", "subtext": "#a3a3a3", "label": "#a3a3a3",
         "accent": "#ececec", "accent2": "#f87171", "accent3": "#4fbf7f",
-        "accent_weak": "#2a2a2a", "on_accent": "#111111", "bar": "#ececec",
+        "accent_weak": "#2a2a2a", "on_accent": "#111111", "bar": "#ececec", "control": "#737373",
         "overlay": "rgba(17,17,17,0.9)",
         "text_weak": "#c4c4c4", "stroke_weak": "rgba(255,255,255,0.06)", "fill_active": "#333333",
         "shade_strong": "rgba(0,0,0,0.5)", "shade_weak": "rgba(0,0,0,0.3)",
@@ -107,7 +109,7 @@ _CHART = {
         "bg": "#ffffff", "surface": "#ffffff", "chip": "#ffffff", "border": "#e5e5e5",
         "text": "#0d0d0d", "subtext": "#5d5d5d", "label": "#5d5d5d",
         "accent": "#0d0d0d", "accent2": "#c62828", "accent3": "#1a7f37",
-        "accent_weak": "#f2f2f2", "on_accent": "#ffffff", "bar": "#0d0d0d",
+        "accent_weak": "#f2f2f2", "on_accent": "#ffffff", "bar": "#0d0d0d", "control": "#858585",
         "overlay": "rgba(255,255,255,0.9)",
         "text_weak": "#5d5d5d", "stroke_weak": "rgba(0,0,0,0.06)", "fill_active": "#e8e8e8",
         "shade_strong": "rgba(0,0,0,0.2)", "shade_weak": "rgba(0,0,0,0.1)",
@@ -325,17 +327,25 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
 
-def _track(spent: float, ref: float, colour: str, marker_title: str) -> html.Div:
-    """Spending as a bar, with the typical level as a marker. Refunds can push
-    a period's spending below zero; the bar then stays empty."""
+def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> html.Div:
+    """Spending as a bar, with the typical level as a marker. Spending up to
+    typical is ordinary, so it's grey; only the part past typical is red, and
+    only when the headline calls it over. Refunds can push a period's
+    spending below zero; the bar then stays empty."""
     scale = max(spent, ref, 0) * 1.05 or 1
 
     def _pct(v):
         return f"{min(max(v / scale, 0), 1) * 100:.1f}%"
 
+    fills = [html.Div(className="pace-fill",
+                      style={"left": "0%", "width": _pct(min(spent, ref) if over else spent),
+                             "background": c["subtext"]})]
+    if over:
+        fills.append(html.Div(className="pace-fill pace-over",
+                              style={"left": _pct(ref), "width": _pct(spent - ref),
+                                     "background": c["accent2"]}))
     return html.Div(className="pace-track", children=[
-        html.Div(className="pace-fill", style={"width": _pct(spent), "background": colour}),
-        html.Div(className="pace-marker", title=marker_title, style={"left": _pct(ref)}),
+        *fills, html.Div(className="pace-marker", title=marker_title, style={"left": _pct(ref)}),
     ])
 
 
@@ -374,7 +384,8 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
         reasons.append(f"{_dollar0(health['unlabeled_out'])} of this {noun}'s money out "
                        f"({n} transaction{'s' if n != 1 else ''}) isn't labeled")
     if reasons:
-        return _view("Can't say yet", c["accent2"], ["; ".join(reasons)]), unlabeled
+        # Missing data isn't overspending: ink, not the "over" red
+        return _view("Can't say yet", c["text"], ["; ".join(reasons)]), unlabeled
 
     typ, full = s["typical"], s["typical_full"]
     if not typ or not full:
@@ -386,12 +397,14 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
 
     ref = typ["exp"]                   # the same point in a typical period, or a full one
     diff = spent - ref
+    over = False
     if abs(diff) <= max(1.0, IN_LINE_SHARE * ref):
         status, colour = f"In line with a typical {noun}", c["accent3"]
     else:
         where = "your typical pace" if s["partial"] else f"a typical {noun}"
         status = f"{_dollar0(abs(diff))} {'over' if diff > 0 else 'under'} {where}"
         colour = c["accent2"] if diff > 0 else c["accent3"]
+        over = diff > 0
     if s["partial"]:
         legend = [f"Spent {_dollar0(spent)}", f"│ typical by now {_dollar0(ref)}",
                   f"typical full {noun} {_dollar0(full['exp'])}"]
@@ -399,7 +412,7 @@ def headline_view(s: dict, freq: str, health: dict, c: dict) -> tuple[list, bool
     else:
         legend = [f"Spent {_dollar0(spent)}", f"│ typical {noun} {_dollar0(ref)}"]
         marker = f"Typical {noun}"
-    return _view(status, colour, legend, _track(spent, ref, colour, marker)), False
+    return _view(status, colour, legend, _track(spent, ref, c, over, marker)), False
 
 
 def recurring_view(items: list[dict]) -> tuple[list, str]:
@@ -474,7 +487,10 @@ _MENU_VISIBLE    = {"display": "flex"}
 _HIDDEN          = {"display": "none"}
 _SHOWN_INLINE    = {"display": "inline-block"}
 
-_PILL_INPUT = {"display": "none"}
+# Visually hidden, not display:none — the radios stay focusable, so the pills
+# work from the keyboard (app.css shows a focus ring)
+_PILL_INPUT = {"position": "absolute", "opacity": 0, "width": "1px", "height": "1px",
+               "margin": 0, "pointerEvents": "none"}
 
 
 def _attention_item(id_, button, button_id):
@@ -1162,6 +1178,21 @@ def _delta_line(change, suffix, higher_is_good, unit="%", tip=None):
     return html.Div(body, className="stat-delta", title=tip)
 
 
+def _net_line(change, partial: bool, freq: str, tip=None):
+    """Net against typical in words — "$198 better than a typical month" —
+    since a ▲ beside a negative net reads as good news while money is going
+    out."""
+    than = "typical by now" if partial else f"a typical {FREQ_NOUN[freq]}"
+    if change is None:
+        return html.Div([html.Span("—"), f" vs {than}"], className="stat-delta", title=tip)
+    if abs(change) < 0.5:
+        return html.Div(f"Same as {than}", className="stat-delta", title=tip)
+    better = change > 0
+    return html.Div([html.Span(f"{_dollar0(abs(change))} {'better' if better else 'worse'}",
+                               className="delta-good" if better else "delta-bad"),
+                     f" than {than}"], className="stat-delta", title=tip)
+
+
 def _stat_card(title, value, lines):
     return html.Div(className="stat-card", children=[
         html.Div(title, className="stat-title"),
@@ -1227,8 +1258,7 @@ def update_stats(store, theme, _refresh):
         # Net often sits near zero or flips sign, where a % change explodes
         # (▼9205%) — compare it in dollars instead
         _stat_card("NET" + so_far, _dollar(cur["net"]), [
-            _delta_line(cur["net"] - typ["net"] if typ else None, typ_sfx, True, unit="$",
-                        tip=typ_tip)]),
+            _net_line(cur["net"] - typ["net"] if typ else None, s["partial"], freq, typ_tip)]),
     ]
 
     un = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES) & (rows["amount"] < 0)]
@@ -1300,8 +1330,11 @@ def update_period_chart(store, metric, theme, _refresh):
     complete = [v for v, ip in zip(vals, in_progress) if not ip]
     if len(complete) >= 3:
         typical = float(pd.Series(complete).median())
+        # "median", not "typical": the headline's typical is a different measure
+        # (the previous 12 periods), and two different "typical" numbers on one
+        # screen read as an error
         fig.add_hline(y=typical, line_dash="dash", line_color=c["subtext"], line_width=1,
-                      annotation_text=f"typical {_dollar0(typical)}", annotation_position="top left",
+                      annotation_text=f"median {_dollar0(typical)}", annotation_position="top right",
                       annotation_font=dict(color=c["subtext"], size=11))
     if metric == "net":
         fig.add_hline(y=0, line_color=c["border"], line_width=1)
