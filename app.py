@@ -99,7 +99,7 @@ df = load_transactions(MASTER_PATH, rules_path=RULES_PATH) if (MASTER_PATH and M
 # typical), green is good — and charts are drawn in ink (`bar`). `control`
 # outlines buttons and inputs: 3:1 against bg and surface, so they read as
 # controls (card borders don't need to). Every text colour passes WCAG AA
-# (4.5:1) on bg and surface; see docs/design.md.
+# (4.5:1) on bg and surface; see .claude/rules/dashboard-ui.md.
 _CHART = {
     "dark": {
         "bg": "#111111", "surface": "#1a1a1a", "chip": "#111111", "border": "#2e2e2e",

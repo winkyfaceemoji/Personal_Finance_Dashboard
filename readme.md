@@ -25,9 +25,8 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 │   └── theme_sync.js        # Mirrors the theme class onto <body> for dropdown popups
 ├── tests/                   # pytest: period maths + an end-to-end run on Test Data
 ├── docs/
-│   ├── design.md            # UI design system
-│   ├── decisions.md         # Architecture decisions
-│   └── features/            # Per-feature architecture docs
+│   └── adr/                 # Architecture decision records
+├── CLAUDE.md                # Notes for Claude Code (area rules in .claude/rules/)
 ├── Dockerfile
 ├── requirements.txt
 └── requirements-dev.txt     # + pytest
@@ -122,7 +121,7 @@ By default the server only accepts connections from this computer, with debug mo
 | `FINANCE_HOST` | `127.0.0.1` | `0.0.0.0` to open the dashboard from another device on your network (anyone on that network can then use it) |
 | `FINANCE_DEBUG` | `0` | `1` for hot reload, Dash dev tools, and error tracebacks while developing |
 
-The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. See [ingest-pipeline.md](docs/features/ingest-pipeline.md) for how labels are matched. Every rebuild and import first copies your master to `SORTED/backups/` (newest 10 kept).
+The ingest step reads every CSV in the configured `RAW/` folder, normalises each file to a unified schema, merges overlapping exports of the same account by date coverage, and **rebuilds** `edited_combined_transactions.csv` from scratch — carrying forward the `master_category` / `sub_category` labels you've already assigned. Labels follow their transaction first by an exact key, then by date, description, amount and source. Any label that can't be placed is kept in `SORTED/orphaned_labels.csv` and flagged in the header (see [ADR 0002](docs/adr/0002-rebuild-master-from-raw.md)). Every rebuild and import first copies your master to `SORTED/backups/` (newest 10 kept).
 
 ### Tests
 
@@ -157,7 +156,7 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 
 ### Label transactions
 
-**LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone. A group that looks like a card payment gets a starred *suggested* `★ TRANSFER` button. The **TRANSFER PAIRS** tab finds the same amount leaving one of your accounts and arriving in another within 5 days (a card payment, a move to savings) and labels both sides Transfer in one click; pairs already labeled Expense or Income are flagged in the attention line (**CHECK →**) so a card payment isn't counted twice. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. The first time the panel opens each day, it saves `SORTED/backups/before-labeling-YYYY-MM-DD.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Details in [labeling-panel.md](docs/features/labeling-panel.md).
+**LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone. A group that looks like a card payment gets a starred *suggested* `★ TRANSFER` button. The **TRANSFER PAIRS** tab finds the same amount leaving one of your accounts and arriving in another within 5 days (a card payment, a move to savings) and labels both sides Transfer in one click; pairs already labeled Expense or Income are flagged in the attention line (**CHECK →**) so a card payment isn't counted twice. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. The first time the panel opens each day, it saves `SORTED/backups/before-labeling-YYYY-MM-DD.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Why it works this way: [ADR 0008](docs/adr/0008-in-app-labeling-safety.md) and [ADR 0017](docs/adr/0017-transfer-pairs-only-when-certain.md).
 
 ### Import / export
 
@@ -222,15 +221,6 @@ If you point the app at your own data directory, that folder is entirely outside
 
 ## Further reading
 
-Start at the [docs index](docs/README.md), or jump in:
-
-- [UI design system](docs/design.md) — theme tokens, component patterns, CSS gotchas
-- [Architecture decisions](docs/decisions.md) — the load-bearing choices and why
-- [Feature overview](docs/features/README.md)
-  - [Ingest pipeline](docs/features/ingest-pipeline.md)
-  - [Setup screen](docs/features/setup-screen.md)
-  - [Data transforms layer](docs/features/transforms.md)
-  - [Period view & charts](docs/features/overview-charts.md)
-  - [Category breakdown & drilldown](docs/features/category-breakdown.md)
-  - [Import / export & labeling](docs/features/import-export.md)
-  - [Labeling panel](docs/features/labeling-panel.md)
+- [Architecture decision records](docs/adr/): the load-bearing choices and why. They are indexed in [CLAUDE.md](CLAUDE.md#adrs).
+- [CLAUDE.md](CLAUDE.md): commands, conventions and project-wide gotchas.
+- [`.claude/rules/`](.claude/rules/): per-area pitfalls and invariants (ingest, transforms, labeling, dashboard UI).

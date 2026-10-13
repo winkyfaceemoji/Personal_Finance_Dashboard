@@ -1,0 +1,69 @@
+---
+paths:
+  - Modules/labels.py
+  - rules.csv
+  - app.py
+---
+
+# Labeling panel, rules & transfer pairs
+
+The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, rules tab) live in `app.py`. Background: ADR 0008 and 0017.
+
+## Writes
+- The panel never edits an existing label. **RELABEL AS TRANSFER** is the only exception: an explicit click, and only if the label on disk is still the one on the card (`relabel_from`).
+- All writes go through `label_rows` → `apply_label_import`, the Excel import's matcher, so the two paths can't disagree. Only rows with no valid label are touched, and a hand-labeled twin keeps its label.
+- Stale-list guard:
+  - A group click must match the group's `sig`.
+  - If the labeled-row count differs from what was shown, write nothing.
+  - Rows the user didn't see are never labeled. LABEL ALL covers only the pairs on screen (max 25).
+- Order in `_do_label`:
+  1. Master write: lock, backup, atomic.
+  2. Build the undo record.
+  3. Write the rule.
+
+  The rule comes strictly after the master. A `rules.csv` failure (open in Excel, unreadable) keeps the labels and UNDO, and only appends `· not remembered: …` to the status.
+- `rules.csv` writes (`add_rule`, `delete_rule`) are atomic and run under `MASTER_LOCK`. `add_rule` refuses a keyword under 4 characters, a duplicate, or an invalid category.
+- Excel import (`apply_label_import`):
+  - A row with a blank or unreadable date is *skipped*. It must never be applied to every date.
+  - Unmatched rows are counted and reported.
+  - Export writes UTF-8 *with BOM*, so Excel keeps non-ASCII descriptions and they still match on re-import.
+- An unreadable `not_transfers.csv` is never overwritten. The click reports the problem instead.
+
+## Dash quirks
+- Re-rendering the list adds buttons with `n_clicks` 0, which fires pattern-matching callbacks. Gate every handler with `_is_real_click`.
+- Card state survives re-render: `render_label_list` reads back the typed subcategory, the Remember tick and the open row list, then re-applies them. Dash doesn't report a `<details>` toggle, so each summary counts its clicks and the parity flips the last-rendered `open`.
+- The undo record stores `st_mtime_ns` as **strings**. Nanosecond times exceed 2^53, and the browser's JSON round-trip would round them, making every undo look stale.
+- Undo works only while neither the master nor `rules.csv` mtime has changed since the click.
+
+## Grouping (`merchant_key`)
+- The ACH code-token pattern (`rtl-`, `ppd-`, `ccd-`, `web-`) is narrow on purpose. A generic `xx-…` pattern eats names like `wal-mart`.
+- Names that start with a number or contain a hyphen must survive (`7-eleven`, `99 ranch market`).
+- After a processor prefix (`tst`, `sq`, `sp`, `paypal`), keep the next word if it has a letter. A bare number there is a phone number.
+- These descriptions become their own one-row *fallback* group, never a shared catch-all:
+  - descriptions with no recognisable name;
+  - real-time payments (`REAL TIME PAYMENT …`): the text names the network, not the payer.
+- Group buttons appear only for groups that are neither fallback nor mixed-direction. One click must label one kind of thing. Row clicks label identical twins too, and never create a rule.
+
+## Rule safety (`rule_check`)
+- Checks run in order:
+  1. Keyword is at least `MIN_KEYWORD` (4) characters.
+  2. It matches this merchant only, across **all** rows, labeled ones included.
+  3. No existing rule equals, contains or is contained by it, or matches the group.
+  4. The group is one direction of money.
+- Failing 1–3 is blocking: the checkbox is disabled and unticked. Failing 4 only adds a note.
+- A single-transaction group passes but starts unticked, because one row is thin evidence.
+- The checkbox is disabled wherever it can't act: fallback or mixed cards have no group buttons.
+- There are no built-in transfer rules. `looks_like_transfer` only stars a *suggested* button, which must never look selected.
+
+## Transfer pairs
+- A pair needs an exact opposite amount, on a different account (source + card), within `TRANSFER_PAIR_DAYS` (5). It is shown only when neither row has another candidate, labeled rows included.
+- Unlabeled sides of certain pairs, and copies waiting on a replacement-card question, are left out of every unlabeled count: the attention line, `_blocking_rows`, and the unreviewed lines. That keeps the header and headline in agreement.
+
+## Recovery files
+- `before-labeling-YYYY-MM-DD.csv` must stay outside the backup rotation's glob. It must never be pruned or picked by auto-restore. Write it once per day. If the copy fails, the panel still opens.
+- To restore a snapshot:
+  1. Stop the app.
+  2. Copy the snapshot over the master.
+  3. Restart the app, or use RELOAD DATA.
+
+  Restoring doesn't touch `rules.csv`. Delete the session's rules on the RULES tab.

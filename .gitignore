@@ -1,7 +1,8 @@
 # Other ignores
 .venv/
 **/__pycache__/
-.claude/
+.claude/*
+!.claude/rules/
 config.json
 Test Data/SORTED/
 
