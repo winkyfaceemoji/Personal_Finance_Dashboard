@@ -30,6 +30,7 @@ paths:
   - It is the **median**, not the mean, of up to 12 previous weeks or months, or of every earlier year.
   - It uses only periods `is_covered`: the data starts within `COVERAGE_GRACE_DAYS` (7) of the period start.
   - For an in-progress period it is truncated to the same number of days.
+  - A period with over `UNLABELED_BLOCK` (10%) of its money out unlabeled is left out: it would read short and pull the median down. `left_out_unlabeled` counts them and the legend says `N earlier months not fully labeled, left out`.
 - `period_totals` includes gap periods as zeros, and they count toward typical. Don't drop them.
 - Last-year comparison: none for weeks. A partly covered last-year period returns `None` and is flagged as partial, never a partial total.
 - `period_label` builds days from `.day`, because `%-d` doesn't exist on Windows.

@@ -52,6 +52,7 @@ The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`
   4. The group is one direction of money.
 - Failing 1–3 is blocking: the checkbox is disabled and unticked. Failing 4 only adds a note.
 - A single-transaction group passes but starts unticked, because one row is thin evidence.
+- Remember starts ticked only for a regular: the merchant has charged in at least `REMEMBER_MONTHS` (3) different months. A few charges close together (a trip) are thin evidence for a rule that labels every future match, so 1–2 months start unticked with a `seen in N months` note.
 - The checkbox is disabled wherever it can't act: fallback or mixed cards have no group buttons.
 - There are no built-in transfer rules. `looks_like_transfer` only stars a *suggested* button, which must never look selected.
 
