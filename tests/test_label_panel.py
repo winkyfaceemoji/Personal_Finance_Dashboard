@@ -190,11 +190,21 @@ def test_single_row_ok_group_starts_unticked(appmod):
     assert "only one transaction — tick to remember anyway" in note
 
 
-def test_two_row_ok_group_starts_ticked(appmod):
+def test_only_a_regular_merchant_starts_ticked(appmod):
+    # Two charges in one month (a trip): the user's call
     remember, note = _card_remember(appmod, [("2025-03-01", "STARBUCKS STORE 1", -5.0),
                                              ("2025-03-02", "STARBUCKS STORE 2", -6.0)])
+    assert remember.value == [] and remember.options[0]["disabled"] is False
+    assert "seen in 1 month — tick to remember anyway" in note and "only one transaction" not in note
+    remember, note = _card_remember(appmod, [("2025-03-01", "STARBUCKS STORE 1", -5.0),
+                                             ("2025-04-02", "STARBUCKS STORE 2", -6.0)])
+    assert remember.value == [] and "seen in 2 months" in note
+    # Seen in three different months: a regular, worth remembering
+    remember, note = _card_remember(appmod, [("2025-03-01", "STARBUCKS STORE 1", -5.0),
+                                             ("2025-04-02", "STARBUCKS STORE 2", -6.0),
+                                             ("2025-06-09", "STARBUCKS STORE 3", -4.0)])
     assert remember.value == ["yes"] and remember.options[0]["disabled"] is False
-    assert "only one transaction" not in note
+    assert "tick to remember" not in note
 
 
 def _render(appmod, kept_sub=None, kept_rem=None, kept_open=None, toggles=None):
@@ -636,6 +646,17 @@ def test_headline_compares_with_typical(appmod):
     one = str(view(_summary(700.0, 1000.0, 2000.0, partial=True, day=15,
                             periods=[pd.Period("2025", "Y")]), "year", _OK, c)[0])
     assert "$300 under 2025" in one and "2025 by Oct 15 $1,000" in one and "all of 2025 $2,000" in one
+
+
+def test_headline_says_when_unlabeled_periods_were_left_out_of_typical(appmod):
+    view = appmod["headline_view"]
+    c = appmod["_CHART"]["dark"]
+    text = str(view(dict(_summary(1400.0, 1000.0), left_out_unlabeled=2), "month", _OK, c)[0])
+    assert "$400 over a typical month" in text and "2 earlier months not fully labeled, left out" in text
+    # None left to compare with: say why, not "no earlier month"
+    text = str(view(dict(_summary(50.0), left_out_unlabeled=1), "month", _OK, c)[0])
+    assert "$50 spent" in text and "1 earlier month not fully labeled, left out" in text
+    assert "No full earlier" not in text
 
 
 def test_headline_refuses_on_stale_or_unlabeled_data(appmod):
