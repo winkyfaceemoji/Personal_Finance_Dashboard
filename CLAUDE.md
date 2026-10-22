@@ -87,3 +87,5 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0018](docs/adr/0018-one-page-spending-vs-typical-no-budget.md) One high-level page: spending vs typical, no budget
 - [0019](docs/adr/0019-stat-cards-vs-last-year-in-dollars.md) Stat cards compare with the same period last year, in dollars
 - [0020](docs/adr/0020-recurring-charges-follow-latest-price.md) Recurring charges are labeled by what they are; price follows the latest charge
+- [0021](docs/adr/0021-ai-chat-uses-pre-written-tools.md) The AI chat answers only through pre-written tools, from a local llama-server
+- [0022](docs/adr/0022-recommendations-cite-a-knowledge-base.md) Recommendations must cite a public knowledge base (not yet built)

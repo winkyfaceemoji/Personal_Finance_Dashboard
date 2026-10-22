@@ -219,6 +219,14 @@ If you point the app at your own data directory, that folder is entirely outside
 
 ---
 
+## Roadmap
+
+- **Local AI chat** (planned): a toggleable panel that answers questions about the selected period through pre-written tools. Spec: [docs/specs/ai-chat.md](docs/specs/ai-chat.md).
+- **Recommendations from a cited knowledge base** (after the chat): see the same spec.
+- **Model runs inside the app** (later, not now): the first version talks to a `llama-server` you start yourself. Later the app should run the model itself, with no manual server, and offer a setting to connect your own model instead.
+
+---
+
 ## Further reading
 
 - [Architecture decision records](docs/adr/): the load-bearing choices and why. They are indexed in [CLAUDE.md](CLAUDE.md#adrs).
