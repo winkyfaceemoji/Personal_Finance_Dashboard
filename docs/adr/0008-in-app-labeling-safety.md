@@ -1,6 +1,6 @@
 # 0008. Label in the app through the import matcher; remember only provably safe rules; show unreviewed money
 
-Status: Accepted
+Status: Superseded by 0025
 
 ## Context
 The Excel round-trip was slow enough that the backlog never got labeled: 562 of 1,343 demo rows ($152,346) were missing from every number. Weekly tracking makes this worse. A one-click, merchant-level panel clears most of it, since the top 25 groups cover about 88% of unlabeled dollars. But one click labels many rows, and a remembered rule labels rows nobody has seen. Every failure here is silent.

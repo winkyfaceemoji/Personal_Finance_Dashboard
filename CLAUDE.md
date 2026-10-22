@@ -76,7 +76,6 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0005](docs/adr/0005-capital-one-is-the-discover-account.md) Capital One exports are the Discover account; Discover history owns its dates
 - [0006](docs/adr/0006-confirm-replacement-cards-before-merging.md) A replacement card is asked about, then counted once
 - [0007](docs/adr/0007-label-based-totals-coverage-based-merges.md) Totals are label-based; merges are coverage-based
-- [0008](docs/adr/0008-in-app-labeling-safety.md) In-app labeling uses the import matcher, safe rules only, and shows unreviewed money
 - [0009](docs/adr/0009-net-worth-from-balance-snapshots.md) Net worth needs balance snapshots, not transactions (not yet built)
 - [0010](docs/adr/0010-no-background-callbacks.md) No Dash background callbacks
 - [0011](docs/adr/0011-category-selection-store-and-patch.md) Category selection lives in a Store and is patched, not driven by clickData
@@ -92,3 +91,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0021](docs/adr/0021-ai-chat-uses-pre-written-tools.md) The AI chat answers only through pre-written tools, from a local llama-server
 - [0022](docs/adr/0022-recommendations-cite-a-knowledge-base.md) Recommendations must cite a public knowledge base (not yet built)
 - [0024](docs/adr/0024-no-real-data-in-the-repo.md) No real financial data in the repo: rules live in the data folder, demo data is made up
+- [0025](docs/adr/0025-merchants-own-rules-and-labeling.md) Merchants own the rules; one panel labels and reviews them, with every 0008 safeguard
