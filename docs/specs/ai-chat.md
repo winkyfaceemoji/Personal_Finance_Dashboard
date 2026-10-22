@@ -51,6 +51,13 @@ Totals follow ADR 0007: label-based only, with Transfer and unlabeled rows exclu
 - **Number check:** the model is told to quote tool numbers and never do arithmetic. The app finds every dollar amount in a reply and marks any amount that doesn't appear in that turn's tool results as *unverified*.
 - A question the tools can't answer (comparisons, recurring charges, "when did I last…") gets a reply saying it can't answer that yet.
 
+### Added during the build (approved 2026-10-22)
+- **CLOSE button** in the panel. On a phone the panel covers the full screen, which hides the CHAT button.
+- **"Still loading" line** while `/health` returns 503, so a starting server isn't reported as down.
+- **History limit:** the model sees only the last 12 messages, so a long chat can't overflow the 16k context.
+- **`start_llm.ps1` options:** `-Port`, plus `FINANCE_LLM_MODEL` for the model path.
+- **No advice:** the prompt tells the model to give the facts and say recommendations aren't available yet. Recommendations are phase 3, from the cited knowledge base.
+
 ### Tests
 - **pytest (in CI):**
   - each tool against Test Data, checked against what the page shows (the category totals equal the chart);
