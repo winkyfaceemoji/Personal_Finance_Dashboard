@@ -27,7 +27,6 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
   3. Remember: snapshot the merchant files into the undo record, then save the merchant's rule (`remember` + `save_merchants`).
 
   Remember comes strictly after the master. A merchant-file failure (open in Excel, unwritable) keeps the labels and UNDO, and only appends `· not remembered: …` to the status. The snapshot goes into the record only once the save succeeded.
-- `_do_label` has a `remember` flag, so the merchants function is imported as `remember_merchant`. Calling `remember(...)` inside it calls the bool.
 - `rules.csv` writes (`add_rule`, `delete_rule`) are atomic and run under `MASTER_LOCK`. `add_rule` refuses a keyword under 4 characters, a duplicate, or an invalid category.
 - Excel import (`apply_label_import`):
   - A row with a blank or unreadable date is *skipped*. It must never be applied to every date.
@@ -40,7 +39,7 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - Card state survives re-render: `render_label_list` reads back the typed subcategory, the Remember tick and the open row list, then re-applies them. Dash doesn't report a `<details>` toggle, so each summary counts its clicks and the parity flips the last-rendered `open`.
 - The undo record stores `st_mtime_ns` as **strings**. Nanosecond times exceed 2^53, and the browser's JSON round-trip would round them, making every undo look stale.
 - Undo works only while none of the files in `_undo_files()` (the master, `rules.csv`, both merchant files) has changed since the click. Add a file there when a label action starts writing it.
-- Undo puts the merchant files back first (`restore_files`, byte for byte from the snapshot), then the master: if the merchant files are locked, nothing changed.
+- Undo refuses up front if any tracked file is open in another program (`_first_locked`), so the user can close it and retry. Then it puts the merchant files back (`restore_files`, byte for byte from the snapshot) and then the master; if the master is still refused, the merchant files go back to their labeled state, so an Undo is never half done.
 
 ## Grouping (`merchant_key`, then merchants)
 - The To label list groups by **merchant**: `unlabeled_groups(..., merchants=)` puts all of a merchant's spellings in one group. The list and the click must both build groups through `_todo_groups`, or a click can't find its group.
@@ -57,9 +56,11 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 ## Remember (`remember_check`, ADR 0025)
 - Remember saves the merchant's rule. It matches whole spellings, so the old keyword checks (length, other merchants, overlapping rules) don't apply: a short name like `AB` can be remembered.
 - Still applied: nameless rows can't be remembered; money in and out has no group buttons; a single transaction, or one seen in fewer than `REMEMBER_MONTHS` months, starts unticked.
+- **Measured over every row of the merchant, not just those shown.** A rule labels all of them, and REVIEW → shows only the last import. So the month count, and the money-in-and-out check (on the unlabeled rows), use the whole merchant: a merchant whose older refunds are unlabeled can't be remembered from a view that only shows its purchases.
+- Nameless rows sit in their own NO MERCHANT NAME section after the merchants, each labeled one at a time.
 
-## Old keyword rules (`rule_check`, until ticket 10)
-- The RULES tab still lists and deletes `rules.csv` keywords. Checks run in order:
+## `rules.csv` keywords (until ticket 10)
+- The RULES tab still lists and deletes them. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:
   1. Keyword is at least `MIN_KEYWORD` (4) characters.
   2. It matches this merchant only, across **all** rows, labeled ones included.
   3. No existing rule equals, contains or is contained by it, or matches the group.

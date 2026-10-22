@@ -231,7 +231,12 @@ def _render(appmod, kept_sub=None, kept_rem=None, kept_open=None, toggles=None):
 
 def test_render_label_list_top_n(appmod):
     children, summary = _render(appmod)
-    assert 0 < len(children) <= appmod["LABEL_TOP_N"] + 1     # + the subcategory datalist
+    cards = [c for c in children if getattr(c, "className", "") == "app-card label-group"]
+    section = next((i for i, c in enumerate(children) if getattr(c, "className", "") == "lg-section"), len(children))
+    named = [c for c in children[:section] if c in cards]
+    nameless = [c for c in children[section:] if c in cards]
+    # Up to LABEL_TOP_N merchants, then up to LABEL_TOP_N nameless rows in their own section
+    assert 0 < len(named) <= appmod["LABEL_TOP_N"] and len(nameless) <= appmod["LABEL_TOP_N"]
     assert "merchants" in summary
 
 
@@ -335,7 +340,7 @@ def test_remember_on_an_unmerged_spelling_makes_it_a_merchant(appmod, merchant_f
     merchant_files(*_merged("Shelf Finds", "quillfield books"))
     grp = _merchant_group(g_, "NORTHGATE AIRLINES")
     status, _, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
-    assert status.endswith(" · remembered: northgate airlines is Expense")
+    assert status.endswith(" · remembered: NORTHGATE AIRLINES is Expense")     # named as the card shows it
     m = read_merchants(g_["MASTER_PATH"].parent)
     assert m.alias_of["northgate airlines"] == "northgate airlines"
     assert m.table.set_index("merchant").loc["northgate airlines", "master_category"] == "Expense"
@@ -370,6 +375,44 @@ def test_a_locked_merchant_file_keeps_the_labels_and_undo(appmod, merchant_files
     assert status.startswith("Labeled") and status.endswith(
         " · not remembered: a merchant file is open in another program")
     assert undo and undo["backup"] and master.read_bytes() != before
+
+
+@pytest.mark.parametrize("locked", ["restore_backup", "restore_files"])
+def test_undo_with_a_locked_file_changes_nothing(appmod, merchant_files, monkeypatch, locked):
+    g_ = _live(appmod)
+    spellings = {"restore_backup": ("pixelplay monthly", "streamly.com"),
+                 "restore_files": ("cloudnote subscription", "paypal pixelforge")}[locked]
+    merchant_files(*_merged("Subs " + locked, *spellings))
+    folder = g_["MASTER_PATH"].parent
+    files = [g_["MASTER_PATH"], folder / "merchants.csv", folder / "merchant_aliases.csv"]
+    _, undo, _, _ = g_["_do_label"](_group_trig(_merchant_group(g_, "Subs " + locked)), "", True, 0, "all")
+    after = [f.read_bytes() for f in files]
+
+    def refuse(*a, **k):
+        raise PermissionError("open in Excel")
+    monkeypatch.setitem(g_, locked, refuse)
+    status, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status.startswith("⚠") and "close it and try again" in status
+    assert [f.read_bytes() for f in files] == after              # not half undone
+
+
+def test_rows_with_no_merchant_name_come_last_in_their_own_section(appmod):
+    g_ = _live(appmod)
+    children, _ = g_["render_label_list"]({"display": "block"}, 0, "todo", "all",
+                                          [], [], [], [], [], [], [], [])
+    def in_order(c):                                 # page order (_walk doesn't keep it)
+        if isinstance(c, str):
+            yield c
+        elif isinstance(c, (list, tuple)):
+            for x in c:
+                yield from in_order(x)
+        elif getattr(c, "children", None) is not None:
+            yield from in_order(c.children)
+    texts = list(in_order(children))
+    assert "NO MERCHANT NAME" in texts
+    heading = texts.index("NO MERCHANT NAME")
+    assert "No clear merchant" not in texts[:heading]            # nameless cards only after it
+    assert "No clear merchant" in texts[heading:]
 
 
 def test_label_click_ignores_rerender(appmod):

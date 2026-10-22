@@ -204,30 +204,37 @@ def remember(merchants: Merchants, name: str, spellings: list[str], label: str, 
     else:
         row = {"merchant": name, "master_category": label, "sub_category": category, "patterns": "", "added": today}
         table = pd.concat([table, pd.DataFrame([row])], ignore_index=True)
-    new = [{"spelling": s, "merchant": name, "status": "alias"} for s in spellings if s not in merchants.alias_of]
-    if new:
-        aliases = pd.concat([aliases, pd.DataFrame(new)], ignore_index=True)
-    return table, aliases
+    # Each spelling gets exactly one alias, to this merchant: one the reader
+    # couldn't trust (pointing nowhere, or filed twice) is replaced, not added to
+    aliases = aliases[~(aliases["spelling"].isin(spellings) & (aliases["status"] == "alias"))]
+    new = pd.DataFrame([{"spelling": s, "merchant": name, "status": "alias"} for s in spellings], columns=ALIAS_COLUMNS)
+    return table, pd.concat([aliases, new], ignore_index=True)
 
 
 def remember_check(df: pd.DataFrame, group: dict, merchants: Merchants) -> dict:
     """What remembering this To label group would do: ok, blocking and reason
-    for the Remember tick; rows_now / dollars_now it would label today
-    (every unlabeled row of the merchant, not just the ones shown); direction.
-    A rule matches the merchant's own spellings only, so nothing else can be
-    swept up (ADR 0025). Nameless rows have no merchant to remember."""
+    for the Remember tick; rows_now / dollars_now it would label today;
+    months the merchant has been seen in; direction. A rule labels *every*
+    unlabeled row of the merchant, not just the ones shown (REVIEW → shows
+    only the last import), so all of these are measured over the merchant's
+    rows. A rule matches the merchant's own spellings only, so nothing else
+    can be swept up (ADR 0025). Nameless rows have no merchant to remember."""
     direction = "mixed" if group["mixed"] else ("money in" if group["total"] > 0 else "money out")
     out = {"ok": False, "reason": None, "blocking": True, "rows_now": 0, "dollars_now": 0.0,
-           "direction": direction}
+           "months": 0, "direction": direction}
     if group.get("fallback"):
         out["reason"] = "no recognizable merchant name — label these one at a time"
         return out
-    mine = (merchant_of(df["description"], merchants) == group["mkey"]) & ~df["master_category"].isin(
-        PREDEFINED_CATEGORIES)
-    out["rows_now"] = int(mine.sum())
-    out["dollars_now"] = float(df.loc[mine, "amount"].abs().sum())
+    rows = df[merchant_of(df["description"], merchants) == group["mkey"]]
+    open_ = rows[~rows["master_category"].isin(PREDEFINED_CATEGORIES)]
+    out["rows_now"] = len(open_)
+    out["dollars_now"] = float(open_["amount"].abs().sum())
+    out["months"] = rows["date"].dt.to_period("M").nunique()
     if group["mixed"]:
         out.update(reason="money in and out — check the rows first", blocking=False)
+        return out
+    if (open_["amount"] > 0).any() and (open_["amount"] < 0).any():
+        out["reason"] = "money in and out among its unlabeled rows — label them one at a time"
         return out
     out.update(ok=True, blocking=False)
     return out

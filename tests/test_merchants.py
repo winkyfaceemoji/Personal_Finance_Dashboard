@@ -1,12 +1,16 @@
 """Merchants (ADR 0025): the two merchant files, each row's merchant, merchant
 rules on load, and the two-file save. Terms are in CONTEXT.md."""
+import json
 import os
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from Modules.merchants import merchant_list, merchant_of, read_merchants, save_merchants
+from Modules.merchants import (
+    merchant_list, merchant_of, read_merchants, remember, remember_check, restore_files, save_merchants,
+    snapshot_files,
+)
 from Modules.transforms import load_transactions
 
 
@@ -209,3 +213,73 @@ def test_an_unreadable_merchant_file_is_reported_not_fatal(tmp_path):
 def test_no_merchant_files_means_every_spelling_is_its_own_merchant(tmp_path):
     m = read_merchants(tmp_path)
     assert merchant_of(pd.Series(["AMZN Mktp US*2K4AB1"]), m).tolist() == ["amzn mktp us"]
+
+
+# ── Remember (ticket 03) ──────────────────────────────────────────────────────
+
+def test_remember_makes_a_merchant_of_an_unmerged_spelling(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    save_merchants(tmp_path, *remember(m, "trader joe s", ["trader joe s"], "Expense", "Groceries", "2026-10-22"),
+                   adding=True)
+    m2 = read_merchants(tmp_path)
+    assert m2.alias_of["trader joe s"] == "trader joe s" and m2.problems == []
+    assert m2.table.set_index("merchant").loc["trader joe s"].tolist() == [
+        "Expense", "Groceries", "", "2026-10-22"]
+
+
+def test_remember_sets_an_existing_merchants_label_and_keeps_its_category_when_none_is_given(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    save_merchants(tmp_path, *remember(m, "Amazon", ["amzn mktp us", "amazon prime"], "Transfer", "", "2026-10-22"),
+                   adding=True)
+    m2 = read_merchants(tmp_path)
+    assert m2.table.set_index("merchant").loc["Amazon", ["master_category", "sub_category"]].tolist() == [
+        "Transfer", "Shopping"]
+    assert len(m2.aliases) == 2                      # nothing added twice
+
+
+def test_remember_replaces_an_alias_it_couldnt_trust(tmp_path):
+    m = read_merchants(_files(tmp_path, AMAZON[0], "spelling,merchant,status\nsteamgames.com,Steam,alias\n"))
+    assert m.problems                                # Steam doesn't exist
+    save_merchants(tmp_path, *remember(m, "steamgames.com", ["steamgames.com"], "Expense", "", "2026-10-22"),
+                   adding=True)
+    m2 = read_merchants(tmp_path)
+    assert m2.problems == [] and m2.alias_of == {"steamgames.com": "steamgames.com"}
+
+
+def _rows(*rows):
+    return pd.DataFrame([{"date": pd.Timestamp(d), "description": desc, "amount": amt, "master_category": lab,
+                          "sub_category": "", "source": "Chase Credit", "card_last4": "1111"}
+                         for d, desc, amt, lab in rows])
+
+
+def test_remember_looks_at_every_row_of_the_merchant_not_only_the_ones_shown():
+    from Modules.labels import row_ids, unlabeled_groups
+    df = _rows(("2026-01-05", "HARBOR OUTFITTERS", 40.0, ""),        # an older refund, still unlabeled
+               ("2026-02-05", "HARBOR OUTFITTERS", -90.0, "Expense"),
+               ("2026-03-05", "HARBOR OUTFITTERS", -60.0, ""))         # the last import's row
+    m = read_merchants(None)
+    shown = unlabeled_groups(df, only_row_ids=[row_ids(df).iat[2]], merchants=m)[0]
+    assert not shown["mixed"]                        # REVIEW → shows only money out
+    chk = remember_check(df, shown, m)
+    assert chk["blocking"] and chk["reason"] == "money in and out among its unlabeled rows — label them one at a time"
+    assert chk["months"] == 3                        # a regular: seen in Jan, Feb and Mar
+
+
+def test_merchant_files_round_trip_through_undo_byte_for_byte(tmp_path):
+    folder = _files(tmp_path / "a", *AMAZON)
+    (folder / "merchants.csv").write_bytes("merchant,master_category\r\nCafé,Expense\r\n".encode("cp1252"))
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    saved = snapshot_files(folder)
+    m = read_merchants(folder)
+    save_merchants(folder, *remember(m, "Café", ["cafe x"], "Income", "", "2026-10-22"), adding=True)
+    assert read_merchants(folder).version != m.version
+    restore_files(folder, json.loads(json.dumps(saved)))    # through the browser and back
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+def test_restoring_files_that_were_missing_removes_them(tmp_path):
+    saved = snapshot_files(tmp_path)
+    assert saved == {"merchants.csv": None, "merchant_aliases.csv": None}
+    save_merchants(tmp_path, *remember(read_merchants(tmp_path), "x shop", ["x shop"], "Expense", "", "d"), adding=True)
+    restore_files(tmp_path, saved)
+    assert list(tmp_path.iterdir()) == [] and read_merchants(tmp_path).version == ""
