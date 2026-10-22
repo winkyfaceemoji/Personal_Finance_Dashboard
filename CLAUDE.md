@@ -26,7 +26,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 | Variable | Effect |
 |----------|--------|
 | `FINANCE_DATA_DIR` | Data folder. It overrides `config.json`, which overrides `Test Data/` (ADR 0001). |
-| `FINANCE_RULES_PATH` | Rules file. Defaults to `rules.csv` in the repo. |
+| `FINANCE_RULES_PATH` | Rules file. Defaults to `SORTED/rules.csv` in the data dir (ADR 0024). |
 | `FINANCE_HOST` / `FINANCE_DEBUG` / `FINANCE_PORT` | Defaults are `127.0.0.1` / `0` / `8050`. Keep local-only and debug-off as defaults (ADR 0016). |
 
 ## Data layout (under the data dir)
@@ -34,6 +34,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - `RAW/<institution>/*.csv` is the input. The top-level folder is the institution (ADR 0004). Files may sit at any depth.
 - `SORTED/edited_combined_transactions.csv` is **the master**: the unified columns plus `master_category` / `sub_category`.
 - `SORTED/combined_transactions.csv` is raw pipeline output. The app doesn't read it.
+- `SORTED/rules.csv` holds the rules. It names real merchants, so it is data, not code (ADR 0024).
 - `SORTED/backups/` holds rotating master backups (10 kept) and the daily `before-labeling-*.csv` snapshots, which are never pruned.
 - Other side files in `SORTED/` feed the header's attention line:
   - `orphaned_labels.csv`
@@ -43,7 +44,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
   - `linked_cards.csv`
   - `last_import.csv`
   - `not_transfers.csv`
-- `Test Data/RAW/` is anonymised demo data and is tracked. `Test Data/SORTED/`, `config.json` and the legacy `Data/` are git-ignored. Real data never enters the repo.
+- `Test Data/RAW/` is anonymised demo data and is tracked. `Test Data/SORTED/` (except its made-up `rules.csv`), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
 
 ## Conventions
 
@@ -87,3 +88,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0018](docs/adr/0018-one-page-spending-vs-typical-no-budget.md) One high-level page: spending vs typical, no budget
 - [0019](docs/adr/0019-stat-cards-vs-last-year-in-dollars.md) Stat cards compare with the same period last year, in dollars
 - [0020](docs/adr/0020-recurring-charges-follow-latest-price.md) Recurring charges are labeled by what they are; price follows the latest charge
+- [0024](docs/adr/0024-rules-are-private-data.md) Rules are private data: they live in the data folder, not the repo

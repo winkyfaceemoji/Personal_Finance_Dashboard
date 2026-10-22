@@ -1,13 +1,18 @@
 ---
 paths:
   - Modules/labels.py
-  - rules.csv
+  - config.py
+  - Test Data/SORTED/rules.csv
   - app.py
 ---
 
 # Labeling panel, rules & transfer pairs
 
 The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, rules tab) live in `app.py`. Background: ADR 0008 and 0017.
+
+## Where rules live
+- The real rules are `SORTED/rules.csv` in the data folder (`get_rules_path`), never the repo: they name real merchants (ADR 0024). `RULES_PATH` must follow the data folder when setup changes it.
+- `Test Data/SORTED/rules.csv` is made up and tracked. Never copy real rules into it; tests copy it to a temp folder before writing.
 
 ## Writes
 - The panel never edits an existing label. **RELABEL AS TRANSFER** is the only exception: an explicit click, and only if the label on disk is still the one on the card (`relabel_from`).

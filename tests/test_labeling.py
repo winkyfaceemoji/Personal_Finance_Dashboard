@@ -128,7 +128,7 @@ def demo(tmp_path):
 
 
 def test_labeling_a_group_raises_totals_by_exactly_its_amount(demo):
-    rules = REPO / "rules.csv"
+    rules = REPO / "Test Data" / "SORTED" / "rules.csv"
     df = load_transactions(demo, rules_path=rules)
     group = next(g for g in unlabeled_groups(df) if all(r["amount"] < 0 for r in g["rows"]))
     before = period_totals(df, "year")["exp"].sum()
@@ -153,7 +153,7 @@ def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
     from Modules.labels import add_rule, read_rules, rule_check
     from Modules.transforms import PREDEFINED_CATEGORIES as CATS
     rules = tmp_path / "rules.csv"
-    shutil.copy(REPO / "rules.csv", rules)
+    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)
     df = load_transactions(demo, rules_path=rules)
     n_rows, total = len(df), df["amount"].sum()
     unrev = lambda d: d.loc[~d["master_category"].isin(CATS), "amount"].abs().sum()

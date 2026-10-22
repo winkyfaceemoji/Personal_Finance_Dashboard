@@ -49,7 +49,7 @@ def _free_port() -> int:
 def server(tmp_path_factory):
     data = tmp_path_factory.mktemp("uidata")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
-    shutil.copy(REPO / "rules.csv", data / "rules.csv")
+    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", data / "rules.csv")
     port = _free_port()
     env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_RULES_PATH=str(data / "rules.csv"),
                FINANCE_PORT=str(port), FINANCE_DEBUG="0")

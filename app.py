@@ -10,7 +10,7 @@ import dash
 from dash import dcc, html, ctx, ALL, Input, Output, State, Patch
 import plotly.graph_objects as go
 
-from config import get_data_dir, get_master_path, save_data_dir
+from config import get_data_dir, get_master_path, get_rules_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
     unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
@@ -49,7 +49,7 @@ from Modules.transforms import (
 BASE_DIR    = Path(__file__).parent
 # FINANCE_RULES_PATH lets tests and scripted checks use a copy, so they never
 # rewrite the real rules.csv now that the app can add and delete rules
-RULES_PATH  = Path(os.environ.get("FINANCE_RULES_PATH") or BASE_DIR / "rules.csv")
+RULES_PATH  = get_rules_path(get_data_dir())
 
 # ── Settings gear icon (Feather "settings" glyph, painted via CSS mask so it
 # picks up the button's currentColor across themes) ───────────────────────────
@@ -2011,7 +2011,7 @@ def cancel_setup(n_clicks):
     prevent_initial_call=True,
 )
 def save_setup(n_clicks, path, trigger):
-    global df, MASTER_PATH
+    global df, MASTER_PATH, RULES_PATH
 
     if not path or not path.strip():
         return dash.no_update, "Please enter or browse to a folder path.", dash.no_update
@@ -2032,6 +2032,7 @@ def save_setup(n_clicks, path, trigger):
 
     save_data_dir(str(data_dir))
     MASTER_PATH = master
+    RULES_PATH = get_rules_path(data_dir)
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception as e:
