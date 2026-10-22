@@ -141,7 +141,11 @@ def load_transactions(path: Path | str, rules_path: Path | str | None = None) ->
     df["card_last4"]        = df["card_last4"].fillna("")
 
     # Auto-labeling rules run before the derived columns below so that
-    # effective_category and category_display pick up rule-assigned labels
+    # effective_category and category_display pick up rule-assigned labels.
+    # Merchant rules (beside the master) go first, so they win over the old
+    # text rules, which only fill what's left (ADR 0025)
+    from Modules.merchants import apply_merchant_rules, read_merchants   # merchants imports this module
+    apply_merchant_rules(df, read_merchants(Path(path).parent))
     apply_auto_categories(df, rules_path)
 
     # effective_category: master overrides bank, fallback to Uncategorized

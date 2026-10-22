@@ -7,6 +7,8 @@ config.json
 # Demo data's generated files; only its made-up rules file is tracked
 Test Data/SORTED/*
 !Test Data/SORTED/rules.csv
+!Test Data/SORTED/merchants.csv
+!Test Data/SORTED/merchant_aliases.csv
 
 # Real rules name real merchants: they live in the data folder (ADR 0024)
 /rules.csv

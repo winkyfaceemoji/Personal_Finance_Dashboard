@@ -19,6 +19,7 @@ from Modules.labels import (
 from Modules.linked_cards import (
     answer_link, answered_links, links_unreadable, month_span, pending_duplicates, pending_links,
 )
+from Modules.merchants import read_merchants
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
@@ -302,7 +303,8 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
                     skipped: list[tuple[str, str]], today=None,
                     left_out: pd.DataFrame | None = None,
                     exported: dict | None = None, links_broken: bool = False,
-                    uncounted_ids: set | None = None) -> dict[str, str]:
+                    uncounted_ids: set | None = None,
+                    merchant_problems: list[str] | None = None) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
@@ -314,6 +316,8 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     uncounted_ids: row ids the headline doesn't count as unreviewed (sides
     of certain transfer pairs), left out of the unlabeled count too — the
     line and the headline mustn't disagree.
+    merchant_problems: why aliases were ignored (read_merchants), shown so a
+    damaged merchant file is visible; the reader already fell back safely.
     """
     u = unlabeled_summary(frame[~row_ids(frame).isin(uncounted_ids)] if uncounted_ids else frame)
     unlabeled = (f"{u['count']:,} unlabeled ({_dollar0(u['amount'])}) not counted"
@@ -344,6 +348,9 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
         other.append(skipped_text(skipped))
     if overlap_text(left_out):
         other.append(overlap_text(left_out))
+    if merchant_problems:
+        other.append(f"SORTED/merchants.csv and merchant_aliases.csv disagree ({'; '.join(merchant_problems)})"
+                     " — those spellings count as their own merchants")
     return {"unlabeled": unlabeled, "review": review,
             "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
 
@@ -1223,6 +1230,7 @@ def update_attention(_refresh, card_ui):
         exported=read_exported_through(MASTER_PATH) if MASTER_PATH else None,
         links_broken=links_unreadable(MASTER_PATH) if MASTER_PATH else False,
         uncounted_ids=_pair_row_ids(),
+        merchant_problems=read_merchants(MASTER_PATH.parent).problems if MASTER_PATH else None,
     )
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,

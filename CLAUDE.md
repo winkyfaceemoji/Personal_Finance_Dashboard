@@ -36,6 +36,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - `SORTED/edited_combined_transactions.csv` is **the master**: the unified columns plus `master_category` / `sub_category`.
 - `SORTED/combined_transactions.csv` is raw pipeline output. The app doesn't read it.
 - `SORTED/rules.csv` holds the rules. It names real merchants, so it is data, not code (ADR 0024).
+- `SORTED/merchants.csv` and `SORTED/merchant_aliases.csv` hold merchants and which spellings belong to them. Read with `read_merchants`, written only with `save_merchants` (ADR 0025).
 - `SORTED/backups/` holds rotating master backups (10 kept) and the daily `before-labeling-*.csv` snapshots, which are never pruned.
 - Other side files in `SORTED/` feed the header's attention line:
   - `orphaned_labels.csv`
@@ -45,7 +46,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
   - `linked_cards.csv`
   - `last_import.csv`
   - `not_transfers.csv`
-- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up `rules.csv`), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
+- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up `rules.csv` and merchant files), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
 
 ## Conventions
 

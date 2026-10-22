@@ -837,6 +837,19 @@ def test_attention_count_leaves_out_what_the_headline_leaves_out(appmod):
     assert got["unlabeled"] == "1 unlabeled ($5) not counted"
 
 
+def test_attention_line_says_when_the_merchant_files_disagree(appmod):
+    parts = appmod["attention_parts"]
+    frame = pd.DataFrame({"date": pd.to_datetime(["2026-10-01"]), "description": ["SHOP"], "amount": [-5.0],
+                          "source": ["Chase Credit"], "card_last4": [""], "master_category": ["Expense"]})
+    today = pd.Timestamp("2026-10-03")
+    assert parts(frame, [], None, 0, [], today)["other"] == ""
+    got = parts(frame, [], None, 0, [], today,
+                merchant_problems=["steamgames.com points at a merchant that doesn't exist (Steam)"])
+    assert got["other"] == ("SORTED/merchants.csv and merchant_aliases.csv disagree (steamgames.com points "
+                            "at a merchant that doesn't exist (Steam)) — those spellings count as their "
+                            "own merchants")
+
+
 def test_label_them_opens_on_the_rows_holding_back_the_period(appmod):
     from Modules.labels import row_ids, unlabeled_groups
     g_ = _live(appmod)
