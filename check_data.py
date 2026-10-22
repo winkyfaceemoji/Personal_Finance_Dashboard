@@ -14,20 +14,18 @@ export file-name dates. Nothing is written except the --save file.
 import argparse
 import contextlib
 import io
-import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
 
-from config import get_data_dir, get_master_path
+from config import get_data_dir, get_master_path, get_rules_path
 from main import _merge_by_coverage, filename_date, load_and_normalize
 from Modules.linked_cards import MIN_ROWS, MIN_SHARE, is_replacement, overlap_match, read_links, recorded
 from Modules.safety import orphan_count, read_overlap_only
 from Modules.transforms import load_transactions
 
-BASE_DIR = Path(__file__).parent
 
 
 def _money(v: float) -> str:
@@ -158,7 +156,7 @@ def run(data_dir: Path, save: Path | None = None, against: Path | None = None, o
 
     raw = data_dir / "RAW"
     master = get_master_path(data_dir)
-    rules = Path(os.environ.get("FINANCE_RULES_PATH") or BASE_DIR / "rules.csv")
+    rules = get_rules_path(data_dir)
     p(f"FINANCE DATA CHECK - read-only{' (saves ' + str(save) + ')' if save else ''}")
     p(f"Data folder: {data_dir}\n")
     problems = 0

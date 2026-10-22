@@ -199,9 +199,9 @@ def test_normalizer_regression_gate(tmp_path, capsys):
     master = pd.read_csv(data / "SORTED" / "edited_combined_transactions.csv",
                          dtype=str, keep_default_na=False)
     base = master[["description", "master_category", "sub_category"]].copy()
-    rules = pd.read_csv(repo / "rules.csv", encoding="utf-8-sig").fillna("")
+    rules = pd.read_csv(repo / "Test Data" / "SORTED" / "rules.csv", encoding="utf-8-sig").fillna("")
     old = _old_apply(base.copy(), rules)
-    new = apply_auto_categories(base.copy(), repo / "rules.csv")
+    new = apply_auto_categories(base.copy(), repo / "Test Data" / "SORTED" / "rules.csv")
     changed = ((old["master_category"] != new["master_category"])
                | (old["sub_category"] != new["sub_category"]))
     with capsys.disabled():

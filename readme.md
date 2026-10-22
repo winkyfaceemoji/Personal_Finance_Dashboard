@@ -12,14 +12,13 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 ├── app.py                   # Dash dashboard (layout + all callbacks)
 ├── config.py                # Data directory resolution (env var > config.json > Test Data/)
 ├── config.json              # Your saved data folder path — git-ignored, created on first save
-├── rules.csv                # Keyword → category auto-tagging rules (the labeling panel adds to it)
 ├── Modules/
 │   ├── transforms.py        # Data helpers (load, label, period maths, aggregate)
 │   ├── safety.py            # Backups + atomic writes for the master (your labels)
 │   └── labels.py            # Merchant groups, rule safety, label writes, imported-CSV matcher
-├── Test Data/               # Anonymized demo data — works out of the box
+├── Test Data/               # Made-up demo data (make_demo_data.py) — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
-│   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored)
+│   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored), plus made-up demo rules.csv (tracked)
 ├── assets/
 │   ├── app.css              # All styles — theme tokens only, generated from _CHART in app.py
 │   └── theme_sync.js        # Mirrors the theme class onto <body> for dropdown popups
@@ -87,7 +86,7 @@ The volume mount overlays your local project directory onto `/app` inside the co
 
 ## First launch
 
-On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its anonymized demo transactions, populates and displays immediately. No setup required — just run and open the browser.
+On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its made-up demo transactions, populates and displays immediately. No setup required — just run and open the browser.
 
 To use your own bank data, open the settings menu (gear icon) and click **CHANGE DATA FOLDER** at any time. This reopens the setup overlay — prefilled with your current path — where you can browse to a new directory and click **Save & Launch**, or click **Cancel** to close it without changing anything. The chosen path is saved to `config.json` and used on every subsequent start.
 
@@ -196,7 +195,7 @@ For a handful of merchants, the labeling panel is quicker (see above). For a bul
 
 ## Auto-labeling rules
 
-`rules.csv` maps keyword substrings to labels:
+`SORTED/rules.csv`, in your data folder, maps keyword substrings to labels. It names the places you spend, so it lives with your data and never in the repo ([ADR 0024](docs/adr/0024-no-real-data-in-the-repo.md)). The demo's `Test Data/SORTED/rules.csv` is made up.
 
 ```csv
 keyword,master_category,sub_category
@@ -207,13 +206,13 @@ fidelity,Transfer,
 
 On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the category breakdown. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
 
-Edit `rules.csv` directly to add, remove, or adjust rules — no code change needed. The labeling panel also appends rules (with an extra `added` date column, which the loader ignores) when you tick **Remember for future statements**, and its RULES tab can delete those. To make the app use a different rules file (tests and scripted checks do), set `FINANCE_RULES_PATH`. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
+Edit `SORTED/rules.csv` directly to add, remove, or adjust rules — no code change needed. The labeling panel also appends rules (with an extra `added` date column, which the loader ignores) when you tick **Remember for future statements**, and its RULES tab can delete those. To make the app use a different rules file (tests and scripted checks do), set `FINANCE_RULES_PATH`. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
 
 ---
 
 ## Data files
 
-`Test Data/RAW/` contains anonymized demo CSVs and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
+`Test Data/RAW/` contains made-up demo CSVs, written by `make_demo_data.py` (seeded, so a rerun gives the same files), and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
 
 If you point the app at your own data directory, that folder is entirely outside the repository — your real transaction CSVs are never committed. `config.json` (which stores the path to your folder) is also git-ignored. As a fallback, a `Data/` folder at the project root (the old default before configurable data directories existed) is also git-ignored, in case one still exists from before this feature was added.
 

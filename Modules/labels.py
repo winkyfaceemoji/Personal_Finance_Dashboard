@@ -363,9 +363,9 @@ MIN_KEYWORD  = 4
 def read_rules(path) -> pd.DataFrame:
     """rules.csv as text columns, RULE_COLUMNS always present. Tolerates what
     Excel saves (BOM, Windows-1252) and an empty file (see read_rules_csv)."""
-    path = Path(path)
-    if not path.exists():
+    if not path or not Path(path).exists():     # no data folder yet, or no rules yet
         return pd.DataFrame(columns=RULE_COLUMNS)
+    path = Path(path)
     rules = read_rules_csv(path)
     if rules.columns.empty:                         # zero-byte / headerless file
         return pd.DataFrame(columns=RULE_COLUMNS)

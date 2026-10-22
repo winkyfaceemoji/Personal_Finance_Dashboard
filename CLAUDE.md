@@ -13,6 +13,7 @@ Always use the project venv. Never use a bare `python` or `pip`.
 | Ingest only | `.venv/Scripts/python.exe -c "import main; main.main()"` |
 | Tests | `.venv/Scripts/python.exe -m pytest` |
 | Smoke import | `.venv/Scripts/python.exe -c "import app"` |
+| Rewrite the made-up demo exports | `.venv/Scripts/python.exe make_demo_data.py` |
 | Data health check (read-only) | `.venv/Scripts/python.exe check_data.py [--save f.csv \| --compare f.csv]` |
 | What the screen says (read-only) | `.venv/Scripts/python.exe screen_check.py > before.txt` |
 | Docker dev, hot reload | `docker build -t personal-finance .`, then `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` |
@@ -26,7 +27,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 | Variable | Effect |
 |----------|--------|
 | `FINANCE_DATA_DIR` | Data folder. It overrides `config.json`, which overrides `Test Data/` (ADR 0001). |
-| `FINANCE_RULES_PATH` | Rules file. Defaults to `rules.csv` in the repo. |
+| `FINANCE_RULES_PATH` | Rules file. Defaults to `SORTED/rules.csv` in the data dir (ADR 0024). |
 | `FINANCE_HOST` / `FINANCE_DEBUG` / `FINANCE_PORT` | Defaults are `127.0.0.1` / `0` / `8050`. Keep local-only and debug-off as defaults (ADR 0016). |
 
 ## Data layout (under the data dir)
@@ -34,6 +35,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - `RAW/<institution>/*.csv` is the input. The top-level folder is the institution (ADR 0004). Files may sit at any depth.
 - `SORTED/edited_combined_transactions.csv` is **the master**: the unified columns plus `master_category` / `sub_category`.
 - `SORTED/combined_transactions.csv` is raw pipeline output. The app doesn't read it.
+- `SORTED/rules.csv` holds the rules. It names real merchants, so it is data, not code (ADR 0024).
 - `SORTED/backups/` holds rotating master backups (10 kept) and the daily `before-labeling-*.csv` snapshots, which are never pruned.
 - Other side files in `SORTED/` feed the header's attention line:
   - `orphaned_labels.csv`
@@ -43,7 +45,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
   - `linked_cards.csv`
   - `last_import.csv`
   - `not_transfers.csv`
-- `Test Data/RAW/` is anonymised demo data and is tracked. `Test Data/SORTED/`, `config.json` and the legacy `Data/` are git-ignored. Real data never enters the repo.
+- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up `rules.csv`), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
 
 ## Conventions
 
@@ -89,3 +91,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0020](docs/adr/0020-recurring-charges-follow-latest-price.md) Recurring charges are labeled by what they are; price follows the latest charge
 - [0021](docs/adr/0021-ai-chat-uses-pre-written-tools.md) The AI chat answers only through pre-written tools, from a local llama-server
 - [0022](docs/adr/0022-recommendations-cite-a-knowledge-base.md) Recommendations must cite a public knowledge base (not yet built)
+- [0024](docs/adr/0024-no-real-data-in-the-repo.md) No real financial data in the repo: rules live in the data folder, demo data is made up

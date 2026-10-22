@@ -31,5 +31,15 @@ def get_master_path(data_dir: Path | None) -> Path | None:
     return (data_dir / "SORTED" / "edited_combined_transactions.csv") if data_dir else None
 
 
+def get_rules_path(data_dir: Path | None) -> Path | None:
+    """The rules file: FINANCE_RULES_PATH, else SORTED/rules.csv in the data
+    directory. Rules name real merchants, so they live with the data, never in
+    the repo (ADR 0024)."""
+    env = os.environ.get("FINANCE_RULES_PATH")
+    if env:
+        return Path(env)
+    return (data_dir / "SORTED" / "rules.csv") if data_dir else None
+
+
 def save_data_dir(path: str) -> None:
     CONFIG_FILE.write_text(json.dumps({"data_dir": path}, indent=2))

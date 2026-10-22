@@ -18,7 +18,7 @@ def appmod(tmp_path_factory):
     data = tmp_path_factory.mktemp("data")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
     rules = data / "rules.csv"
-    shutil.copy(REPO / "rules.csv", rules)          # never write the repo's rules.csv
+    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)          # never write the demo rules
     saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH")}
     os.environ["FINANCE_DATA_DIR"] = str(data)
     os.environ["FINANCE_RULES_PATH"] = str(rules)

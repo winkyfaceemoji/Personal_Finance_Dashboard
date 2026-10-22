@@ -288,7 +288,7 @@ def cardapp(tmp_path_factory):
     data = tmp_path_factory.mktemp("cards")
     _replacement(data)
     rules = data / "rules.csv"
-    shutil.copy(REPO / "rules.csv", rules)
+    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)
     saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH")}
     os.environ["FINANCE_DATA_DIR"] = str(data)
     os.environ["FINANCE_RULES_PATH"] = str(rules)

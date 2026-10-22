@@ -4,7 +4,12 @@
 .claude/*
 !.claude/rules/
 config.json
-Test Data/SORTED/
+# Demo data's generated files; only its made-up rules file is tracked
+Test Data/SORTED/*
+!Test Data/SORTED/rules.csv
+
+# Real rules name real merchants: they live in the data folder (ADR 0024)
+/rules.csv
 
 # Legacy default data folder (pre configurable-data-directory) — may still
 # hold real bank data on machines that used the app before this feature.
