@@ -16,7 +16,7 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 │   ├── transforms.py        # Data helpers (load, label, period maths, aggregate)
 │   ├── safety.py            # Backups + atomic writes for the master (your labels)
 │   └── labels.py            # Merchant groups, rule safety, label writes, imported-CSV matcher
-├── Test Data/               # Anonymized demo data — works out of the box
+├── Test Data/               # Made-up demo data (make_demo_data.py) — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
 │   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored), plus made-up demo rules.csv (tracked)
 ├── assets/
@@ -86,7 +86,7 @@ The volume mount overlays your local project directory onto `/app` inside the co
 
 ## First launch
 
-On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its anonymized demo transactions, populates and displays immediately. No setup required — just run and open the browser.
+On first launch the app resolves a data directory (see priority below) and automatically runs the ingest pipeline against it if it hasn't been ingested yet — so the included `Test Data/` folder, with its made-up demo transactions, populates and displays immediately. No setup required — just run and open the browser.
 
 To use your own bank data, open the settings menu (gear icon) and click **CHANGE DATA FOLDER** at any time. This reopens the setup overlay — prefilled with your current path — where you can browse to a new directory and click **Save & Launch**, or click **Cancel** to close it without changing anything. The chosen path is saved to `config.json` and used on every subsequent start.
 
@@ -195,7 +195,7 @@ For a handful of merchants, the labeling panel is quicker (see above). For a bul
 
 ## Auto-labeling rules
 
-`SORTED/rules.csv`, in your data folder, maps keyword substrings to labels. It names the places you spend, so it lives with your data and never in the repo ([ADR 0024](docs/adr/0024-rules-are-private-data.md)). The demo's `Test Data/SORTED/rules.csv` is made up.
+`SORTED/rules.csv`, in your data folder, maps keyword substrings to labels. It names the places you spend, so it lives with your data and never in the repo ([ADR 0024](docs/adr/0024-no-real-data-in-the-repo.md)). The demo's `Test Data/SORTED/rules.csv` is made up.
 
 ```csv
 keyword,master_category,sub_category
@@ -212,7 +212,7 @@ Edit `SORTED/rules.csv` directly to add, remove, or adjust rules — no code cha
 
 ## Data files
 
-`Test Data/RAW/` contains anonymized demo CSVs and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
+`Test Data/RAW/` contains made-up demo CSVs, written by `make_demo_data.py` (seeded, so a rerun gives the same files), and is tracked in git. `Test Data/SORTED/` (pipeline output) is git-ignored and regenerated on each run.
 
 If you point the app at your own data directory, that folder is entirely outside the repository — your real transaction CSVs are never committed. `config.json` (which stores the path to your folder) is also git-ignored. As a fallback, a `Data/` folder at the project root (the old default before configurable data directories existed) is also git-ignored, in case one still exists from before this feature was added.
 

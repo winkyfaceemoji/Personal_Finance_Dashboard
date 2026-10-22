@@ -13,6 +13,7 @@ Always use the project venv. Never use a bare `python` or `pip`.
 | Ingest only | `.venv/Scripts/python.exe -c "import main; main.main()"` |
 | Tests | `.venv/Scripts/python.exe -m pytest` |
 | Smoke import | `.venv/Scripts/python.exe -c "import app"` |
+| Rewrite the made-up demo exports | `.venv/Scripts/python.exe make_demo_data.py` |
 | Data health check (read-only) | `.venv/Scripts/python.exe check_data.py [--save f.csv \| --compare f.csv]` |
 | What the screen says (read-only) | `.venv/Scripts/python.exe screen_check.py > before.txt` |
 | Docker dev, hot reload | `docker build -t personal-finance .`, then `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` |
@@ -44,7 +45,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
   - `linked_cards.csv`
   - `last_import.csv`
   - `not_transfers.csv`
-- `Test Data/RAW/` is anonymised demo data and is tracked. `Test Data/SORTED/` (except its made-up `rules.csv`), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
+- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up `rules.csv`), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
 
 ## Conventions
 
@@ -88,4 +89,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0018](docs/adr/0018-one-page-spending-vs-typical-no-budget.md) One high-level page: spending vs typical, no budget
 - [0019](docs/adr/0019-stat-cards-vs-last-year-in-dollars.md) Stat cards compare with the same period last year, in dollars
 - [0020](docs/adr/0020-recurring-charges-follow-latest-price.md) Recurring charges are labeled by what they are; price follows the latest charge
-- [0024](docs/adr/0024-rules-are-private-data.md) Rules are private data: they live in the data folder, not the repo
+- [0024](docs/adr/0024-no-real-data-in-the-repo.md) No real financial data in the repo: rules live in the data folder, demo data is made up
