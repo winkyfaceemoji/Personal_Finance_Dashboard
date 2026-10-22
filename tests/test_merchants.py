@@ -45,7 +45,7 @@ def _master(folder: Path, rows) -> Path:
     return path
 
 
-def test_merchant_rules_label_rows_on_load_and_a_hand_label_always_wins(tmp_path):
+def test_rules_label_a_merchants_rows_on_load_and_a_hand_label_always_wins(tmp_path):
     sorted_dir = _files(tmp_path / "SORTED",
                         "merchant,master_category,sub_category,patterns,added\n"
                         "Amazon,Expense,Shopping,,\n"
@@ -54,7 +54,7 @@ def test_merchant_rules_label_rows_on_load_and_a_hand_label_always_wins(tmp_path
     master = _master(sorted_dir, [
         ("2026-01-02", "AMZN Mktp US*2K4AB1", -20.0, "", ""),                 # rule labels it
         ("2026-01-03", "AMAZON PRIME*9XZ", 14.99, "Income", ""),             # hand label wins, no sub
-        ("2026-01-04", "TRADER JOE S #552", -30.0, "", ""),                   # no merchant rule
+        ("2026-01-04", "TRADER JOE S #552", -30.0, "", ""),                   # its merchant has no rule
         ("2026-01-05", "VENMO PAYMENT 1000000001 WEB ID: 3000000001", -8.0, "", ""),   # category only
     ])
     before = master.read_bytes()
@@ -64,7 +64,7 @@ def test_merchant_rules_label_rows_on_load_and_a_hand_label_always_wins(tmp_path
     assert master.read_bytes() == before                                   # never written
 
 
-def test_a_merchant_rule_wins_over_an_old_text_rule(tmp_path):
+def test_a_merchants_rule_wins_over_a_rules_csv_keyword(tmp_path):
     sorted_dir = _files(tmp_path / "SORTED", *AMAZON)
     master = _master(sorted_dir, [("2026-01-02", "AMZN Mktp US*2K4AB1", -20.0, "", "")])
     rules = tmp_path / "rules.csv"
@@ -101,18 +101,38 @@ def test_a_refused_second_file_rolls_back_the_first_and_changes_nothing(tmp_path
     aliases = pd.concat([m.aliases, pd.DataFrame([{"spelling": "steamgames.com", "merchant": "Steam",
                                                     "status": "alias"}])], ignore_index=True)
     _refuse(monkeypatch, "merchant_aliases.csv")                 # adding: merchants.csv goes first
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionError, match="Nothing changed: merchant_aliases.csv is open in another program"):
         save_merchants(folder, table, aliases, adding=True)
     assert {p.name: p.read_bytes() for p in folder.iterdir()} == before   # no temp files left either
 
 
-def test_adding_writes_merchants_first_and_removing_writes_aliases_first(tmp_path, monkeypatch):
+def _mid_save_state(monkeypatch, folder):
+    """What read_merchants would see if the app died between the two swaps."""
+    seen, real = [], os.replace
+
+    def replace(src, dst):
+        if seen == [] and Path(dst).parent == folder and not Path(dst).name.startswith("."):
+            seen.append("first")
+        elif seen == ["first"]:
+            m = read_merchants(folder)
+            seen.append((m.problems, dict(m.alias_of)))
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", replace)
+    return seen
+
+
+def test_a_crash_between_the_two_swaps_leaves_valid_files(tmp_path, monkeypatch):
     m = read_merchants(_files(tmp_path, *AMAZON))
-    order, real = [], os.replace
-    monkeypatch.setattr(os, "replace", lambda s, d: (order.append(Path(d).name), real(s, d)))
-    save_merchants(tmp_path, m.table, m.aliases, adding=True)
+    steam = pd.DataFrame([{**dict.fromkeys(m.table.columns, ""), "merchant": "Steam", "master_category": "Expense"}])
+    steam_alias = pd.DataFrame([{"spelling": "steamgames.com", "merchant": "Steam", "status": "alias"}])
+    seen = _mid_save_state(monkeypatch, tmp_path)                 # adding a merchant and its spelling
+    save_merchants(tmp_path, pd.concat([m.table, steam]), pd.concat([m.aliases, steam_alias]), adding=True)
+    assert seen[1][0] == []                                       # half-done, yet nothing disagrees
+    added = read_merchants(tmp_path)
+    seen = _mid_save_state(monkeypatch, tmp_path)                 # and removing them again
     save_merchants(tmp_path, m.table, m.aliases, adding=False)
-    assert order == ["merchants.csv", "merchant_aliases.csv", "merchant_aliases.csv", "merchants.csv"]
+    assert seen[1][0] == [] and seen[1][1] == {"amzn mktp us": "Amazon", "amazon prime": "Amazon"}
+    assert added.alias_of["steamgames.com"] == "Steam"
 
 
 def test_disagreeing_files_fall_back_to_the_spelling_and_say_so(tmp_path):
@@ -157,6 +177,33 @@ def test_demo_merchants_change_only_the_rows_they_mean_to(tmp_path):
         with_["sub_category"] != without["sub_category"])
     assert set(with_.loc[changed, "description"]) == {"CITYLINE TRANSIT FARE"}     # the only new rule
     assert (with_.loc[changed, ["master_category", "sub_category"]] == ["Expense", "Transit"]).all().all()
+
+
+def test_untrustworthy_rows_are_ignored_and_reported(tmp_path):
+    m = read_merchants(_files(tmp_path,
+                              "merchant,master_category,sub_category,patterns,added\n"
+                              ",,,,\n"                                         # Excel's empty row
+                              "Amazon,Expense,,,\n"
+                              "Amazon,Income,,,\n"                             # listed twice
+                              "Steam,Expense,,,\n",                            # no spellings yet
+                              "spelling,merchant,status\n"
+                              "AMZN  Mktp US,Amazon,alias\n"                   # typed by hand
+                              "trader joe s,,alias\n"))                        # blank merchant
+    rows = pd.Series(["AMZN Mktp US*2K4AB1", "TRADER JOE S #552"])
+    assert merchant_of(rows, m).tolist() == ["Amazon", "trader joe s"]
+    assert merchant_list(rows, m) == {"Amazon": ["amzn mktp us"], "Steam": [], "trader joe s": ["trader joe s"]}
+    assert m.problems == ["Amazon is listed twice in merchants.csv (the first row is used)",
+                          "trader joe s points at a merchant that doesn't exist ()"]
+
+
+def test_an_unreadable_merchant_file_is_reported_not_fatal(tmp_path):
+    sorted_dir = _files(tmp_path / "SORTED", *AMAZON)
+    (sorted_dir / "merchants.csv").write_bytes(b"merchant\n\x81\x8d\x8f\x90\x9d\n")   # neither UTF-8 nor 1252
+    m = read_merchants(sorted_dir)
+    assert m.problems == ["merchants.csv can't be read, so no merchants are used"]
+    assert merchant_of(pd.Series(["AMZN Mktp US*2K4AB1"]), m).tolist() == ["amzn mktp us"]
+    master = _master(sorted_dir, [("2026-01-02", "AMZN Mktp US*2K4AB1", -20.0, "", "")])
+    assert load_transactions(master)["master_category"].tolist() == [""]
 
 
 def test_no_merchant_files_means_every_spelling_is_its_own_merchant(tmp_path):

@@ -4,7 +4,7 @@
 .claude/*
 !.claude/rules/
 config.json
-# Demo data's generated files; only its made-up rules file is tracked
+# Demo data's generated files; only its made-up rules and merchant files are tracked
 Test Data/SORTED/*
 !Test Data/SORTED/rules.csv
 !Test Data/SORTED/merchants.csv

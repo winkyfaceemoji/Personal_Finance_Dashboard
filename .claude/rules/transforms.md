@@ -17,7 +17,7 @@ paths:
   - EXPORT CSV reads the loaded frame, so an exported-then-imported file makes rule labels permanent.
 - Precedence:
   - A hand label always wins, and the first matching rule wins.
-  - Merchant rules run first in `load_transactions`, so they beat text rules (ADR 0025; see the merchants rule).
+  - Merchants' rules run first in `load_transactions`, so they beat `rules.csv` keywords (ADR 0025; see the merchants rule).
   - A rule whose master isn't Expense/Income/Transfer is skipped. A typo would otherwise create rows that every total ignores.
 - A rule's `sub_category` fills only a blank sub, and only when the rule's master (if it has one) agrees with the row's label.
 - Sub-only rules (blank master) exist for ambiguous descriptions like `venmo`.

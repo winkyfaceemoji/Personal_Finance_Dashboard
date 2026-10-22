@@ -16,7 +16,7 @@ import pandas as pd
 
 from Modules.labels import merchant_key
 from Modules.safety import _discard, _match_mode
-from Modules.transforms import PREDEFINED_CATEGORIES, read_rules_csv
+from Modules.transforms import PREDEFINED_CATEGORIES, normalize_description, read_rules_csv
 
 MERCHANTS_NAME = "merchants.csv"
 ALIASES_NAME = "merchant_aliases.csv"
@@ -32,8 +32,13 @@ class Merchants:
     problems: list[str] = field(default_factory=list)        # why an alias was ignored
 
 
-def _read(path: Path, columns: list[str]) -> pd.DataFrame:
-    frame = read_rules_csv(path) if path.exists() else pd.DataFrame()
+def _read_file(path: Path, columns: list[str]) -> pd.DataFrame | None:
+    """One merchant file as stripped text columns; empty when missing, None
+    when it can't be read (the caller reports it, the app still loads)."""
+    try:
+        frame = read_rules_csv(path) if path.exists() else pd.DataFrame()
+    except (OSError, ValueError, pd.errors.ParserError):
+        return None
     for c in columns:
         if c not in frame.columns:
             frame[c] = ""
@@ -41,14 +46,26 @@ def _read(path: Path, columns: list[str]) -> pd.DataFrame:
 
 
 def read_merchants(folder) -> Merchants:
-    """Both merchant files from `folder` (missing files mean no merchants yet)."""
+    """Both merchant files from `folder` (missing files mean no merchants yet).
+    The forgiving reader: whatever can't be trusted is ignored and listed in
+    `problems`, never guessed at, so a spelling falls back to its own merchant."""
     folder = Path(folder)
-    table = _read(folder / MERCHANTS_NAME, MERCHANT_COLUMNS)
-    aliases = _read(folder / ALIASES_NAME, ALIAS_COLUMNS)
-    # The forgiving reader: an alias that can't be trusted is ignored (its
-    # spelling stays its own merchant) and reported, never guessed at
+    problems = []
+    table = _read_file(folder / MERCHANTS_NAME, MERCHANT_COLUMNS)
+    aliases = _read_file(folder / ALIASES_NAME, ALIAS_COLUMNS)
+    if table is None:
+        problems.append(f"{MERCHANTS_NAME} can't be read, so no merchants are used")
+        return Merchants(pd.DataFrame(columns=MERCHANT_COLUMNS), pd.DataFrame(columns=ALIAS_COLUMNS), {}, problems)
+    if aliases is None:
+        problems.append(f"{ALIASES_NAME} can't be read, so no spellings are merged")
+        aliases = pd.DataFrame(columns=ALIAS_COLUMNS)
+    table = table[table["merchant"] != ""]                       # Excel leaves empty rows
+    for name in table.loc[table["merchant"].duplicated(), "merchant"].unique():
+        problems.append(f"{name} is listed twice in {MERCHANTS_NAME} (the first row is used)")
+    table = table.drop_duplicates("merchant").reset_index(drop=True)
+    aliases["spelling"] = aliases["spelling"].map(normalize_description)   # a hand-typed spelling still matches
     live = aliases[(aliases["status"] == "alias") & (aliases["spelling"] != "")]
-    names, problems, alias_of = set(table["merchant"]), [], {}
+    names, alias_of = set(table["merchant"]), {}
     for spelling, group in live.groupby("spelling", sort=False):
         targets = group["merchant"].unique()
         if len(targets) > 1:
@@ -67,9 +84,9 @@ def merchant_of(descriptions: pd.Series, merchants: Merchants) -> pd.Series:
     return spelling.map(lambda s: merchants.alias_of.get(s, s) if s else "")
 
 
-def apply_merchant_rules(df: pd.DataFrame, merchants: Merchants) -> pd.DataFrame:
-    """A merchant's rule (its label and category) on every row of that
-    merchant, in memory, never written. Same semantics as the old text rules:
+def apply_rules(df: pd.DataFrame, merchants: Merchants) -> pd.DataFrame:
+    """Each merchant's rule (its label and category) on every row of that
+    merchant, in memory, never written. Same semantics as rules.csv keywords:
     the label goes only on rows with none (a hand label wins), and the
     category only fills a blank one, and only where the row's label agrees
     with the rule's (a category-only merchant fills any of its rows)."""
@@ -115,12 +132,18 @@ def save_merchants(folder, table: pd.DataFrame, aliases: pd.DataFrame, adding: b
         os.replace(temps[0], first)
         try:
             os.replace(temps[1], second)
-        except BaseException:
-            if old_first is None:
-                first.unlink(missing_ok=True)
-            else:                       # put it back atomically, as it was written
-                Path(temps[0]).write_bytes(old_first)
-                os.replace(temps[0], first)
+        except BaseException as err:
+            try:
+                if old_first is None:
+                    first.unlink(missing_ok=True)
+                else:                   # put it back atomically, as it was written
+                    Path(temps[0]).write_bytes(old_first)
+                    os.replace(temps[0], first)
+            except OSError as undo_err:
+                raise OSError(f"{first.name} was saved but {second.name} wasn't, so the merchant files "
+                              f"may disagree ({undo_err})") from err
+            if isinstance(err, PermissionError):
+                raise PermissionError(f"Nothing changed: {second.name} is open in another program") from err
             raise
     finally:
         for tmp in temps:
@@ -131,7 +154,7 @@ def merchant_list(descriptions: pd.Series, merchants: Merchants) -> dict[str, li
     """Every merchant, from the rows and the alias file, with the spellings it
     covers (sorted). Rows with no spelling belong to no merchant."""
     spellings = set(descriptions.map(merchant_key)) | set(merchants.alias_of)
-    out: dict[str, list[str]] = {}
+    out: dict[str, list[str]] = {name: [] for name in merchants.table["merchant"]}   # none seen yet
     for s in sorted(spellings - {""}):
         out.setdefault(merchants.alias_of.get(s, s), []).append(s)
     return out
