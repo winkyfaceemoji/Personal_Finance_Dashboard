@@ -14,6 +14,8 @@ Always use the project venv. Never use a bare `python` or `pip`.
 | Tests | `.venv/Scripts/python.exe -m pytest` |
 | Smoke import | `.venv/Scripts/python.exe -c "import app"` |
 | Rewrite the made-up demo exports | `.venv/Scripts/python.exe make_demo_data.py` |
+| Start the chat model (own terminal) | `powershell -ExecutionPolicy Bypass -File start_llm.ps1` |
+| Chat question set, real model (by hand, not CI) | `.venv/Scripts/python.exe ai_eval.py` |
 | Data health check (read-only) | `.venv/Scripts/python.exe check_data.py [--save f.csv \| --compare f.csv]` |
 | What the screen says (read-only) | `.venv/Scripts/python.exe screen_check.py > before.txt` |
 | Docker dev, hot reload | `docker build -t personal-finance .`, then `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` |
@@ -28,6 +30,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 |----------|--------|
 | `FINANCE_DATA_DIR` | Data folder. It overrides `config.json`, which overrides `Test Data/` (ADR 0001). |
 | `FINANCE_RULES_PATH` | Rules file. Defaults to `SORTED/rules.csv` in the data dir (ADR 0024). |
+| `FINANCE_LLM_URL` / `FINANCE_LLM_MODEL` | The chat's llama-server, default `http://127.0.0.1:8080`, and the model `start_llm.ps1` loads (ADR 0021). |
 | `FINANCE_HOST` / `FINANCE_DEBUG` / `FINANCE_PORT` | Defaults are `127.0.0.1` / `0` / `8050`. Keep local-only and debug-off as defaults (ADR 0016). |
 
 ## Data layout (under the data dir)

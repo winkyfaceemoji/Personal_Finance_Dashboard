@@ -47,3 +47,17 @@ _Avoid_: text rule, keyword
 **Alias suggestion**:
 The app's guess that a spelling belongs to an existing merchant, from a merchant pattern or from similar-looking names, shown for you to confirm or reject; it is never applied on its own.
 _Avoid_: auto-merge, match
+
+### AI chat
+
+**Tool**:
+A pre-written lookup the chat's model may call (by category, by merchant); the only source of numbers in an answer.
+_Avoid_: function, query, plugin
+
+**Turn**:
+One question to one answer: the model's calls, the tools' results, and the reply.
+_Avoid_: request, exchange
+
+**Unverified amount**:
+A dollar amount in a reply that no tool returned in that turn; shown with a warning, never trusted.
+_Avoid_: hallucination (in the UI)

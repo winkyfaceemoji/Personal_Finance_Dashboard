@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 import re
+import threading
 
 import pandas as pd
 from pathlib import Path
@@ -19,6 +20,8 @@ from Modules.labels import (
 from Modules.linked_cards import (
     answer_link, answered_links, links_unreadable, month_span, pending_duplicates, pending_links,
 )
+from Modules.chat import health, llm_url, run_turn
+from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import read_merchants
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -30,7 +33,7 @@ from Modules.transforms import (
     unlabeled_share,
     load_transactions,
     normalize_description,
-    expenses_by_category,
+    category_split,
     filter_period,
     is_covered,
     period_label,
@@ -175,10 +178,6 @@ def empty_figure(message: str, theme: str, height: int) -> go.Figure:
                        xref="paper", yref="paper", font=dict(color=c["subtext"], size=13))
     return fig
 
-
-# Categories beyond this rank collapse into one muted "Other" bar; the
-# drilldown reuses it to reconstruct what that bar aggregates.
-CAT_TOP_N = 9
 
 # How many bars the spending-over-time chart shows per granularity (None = all).
 CHART_PERIODS = {"week": 26, "month": 24, "year": None}
@@ -640,6 +639,32 @@ app.layout = html.Div(
         dcc.Store(id="label-undo"),
         dcc.Store(id="label-version", data=0),
 
+        # AI chat: the conversation (memory storage, so a reload clears it),
+        # this tab's id for the status poll, and the poll itself (on only
+        # while a turn runs)
+        dcc.Store(id="chat-history", data=[]),
+        dcc.Store(id="chat-id"),
+        dcc.Interval(id="chat-poll", interval=400, disabled=True),
+
+        # ── AI chat panel (right side; the page moves left while it's open) ──
+        html.Aside(id="chat-panel", className="chat-panel", children=[
+            html.Div(className="chat-head", children=[
+                html.Div("CHAT", className="app-label"),
+                html.Button("CLOSE", id="chat-close", n_clicks=0, className="btn-secondary btn-small"),
+            ]),
+            html.P("Answers cover the period picked on the page, from labeled transactions only.",
+                   className="hint"),
+            html.Div(id="chat-health", className="chat-health"),
+            html.Div(id="chat-log", className="chat-log"),
+            html.Div(id="chat-pending", className="chat-msg chat-user"),
+            html.Div(id="chat-status", className="hint chat-status"),
+            html.Div(className="chat-input-row", children=[
+                dcc.Input(id="chat-input", type="text", placeholder="Ask about this period's money",
+                          debounce=False, n_submit=0, className="chat-input", autoComplete="off"),
+                html.Button("SEND", id="chat-send", n_clicks=0, className="btn-primary btn-small"),
+            ]),
+        ]),
+
         # ── Setup overlay (shown when no data directory is configured) ──────
         html.Div(
             id="setup-overlay",
@@ -717,6 +742,9 @@ app.layout = html.Div(
                 _attention_item("att-transfers", "CHECK →", "open-transfer-check"),
                 html.Span(id="att-other", className="attention-item"),
             ]),
+
+            html.Button("CHAT", id="chat-toggle", n_clicks=0, className="btn-secondary btn-small",
+                        title="Ask about this period in plain English"),
 
             html.Div(id="settings-menu-wrapper", children=[
                 html.Button(html.Span(className="gear-icon"), id="settings-menu-btn",
@@ -1640,17 +1668,10 @@ def update_period_chart(store, metric, theme, _refresh):
 
 def _category_split(pdf: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Top-N categories by spend in a slice of rows, plus the names that roll
-    up into "Other". Shared by the chart and the drilldown so both agree."""
-    cat = expenses_by_category(pdf)
-    cat = cat[cat["total_expenses"] > 0]   # refund-only categories have no bar
-    top = cat.head(CAT_TOP_N).copy()
-    rest = cat.iloc[CAT_TOP_N:]
-    if not rest.empty:
-        top = pd.concat([top, pd.DataFrame([{
-            "category": f"Other · {len(rest)} categories",
-            "total_expenses": rest["total_expenses"].sum(),
-        }])], ignore_index=True)
-    return top, rest["category"].tolist()
+    up into "Other". Shared by the chart, the drilldown and the AI chat so
+    all three agree."""
+    top, rest = category_split(pdf, "out")
+    return top.rename(columns={"total": "total_expenses"}), rest
 
 
 def _category_opacity(names: list[str], selected) -> list[float]:
@@ -1846,6 +1867,185 @@ def update_recurring(_refresh):
     pairs, suspects = _pair_lists()
     transfer_ids = {s["row_id"] for p in pairs + suspects for s in (p["out"], p["in"])}
     return recurring_view(recurring_charges(df, exclude_row_ids=transfer_ids), as_of=_as_of())
+
+
+# ── AI chat (ADR 0021, spec docs/specs/ai-chat.md) ────────────────────────────
+# The model only picks tools; every number comes from Modules/chat_tools.py.
+# One ordinary callback runs a whole turn (no background callbacks, ADR 0010)
+# and records its status here; chat_poll reads it while the turn runs.
+
+_CHAT_PROGRESS: dict[str, str] = {}
+_CHAT_PROGRESS_LOCK = threading.Lock()
+_CHAT_HISTORY_SENT = 12            # earlier messages the model sees, newest last
+
+_CHAT_DOWN = "The chat model isn't running. Start it with start_llm.ps1, then reopen this panel."
+_CHAT_LOADING = "The chat model is still loading. Try again in a moment."
+
+
+def _set_progress(chat_id: str, text: str | None) -> None:
+    with _CHAT_PROGRESS_LOCK:
+        if text is None:
+            _CHAT_PROGRESS.pop(chat_id, None)
+        else:
+            _CHAT_PROGRESS[chat_id] = text
+
+
+def _chat_period(freq: str, p: pd.Period) -> str:
+    """'Oct 2026 (Oct 1 – Oct 21, 2026)': the period and the dates its numbers
+    cover, which stop at the newest transaction for a period still running."""
+    s, e = p.start_time, min(p.end_time.normalize(), _as_of())
+    span = (f"{s:%b} {s.day} – {e:%b} {e.day}, {e.year}" if s.year == e.year
+            else f"{s:%b} {s.day}, {s.year} – {e:%b} {e.day}, {e.year}")
+    return f"{period_label(p, freq)} ({span})"
+
+
+def _unreviewed_note(out: float, inn: float) -> str:
+    """The stat cards' unreviewed money, under every answer: a fact the code
+    states rather than trusting the model to mention it."""
+    parts = [f"{_dollar0(v)} money {way}" for v, way in ((out, "out"), (inn, "in")) if v >= 0.5]
+    return f"+ {' and '.join(parts)} unreviewed, not counted" if parts else ""
+
+
+def _chat_system(period: str) -> str:
+    return (
+        f"You answer questions about the user's own transactions for one period: {period}. "
+        "Use the tools for every number. Quote dollar amounts exactly as the tools give them; "
+        "never add, subtract, average or estimate amounts yourself. Totals count labeled "
+        "transactions only, so mention the unreviewed amount when it isn't $0.00. "
+        "If the tools can't answer something (other periods, comparisons, recurring charges, "
+        "single transactions), say you can't answer that yet. If asked what you should do or "
+        "whether to spend less, give the facts and say recommendations aren't available yet; "
+        "don't advise. Keep answers short."
+    )
+
+
+@app.callback(
+    Output("chat-panel",  "className"),
+    Output("chat-health", "children"),
+    Output("chat-id",     "data"),
+    Input("chat-toggle",  "n_clicks"),
+    Input("chat-close",   "n_clicks"),
+    State("chat-panel",   "className"),
+    prevent_initial_call=True,
+)
+def toggle_chat(_open, _close, cls):
+    # Both buttons toggle (CLOSE only shows while open). Opening checks the
+    # model server, so a stopped server is said up front, not after a question
+    if "open" in (cls or ""):
+        return "chat-panel", dash.no_update, dash.no_update
+    state = health(llm_url())
+    note = "" if state == "ok" else _CHAT_LOADING if state == "loading" else _CHAT_DOWN
+    return "chat-panel open", note, os.urandom(8).hex()
+
+
+@app.callback(
+    Output("chat-history",      "data"),
+    Output("chat-input",        "value"),
+    Output("selected-category", "data", allow_duplicate=True),
+    Output("chat-pending",      "children", allow_duplicate=True),
+    Output("chat-status",       "children", allow_duplicate=True),
+    Input("chat-send",          "n_clicks"),
+    Input("chat-input",         "n_submit"),
+    State("chat-input",         "value"),
+    State("chat-history",       "data"),
+    State("period-store",       "data"),
+    State("chat-id",            "data"),
+    prevent_initial_call=True,
+    running=[(Output("chat-poll", "disabled"), False, True),
+             (Output("chat-send", "disabled"), True, False)],
+)
+def chat_send(_n, _submit, text, history, store, chat_id):
+    question = (text or "").strip()
+    if not question:
+        raise dash.exceptions.PreventUpdate
+    turn, period, rows, unreviewed = _chat_turn(question, history, store, chat_id or "chat")
+    history = list(history or [])
+    history.append({"role": "user", "text": question})
+    if turn["error"]:
+        history.append({"role": "assistant", "error": turn["error"]})
+        return history, "", dash.no_update, "", ""
+    history.append({"role": "assistant", "text": turn["reply"], "period": period,
+                    "unreviewed": _unreviewed_note(*unreviewed),
+                    "unverified": unverified_amounts(turn["reply"], turn["results"])})
+
+    # One category of spending asked about → select its bar, like a click
+    # (ADR 0011). Only a bar on the chart: a folded category has none.
+    asked = {a.get("category") for n, a in turn["calls"] if a.get("direction") == "out"} - {None}
+    bars = set(_category_split(rows)[0]["category"])
+    selected = asked.pop() if len(asked) == 1 and asked <= bars else dash.no_update
+    return history, "", selected, "", ""
+
+
+def _chat_turn(question: str, history: list | None, store, chat_id: str
+               ) -> tuple[dict, str, pd.DataFrame, tuple[float, float]]:
+    """One question to an answer for the selected period: (the turn from
+    run_turn, the period wording, the period's rows, its unreviewed money out
+    and in, counted as the stat cards count it). ai_eval.py calls this
+    too, so the question set tests exactly what the panel runs."""
+    freq, p = _selected_period(store)
+    period = _chat_period(freq, p)
+    rows = filter_period(df, p)
+    unreviewed = unreviewed_amounts(_counted_rows(rows, _pending()))
+    merchants = read_merchants(MASTER_PATH.parent if MASTER_PATH else BASE_DIR / "no data folder")
+    categories = all_categories(df)
+    wording = {"period": period_label(p, freq), "dates": period}
+
+    def _tool(name, args):
+        return call_tool(name, args, rows=rows, period=wording, unreviewed=unreviewed,
+                         merchants=merchants, categories=categories)
+
+    earlier = [{"role": m["role"], "content": m["text"]} for m in history or [] if m.get("text")]
+    messages = ([{"role": "system", "content": _chat_system(period)}]
+                + earlier[-_CHAT_HISTORY_SENT:] + [{"role": "user", "content": question}])
+    _set_progress(chat_id, "Thinking…")
+    try:
+        turn = run_turn(llm_url(), messages, tool_schemas(categories), _tool,
+                        progress=lambda s: _set_progress(chat_id, s))
+    finally:
+        _set_progress(chat_id, None)
+    return turn, period, rows, unreviewed
+
+
+# The question shows as soon as it's sent; chat_send clears it with the answer
+app.clientside_callback(
+    "function(_n, _s, text) { return (text || '').trim(); }",
+    Output("chat-pending", "children"),
+    Input("chat-send",     "n_clicks"),
+    Input("chat-input",    "n_submit"),
+    State("chat-input",    "value"),
+    prevent_initial_call=True,
+)
+
+
+@app.callback(
+    Output("chat-status", "children"),
+    Input("chat-poll",    "n_intervals"),
+    State("chat-id",      "data"),
+)
+def chat_poll(_n, chat_id):
+    with _CHAT_PROGRESS_LOCK:
+        return _CHAT_PROGRESS.get(chat_id or "chat", "")
+
+
+@app.callback(
+    Output("chat-log",     "children"),
+    Input("chat-history",  "data"),
+)
+def render_chat(history):
+    out = []
+    for m in history or []:
+        if m["role"] == "user":
+            out.append(html.Div(m["text"], className="chat-msg chat-user"))
+        elif m.get("error"):
+            out.append(html.Div(m["error"], className="chat-msg chat-answer warn-text"))
+        else:
+            parts = [dcc.Markdown(m["text"], className="chat-text"),
+                     html.Div(" · ".join(filter(None, [m["period"], m.get("unreviewed")])), className="hint")]
+            if m.get("unverified"):
+                parts.append(html.Div("⚠ Not from a tool, so check before trusting: "
+                                      + ", ".join(m["unverified"]), className="chat-unverified"))
+            out.append(html.Div(parts, className="chat-msg chat-answer"))
+    return out
 
 
 # ── Import / export / reload ──────────────────────────────────────────────────

@@ -157,6 +157,18 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 
 **LABEL THEM →** (or **REVIEW →**, for just the last import's rows) opens a full-screen labeling panel. Unlabeled transactions are grouped by merchant, biggest dollars first (the top 25 are shown). Each group has **EXPENSE / INCOME / TRANSFER** buttons that label every row in it at once, an optional subcategory, and a **Remember for future statements** checkbox that adds a `rules.csv` rule, ticked by default only when the rule provably matches that merchant alone and the merchant has charged in at least 3 different months. A group that looks like a card payment gets a starred *suggested* `★ TRANSFER` button. The **TRANSFER PAIRS** tab finds the same amount leaving one of your accounts and arriving in another within 5 days (a card payment, a move to savings) and labels both sides Transfer in one click; pairs already labeled Expense or Income are flagged in the attention line (**CHECK →**) so a card payment isn't counted twice. Groups with money both in and out (a **MIXED** badge) or no recognizable name are labeled row by row. A collapsible guide explains how to choose a label; **UNDO** reverts the last click; the **RULES** tab lists and deletes the rules the panel added; **DONE** refreshes the dashboard. The first time the panel opens each day, it saves `SORTED/backups/before-labeling-YYYY-MM-DD.csv` so you can get back to where you started. The stat cards show what is still unlabeled as `+ $X unreviewed`. Why it works this way: [ADR 0008](docs/adr/0008-in-app-labeling-safety.md) and [ADR 0017](docs/adr/0017-transfer-pairs-only-when-certain.md).
 
+### Ask the chat
+
+**CHAT** (top right) opens a panel beside the page. You can ask about the period you've picked, for example "where did the grocery money go?", "who were my top merchants?" or "how much did I get through Zelle?". A local model answers. It only chooses between two pre-written lookups (by category, by merchant), and every number in its answer comes from them. Under each answer you'll see the dates it covers and any unreviewed money left out. An amount that didn't come from a lookup is marked **⚠ Not from a tool**. When an answer is about one spending category, the page selects that bar and opens its drilldown. Nothing is saved, and reloading the page clears the chat. The chat can't change your data. Why it works this way: [ADR 0021](docs/adr/0021-ai-chat-uses-pre-written-tools.md).
+
+The chat needs `llama-server` running on this computer:
+
+1. Install llama.cpp once: `winget install ggml.llamacpp`.
+2. Get a GGUF chat model. It's built and tested with Qwen3.5-9B (`Qwen3.5-9B-Q8_0.gguf`, about 9 GB, fits a 16 GB GPU).
+3. In its own terminal, run `powershell -ExecutionPolicy Bypass -File start_llm.ps1`. Pass `-Model <path>` or set `FINANCE_LLM_MODEL` if the model isn't at `Documents\GGUF Models\Qwen3.5-9B-Q8_0.gguf`.
+
+Without the server, the panel says so in one line, and everything else on the page works as before. To use a server at another address, set `FINANCE_LLM_URL`; the default is `http://127.0.0.1:8080`. To check the model's tool choices after changing the model or the prompt, run `.venv\Scripts\python ai_eval.py`. It asks 20 questions about the demo data and reports how many passed.
+
 ### Import / export
 
 Label in the app first: the labeling panel above clears most of a backlog in a few clicks. Use Excel for bulk edits and for changing labels that are already set. Open the settings menu (gear icon) and use **EXPORT CSV** to download all transactions, then **IMPORT CSV** to write `master_category` and `sub_category` assignments back. To inspect individual transactions in the app, click a category bar to open its drilldown.
@@ -220,7 +232,7 @@ If you point the app at your own data directory, that folder is entirely outside
 
 ## Roadmap
 
-- **Local AI chat** (planned): a toggleable panel that answers questions about the selected period through pre-written tools. Spec: [docs/specs/ai-chat.md](docs/specs/ai-chat.md).
+- **Local AI chat** (built, see *Ask the chat*): spec in [docs/specs/ai-chat.md](docs/specs/ai-chat.md).
 - **Recommendations from a cited knowledge base** (after the chat): see the same spec.
 - **Model runs inside the app** (later, not now): the first version talks to a `llama-server` you start yourself. Later the app should run the model itself, with no manual server, and offer a setting to connect your own model instead.
 

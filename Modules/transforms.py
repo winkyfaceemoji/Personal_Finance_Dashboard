@@ -216,30 +216,29 @@ def yearly_income(df: pd.DataFrame) -> pd.DataFrame:
     return grouped  # already sorted by groupby(sort=True)
 
 
-def expenses_by_category(df: pd.DataFrame, month_str: str = None) -> pd.DataFrame:
-    """
-    Total expenses grouped by category_display (the same category shown in the
-    Transactions tab: sub_category if set, else the bank's original category).
-    Optionally filter to a specific month (e.g. '2024-01').
-    Returns: category, total_expenses (positive values).
-    """
-    expenses = get_expenses(df)
-    if month_str:
-        expenses = expenses[expenses["month_str"] == month_str]
-    expenses = expenses.copy()
-    expenses["category_display"] = expenses["category_display"].where(
-        expenses["category_display"] != "", "Uncategorized"
-    )
+# Bars on the category chart before the rest fold into "Other"; the chat's
+# category lines use the same number, so they match the bars
+CATEGORY_TOP_N = 9
 
-    grouped = (
-        expenses
-        .groupby("category_display")["amount"]
-        .sum()
-        .reset_index()
-        .rename(columns={"category_display": "category", "amount": "total_expenses"})
-    )
-    grouped["total_expenses"] = -grouped["total_expenses"]
-    return grouped.sort_values("total_expenses", ascending=False)
+
+def category_split(rows: pd.DataFrame, direction: str = "out", top_n: int = CATEGORY_TOP_N) -> tuple[pd.DataFrame, list[str]]:
+    """Top-N categories of money out (Expense) or in (Income), largest first,
+    plus an "Other · N categories" line and the names folded into it.
+    Totals are positive and label-based; refunds net against spending, and a
+    category that nets to zero or below has no line. The chart, its drilldown
+    and the AI chat all use this, so their numbers agree."""
+    label, sign = ("Expense", -1) if direction == "out" else ("Income", 1)
+    picked = rows[rows["master_category"] == label]
+    cat = (picked["category_display"].where(picked["category_display"] != "", "Uncategorized")
+           .rename("category").to_frame().assign(total=picked["amount"] * sign)
+           .groupby("category", as_index=False)["total"].sum()
+           .sort_values(["total", "category"], ascending=[False, True]))
+    cat = cat[cat["total"] > 0]
+    top, rest = cat.head(top_n), cat.iloc[top_n:]
+    if not rest.empty:
+        top = pd.concat([top, pd.DataFrame([{"category": f"Other · {len(rest)} categories",
+                                             "total": rest["total"].sum()}])])
+    return top.reset_index(drop=True), rest["category"].tolist()
 
 
 # ── Periods (week / month / year) ─────────────────────────────────────────────

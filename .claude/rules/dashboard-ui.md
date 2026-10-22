@@ -30,7 +30,7 @@ paths:
 `tests/test_ui_states.py` (Playwright + Chromium; it skips without a browser) clicks, hovers, taps and tabs every control in both themes. It checks contrast, focus rings and the dropdown's current-choice mark. A style change isn't done until it passes. A resting screenshot proves nothing about hover or focus.
 
 ## Layering (z-index)
-`#setup-overlay` 100 > `#label-panel` 90 > `#settings-menu-wrapper` 50 > `#settings-backdrop` 40 > `.period-bar` (sticky) 30.
+`#setup-overlay` 100 > `#label-panel` 90 > `#settings-menu-wrapper` 50 > `#chat-panel` 45 > `#settings-backdrop` 40 > `.period-bar` (sticky) 30.
 
 ## Callbacks
 - `df` is a module global that reload, import, labeling and setup reassign (`global df`). Never use `background=True` callbacks: they can run in another process (ADR 0010).
@@ -39,7 +39,7 @@ paths:
   - It lives in the `selected-category` Store, and `highlight_category` Patches the opacities.
   - Reset `clickData` to `None` after a click, or re-clicking the same bar won't fire.
   - `update_category_chart` must ignore the stored selection when the *period* triggered it. Otherwise a never-clicked bar lights up in the new period.
-- The chart and the drilldown both use `_category_split`, so a drilldown total always equals its bar, including Other.
+- The chart, the drilldown and the AI chat all use `category_split` (through `_category_split` in the app), so a drilldown total or a chat answer always equals its bar, including Other.
 - Outputs written by several callbacks (`setup-overlay.style`, `setup-status`, `setup-path-input.value`, `refresh-trigger`, …) need `allow_duplicate=True`.
 - Reload and import leave the settings menu open so their status line stays visible.
 - The stat cards never show a comparison while the headline says *Can't say yet* (`cant_say_reasons`).

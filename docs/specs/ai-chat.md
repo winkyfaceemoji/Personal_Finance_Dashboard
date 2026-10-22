@@ -1,12 +1,12 @@
 # Spec: local AI chat
 
-Status: agreed in a grilling session on 2026-10-22. Not built yet.
+Status: agreed in a grilling session on 2026-10-22. Phase 2 is built (tickets: `docs/specs/ai-chat-tickets.md`).
 
 ## Goal
 Ask plain-English questions about your spending ("where did the Dining money go?") in a chat beside the dashboard. A local model answers from pre-written, tested tools, so every number comes from code, never from the model.
 
 ## Phases
-1. **Merchant rework** (another session, in progress). It defines one merchant grouping and the merchant alias file. Phase 2 builds on its result.
+1. **Merchant rework** (ADR 0025). What phase 2 needs is on main: `merchant_of` and `merchant_list` in `Modules/merchants.py`. The rest of the rework doesn't change them.
 2. **Chat with data tools.** This spec's main subject.
 3. **Recommendations from a cited knowledge base.** Built after phase 2, with the embedding server set up in its own session.
 4. **Roadmap, not now:** the app runs the model itself, with an option to connect your own model (see `readme.md`).
@@ -26,8 +26,8 @@ The model only picks a tool and its inputs, then puts the result into words. It 
 - A **CHAT** button shows and hides a panel on the right. While it's open, the page sits on the left. The panel is closed by default.
 - If `llama-server` can't be reached, the panel shows one line saying so and how to start it.
 - **Replies:** each one appears in full when ready. While it's working, a status line shows each tool call ("Looking up Dining by merchant…").
-  - ADR 0010 rules out background callbacks, so each step is its own callback, chained through a Store: model call → tool → model call. That's how the status line updates between steps.
-- **Period:** the chat uses the period picked on the page and can't change it. Every answer states that period's date range.
+  - ADR 0010 rules out background callbacks, and Dash can't loop callbacks through a Store. So one ordinary callback runs the whole turn (model call → tools → model call) and records each step's status in an in-memory dict, keyed by the chat's id. While the turn runs, a `dcc.Interval` reads that dict for the status line. It never calls the model.
+- **Period:** the chat uses the period picked on the page and can't change it. Under every answer, code adds the period's date range and the stat cards' unreviewed money (`+ $X money out unreviewed, not counted`).
 - **History:** kept for the open tab only, so a reload clears it. Nothing is written to disk.
 - **Driving the page:** when an answer is about one category, the chat sets the `selected-category` Store (ADR 0011). That highlights the bar and opens its drilldown. Merchant lists and name searches stay in the chat.
 - Styling follows the dashboard-ui rule: only `_CHART` tokens, both themes, and `tests/test_ui_states.py` covers the new controls.
@@ -47,7 +47,7 @@ Totals follow ADR 0007: label-based only, with Transfer and unlabeled rows exclu
 | `spending_by_merchant` | `direction`; optional `category`; optional `name` | Top 10 merchants (amount, charges, average), an `Other · N merchants` line, and the total. With `name`: every merchant whose bank description contains the text, *plus the list of merchant names it matched*. |
 
 - `category` is a fixed list in the tool schema: every category in the whole history, not just the period. A category with no spending this period returns $0.
-- Merchant grouping and aliases come from the phase 1 rework.
+- Merchants come from `merchant_of` (ADR 0025): the merged merchant's name, otherwise the row's spelling. Rows with no spelling are grouped as `(no recognisable name)`. The name search matches text in the merchant's name or in the bank text, using `normalize_description` on both sides, so "amazon" also finds an `amzn mktp us` spelling aliased to Amazon. It reports each merchant it matched with that merchant's spellings, from `merchant_list`.
 - **Number check:** the model is told to quote tool numbers and never do arithmetic. The app finds every dollar amount in a reply and marks any amount that doesn't appear in that turn's tool results as *unverified*.
 - A question the tools can't answer (comparisons, recurring charges, "when did I last…") gets a reply saying it can't answer that yet.
 

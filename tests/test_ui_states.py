@@ -177,3 +177,21 @@ def test_open_dropdown_marks_the_current_choice(browser, server):
     page.wait_for_selector(".dash-dropdown-option.selected")
     mark = page.evaluate("getComputedStyle(document.querySelector('.dash-dropdown-option.selected'), '::after').content")
     assert "✓" in mark
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_chat_panel_opens_beside_the_page_and_stays_readable(browser, server, theme):
+    page = _open(browser, server, theme, viewport={"width": 1400, "height": 900})
+    page.hover("#chat-toggle")
+    _assert_readable(page, "#chat-toggle", f"{theme}: hovering CHAT")
+    page.click("#chat-toggle")
+    page.wait_for_selector("#chat-panel.open")
+    page.wait_for_timeout(300)
+    box = page.locator("#chat-panel").bounding_box()
+    assert box["x"] > 900                                            # on the right, the page beside it
+    assert page.locator(".stats-grid").bounding_box()["x"] + page.locator(".stats-grid").bounding_box()["width"] <= box["x"]
+    for sel in ("#chat-close", "#chat-send"):
+        page.hover(sel)
+        _assert_readable(page, "#chat-panel button, #chat-panel .hint, #chat-health", f"{theme}: hovering {sel}")
+    page.click("#chat-close")
+    page.wait_for_selector("#chat-panel.open", state="detached")
