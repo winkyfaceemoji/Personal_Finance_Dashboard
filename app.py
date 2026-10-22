@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import threading
+from datetime import date
 
 import pandas as pd
 from pathlib import Path
@@ -14,7 +15,7 @@ import plotly.graph_objects as go
 from config import get_data_dir, get_master_path, get_rules_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
-    unlabeled_groups, rule_check, read_rules, label_rows, add_rule, delete_rule,
+    unlabeled_groups, read_rules, label_rows, delete_rule,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
 from Modules.linked_cards import (
@@ -22,7 +23,11 @@ from Modules.linked_cards import (
 )
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
-from Modules.merchants import read_merchants
+from Modules.merchants import (
+    ALIASES_NAME, MERCHANTS_NAME, read_merchants, remember_check, restore_files,
+    save_merchants, snapshot_files,
+)
+from Modules.merchants import remember as remember_merchant   # _do_label has a remember flag
 from Modules.recurring import recurring_charges
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
@@ -905,7 +910,7 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
 
     months = len({(pd.Timestamp(r["date"]).year, pd.Timestamp(r["date"]).month) for r in g["rows"]})
     if chk["ok"]:
-        note = (f'rule "{chk["keyword"]}" ({chk["direction"]}) · labels {chk["rows_now"]} row'
+        note = (f'labels every {g["merchant"]} row from now on ({chk["direction"]}) · {chk["rows_now"]} row'
                 f'{"s" if chk["rows_now"] != 1 else ""} ({_dollar0(chk["dollars_now"])}) now')
         if g["count"] < 2:
             note += " · only one transaction — tick to remember anyway"
@@ -2348,15 +2353,14 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             summary += f" · {len(suspects)} to check"
         return _pairs_view(shown, suspects), summary
     only, note = _filter_ids(filt)
-    groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
+    merchants = _merchants()
+    groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only, merchants=merchants)
     n_rows = sum(g["count"] for g in groups)
     summary = (f"{n_rows:,} row{'s' if n_rows != 1 else ''} · "
                f"{_dollar0(sum(g['abs_total'] for g in groups))} · "
                f"{len(groups)} merchant{'s' if len(groups) != 1 else ''}" + note)
     if not groups:
         return html.Div("Everything is labeled ✓", className="hint"), summary
-    rules = read_rules(RULES_PATH)
-    norm = df["description"].map(normalize_description)
     subs = sorted(s for s in df["sub_category"].unique() if s)
     kept: dict[str, dict] = {}
     for field, values, ids in (("sub", subs_in, sub_ids), ("remember", rems_in, rem_ids),
@@ -2368,7 +2372,7 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
         k = kept.setdefault(i["group"], {})
         if n and n % 2 and k.get("open") is not None:
             k["open"] = not k["open"]
-    cards = [_group_card(g, rule_check(df, rules, g, norm=norm), kept.get(g["key"]))
+    cards = [_group_card(g, remember_check(df, g, merchants), kept.get(g["key"]))
              for g in groups[:LABEL_TOP_N]]
     datalist = html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs])
     if len(groups) > LABEL_TOP_N:
@@ -2396,7 +2400,20 @@ def _mtime(path) -> str:
 def _undo_files() -> list:
     """The files a label action may have written. UNDO restores only while
     none of them has changed since the click."""
-    return [MASTER_PATH, RULES_PATH]
+    merchant_files = [MASTER_PATH.parent / MERCHANTS_NAME, MASTER_PATH.parent / ALIASES_NAME] if MASTER_PATH else []
+    return [MASTER_PATH, RULES_PATH, *merchant_files]
+
+
+def _merchants():
+    """The merchant files beside the master (none without a data folder)."""
+    return read_merchants(MASTER_PATH.parent if MASTER_PATH else None)
+
+
+def _todo_groups(filt):
+    """The To label groups, exactly as the list draws them: a click must find
+    its group the same way, or it is stale."""
+    only, _ = _filter_ids(filt)
+    return unlabeled_groups(_without_pending_dups(df), only_row_ids=only, merchants=_merchants())
 
 
 def _stamps() -> dict[str, str]:
@@ -2440,8 +2457,9 @@ def _write_labels(rows: list[dict], cat: str, sub: str = "", relabel: bool = Fal
 
 def _do_label(trig: dict, sub: str, remember: bool, version, filt):
     """Label a group (or one row of it): master write under the lock with a
-    backup first, then — only if that succeeded — the rule. Once the master is
-    written, nothing after it may lose the Undo. Returns
+    backup first, then — only if that succeeded — the merchant's rule (in the
+    merchant files, ADR 0025). Once the master is written, nothing after it
+    may lose the Undo. Returns
     (status, undo, undo-button style, version)."""
     global df
     cat = trig["cat"]
@@ -2449,8 +2467,7 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
         return f'"{cat}" isn\'t a label — nothing was changed.', dash.no_update, dash.no_update, dash.no_update
     bumped = (version or 0) + 1
     stale = ("The list changed — it has been refreshed.", dash.no_update, dash.no_update, bumped)
-    only, _ = _filter_ids(filt)
-    groups = unlabeled_groups(_without_pending_dups(df), only_row_ids=only)
+    groups = _todo_groups(filt)
     group = next((g for g in groups if g["key"] == trig["group"]), None)
     if trig["type"] == "lbl-group":
         if group is None or group["sig"] != trig.get("sig"):
@@ -2476,25 +2493,27 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
             return stale
         n, backup = written
         # The master is written: Undo is offered whatever happens to the rule
-        undo = {"backup": str(backup), "rule": None}
-        rule_note = ""
+        undo = {"backup": str(backup)}
+        rule_note, remembered = "", ""
         if remember and trig["type"] == "lbl-group":
+            folder = MASTER_PATH.parent
             try:
-                chk = rule_check(df, read_rules(RULES_PATH), group)
-                if not chk["blocking"] and add_rule(RULES_PATH, chk["keyword"], cat, sub):
-                    undo["rule"] = chk["keyword"]
+                saved = snapshot_files(folder)
+                table, aliases = remember_merchant(read_merchants(folder), group["mkey"], group["spellings"], cat, sub,
+                                          date.today().isoformat())
+                save_merchants(folder, table, aliases, adding=True)
+                undo["merchant_files"], remembered = saved, group["mkey"]
             except PermissionError:
-                rule_note = " · not remembered: rules.csv is open in another program"
+                rule_note = " · not remembered: a merchant file is open in another program"
             except Exception:
-                rule_note = " · not remembered: rules.csv couldn't be read or written"
+                rule_note = " · not remembered: the merchant files couldn't be read or written"
         undo["stamps"] = _stamps()
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
         rule_note += " · couldn't reload the data — use RELOAD DATA"
-    rule = undo["rule"]
     status = (f"Labeled {n} {group['merchant']} row{'s' if n != 1 else ''} as {cat}"
-              + (f' · rule "{rule}" added' if rule else "") + rule_note)
+              + (f" · remembered: {remembered} is {cat}" if remembered else "") + rule_note)
     return status, undo, _SHOWN_INLINE, bumped
 
 
@@ -2508,12 +2527,12 @@ def _do_undo(undo: dict, version):
         return "Can't undo — the data changed since.", None, _HIDDEN, dash.no_update
     try:
         with MASTER_LOCK:
+            if undo.get("merchant_files"):
+                restore_files(MASTER_PATH.parent, undo["merchant_files"])
             restore_backup(Path(undo["backup"]), MASTER_PATH)
-            if undo.get("rule"):
-                delete_rule(RULES_PATH, undo["rule"])
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except PermissionError:
-        return ("⚠ The data or rules file is open in another program (Excel?) — close it and try again.",
+        return ("⚠ The data or a merchant file is open in another program (Excel?) — close it and try again.",
                 dash.no_update, dash.no_update, dash.no_update)
     return "Undone.", None, _HIDDEN, (version or 0) + 1
 
@@ -2541,7 +2560,7 @@ def _do_label_pairs(trig: dict, version, filt=None):
         if written is None:
             return stale
         n, backup = written
-        undo = {"backup": str(backup), "stamps": _stamps(), "rule": None}
+        undo = {"backup": str(backup), "stamps": _stamps()}
     note = ""
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
@@ -2624,7 +2643,7 @@ def _do_fix_suspect(trig: dict, version, filt=None):
         if written is None:
             return stale
         n, backup = written
-        undo = {"backup": str(backup), "stamps": _stamps(), "rule": None}
+        undo = {"backup": str(backup), "stamps": _stamps()}
     note = ""
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)

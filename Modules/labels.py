@@ -198,24 +198,32 @@ def looks_like_transfer(description) -> bool:
     return bool(_TRANSFER.search(normalize_description(description)))
 
 
-def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
-    """Rows with no valid label, grouped by merchant, biggest dollar total first.
-    only_row_ids restricts to those rows (the last import's)."""
+def unlabeled_groups(df: pd.DataFrame, only_row_ids=None, merchants=None) -> list[dict]:
+    """Rows with no valid label, grouped by merchant (all its spellings
+    together, ADR 0025), biggest dollar total first. only_row_ids restricts
+    to those rows (the last import's). merchants: read_merchants(); without
+    it every spelling is its own merchant."""
+    from Modules.merchants import merchant_of, read_merchants   # merchants imports this module
+    merchants = merchants if merchants is not None else read_merchants(None)
     un = df[~df["master_category"].isin(PREDEFINED_CATEGORIES)].copy()
     if un.empty:
         return []
     un["_rid"] = row_ids(un)
     if only_row_ids is not None:
         un = un[un["_rid"].isin(set(only_row_ids))]
-    un["_mk"] = un["description"].map(merchant_key)
+    un["_spelling"] = un["description"].map(merchant_key)
+    un["_mk"] = merchant_of(un["description"], merchants)
     # No recognizable name: each description is its own group, flagged, so
     # unrelated rows are never bulk-labeled together
     un["_fb"] = un["_mk"] == ""
     un.loc[un["_fb"], "_mk"] = un.loc[un["_fb"], "description"].map(normalize_description)
     # One pass over plain records (narrow columns only): a DataFrame groupby
     # with to_dict per group cost ~1 s on 1.3k rows, paid twice per click
-    cols = ["_mk", "_fb", "_rid", "date", "description", "amount", "source", "card_last4"]
+    cols = ["_mk", "_fb", "_spelling", "_rid", "date", "description", "amount", "source", "card_last4"]
     recs = un[[c for c in cols if c in un.columns]].to_dict("records")
+    # Any change to the merchant files can regroup the list, so it is part of
+    # every group's signature: a click on a list drawn before it is stale
+    version = merchants.version
     by_key: dict[str, list[dict]] = {}
     for r in recs:                                  # first-appearance order
         by_key.setdefault(r["_mk"], []).append(r)
@@ -233,12 +241,16 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None) -> list[dict]:
                                    "description": r["description"], "amount": float(r["amount"]),
                                    "source": r["source"], "card_last4": r.get("card_last4", "") or "",
                                    "count": 1}
-        sig_src = "|".join(sorted(f"{k}x{v['count']}" for k, v in rows.items()))
+        sig_src = "|".join(sorted(f"{k}x{v['count']}" for k, v in rows.items())) + version
         fallback = any(r["_fb"] for r in g)
         groups.append({
             "key": hashlib.sha1(mk.encode()).hexdigest()[:10],
             "mkey": mk,
-            "merchant": (str(g[0]["description"]).strip() if fallback else mk).upper(),
+            # A name you gave a merchant shows as typed; a bare spelling (all
+            # lower case) in capitals, like the bank text it came from
+            "merchant": (str(g[0]["description"]).strip().upper() if fallback
+                         else mk if mk != mk.lower() else mk.upper()),
+            "spellings": sorted({r["_spelling"] for r in g} - {""}),
             "count": len(g),
             "total": float(sum(amounts)),
             "abs_total": float(sum(abs(a) for a in amounts)),

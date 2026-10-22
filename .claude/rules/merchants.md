@@ -22,5 +22,9 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - The forgiving reader ignores an alias that points at a missing merchant, or a spelling filed under two merchants. That spelling stays its own merchant, and `problems` says why. Empty rows, a merchant listed twice (first row wins) and an unreadable file are reported the same way; an unreadable `merchants.csv` means no merchants at all, never a crash. `attention_parts` shows the problems in the header's "other" item; never guess which alias was meant.
 - Alias spellings are normalized on read (`normalize_description`), so a hand-typed `AMZN  Mktp US` still matches.
 
+## Remember and UNDO
+- `remember(merchants, name, spellings, label, category, today)` returns both files with the rule set; a merchant that doesn't exist yet is made, so an unmerged spelling becomes a merchant named after itself, with its alias. Save it with `adding=True`.
+- `snapshot_files` keeps both files' exact bytes as latin-1 text (JSON-safe), and `restore_files` writes them back through the same two-file write, aliases first. A file that was missing is removed again.
+
 ## Rules on load
 - `load_transactions` applies merchants' rules (`apply_rules`) **before** the `rules.csv` keywords, so a merchant's rule wins and the keywords only fill what's left (until ticket 10 removes them). Same semantics as the keywords: the label goes only on rows with none (a hand label wins), and the category only fills a blank one where the labels agree. A category-only merchant fills any of its rows.

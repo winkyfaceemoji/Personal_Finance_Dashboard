@@ -69,7 +69,8 @@ def _ids(component):
 
 
 def test_mixed_and_fallback_groups_have_no_group_buttons(appmod):
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     df = pd.DataFrame({
         "date": pd.to_datetime(["2025-03-01", "2025-03-02", "2025-03-03"]),
         "description": ["AMAZON MKTP 1", "AMAZON MKTP 2", "#99999"], "amount": [-20.0, 20.0, -5.0],
@@ -78,14 +79,15 @@ def test_mixed_and_fallback_groups_have_no_group_buttons(appmod):
     })
     for g in unlabeled_groups(df):
         assert g["mixed"] or g["fallback"]
-        card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+        card = appmod["_group_card"](g, remember_check(df, g, read_merchants(None)))
         ids = _ids(card)
         assert not any(isinstance(i, dict) and i.get("type") == "lbl-group" for i in ids)
         assert any(isinstance(i, dict) and i.get("type") == "lbl-row" for i in ids)
 
 
 def test_group_card_row_ids_unique(appmod):
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     df = pd.DataFrame({
         "date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
         "description": ["CAFE", "CAFE"], "amount": [-4.5, -4.5],
@@ -93,13 +95,14 @@ def test_group_card_row_ids_unique(appmod):
         "source": ["Chase Credit"] * 2, "card_last4": ["", ""],
     })
     g = unlabeled_groups(df)[0]
-    card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+    card = appmod["_group_card"](g, remember_check(df, g, read_merchants(None)))
     ids = [str(i) for i in _ids(card)]
     assert len(ids) == len(set(ids))            # twins don't collide
 
 
 def test_group_card_shows_merchant_and_the_banks_text_apart(appmod):
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     raw = "CENTRAL BANK COLLECTION 590951122973920 WEB ID: 9886281493"
     df = pd.DataFrame({
         "date": pd.to_datetime(["2025-03-01", "2025-04-01", "2025-05-01"]),
@@ -108,28 +111,29 @@ def test_group_card_shows_merchant_and_the_banks_text_apart(appmod):
         "source": ["Chase Debit"] * 3, "card_last4": [""] * 3,
     })
     g = unlabeled_groups(df)[0]
-    texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
+    texts = [c for c in _walk(appmod["_group_card"](g, remember_check(df, g, read_merchants(None))))
              if isinstance(c, str)]
     assert {"CENTRAL BANK COLLECTION", "Transaction text", "+2 other wordings"} <= set(texts)
     assert raw in texts                                    # the bank's text, unaltered
     one = unlabeled_groups(df.iloc[:1])[0]
-    texts = [c for c in _walk(appmod["_group_card"](one, rule_check(df.iloc[:1], read_rules("/none"), one)))
+    texts = [c for c in _walk(appmod["_group_card"](one, remember_check(df.iloc[:1], one, read_merchants(None))))
              if isinstance(c, str)]
     assert "Transaction text" in texts and not any("other wording" in t for t in texts)
 
 
 def test_nameless_group_card_says_no_clear_merchant(appmod):
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     df = pd.DataFrame({
         "date": pd.to_datetime(["2025-03-01"]), "description": ["#1234"], "amount": [-4.5],
         "master_category": [""], "sub_category": [""], "source": ["Chase Credit"], "card_last4": [""],
     })
     g = unlabeled_groups(df)[0]
-    texts = [c for c in _walk(appmod["_group_card"](g, rule_check(df, read_rules("/none"), g)))
+    texts = [c for c in _walk(appmod["_group_card"](g, remember_check(df, g, read_merchants(None))))
              if isinstance(c, str)]
     assert "No clear merchant" in texts and "#1234" in texts     # the text itself, unaltered
     assert texts.count("#1234") == 1                             # once, not again in the row
-    card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+    card = appmod["_group_card"](g, remember_check(df, g, read_merchants(None)))
     remember = next(c for c in _walk(card) if getattr(c, "id", None) == {"type": "lbl-remember", "group": g["key"]})
     assert remember.style == {"display": "none"} and remember.value == []
     assert not any("no recognizable" in t for t in texts)
@@ -149,21 +153,26 @@ def _walk(component):
 
 
 def test_group_card_remember_state(appmod):
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     df = pd.DataFrame({
         "date": pd.to_datetime(["2025-03-01"]), "description": ["AB 12"], "amount": [-4.5],
         "master_category": [""], "sub_category": [""], "source": ["Chase Credit"], "card_last4": [""],
     })
+    # A short name is fine now: a merchant's rule matches whole spellings, so
+    # "ab" can't sweep up other merchants the way a keyword could (ADR 0025).
+    # One transaction is still thin evidence: allowed, never ticked by default
     g = unlabeled_groups(df)[0]
-    chk = rule_check(df, read_rules("/none"), g)
+    chk = remember_check(df, g, read_merchants(None))
     card = appmod["_group_card"](g, chk)
     remember = next(c for c in _walk(card) if getattr(c, "id", None) == {"type": "lbl-remember", "group": g["key"]})
-    assert remember.value == [] and remember.options[0]["disabled"] is True
+    assert remember.value == [] and remember.options[0]["disabled"] is False
 
 
 def _card_remember(appmod, rows):
     """(Remember checklist, note text) for the card of the first group in rows."""
-    from Modules.labels import unlabeled_groups, read_rules, rule_check
+    from Modules.labels import unlabeled_groups
+    from Modules.merchants import read_merchants, remember_check
     df = pd.DataFrame({
         "date": pd.to_datetime([r[0] for r in rows]), "description": [r[1] for r in rows],
         "amount": [r[2] for r in rows], "master_category": [""] * len(rows),
@@ -171,7 +180,7 @@ def _card_remember(appmod, rows):
         "card_last4": [""] * len(rows),
     })
     g = unlabeled_groups(df)[0]
-    card = appmod["_group_card"](g, rule_check(df, read_rules("/none"), g))
+    card = appmod["_group_card"](g, remember_check(df, g, read_merchants(None)))
     remember = next(c for c in _walk(card) if getattr(c, "id", None) == {"type": "lbl-remember", "group": g["key"]})
     note = " ".join(c.children for c in _walk(card) if isinstance(getattr(c, "children", None), str))
     return remember, note
@@ -259,6 +268,108 @@ def _bulk_group(g_):
 
 def _group_trig(grp, cat="Expense", sig=None):
     return {"type": "lbl-group", "group": grp["key"], "sig": sig or grp["sig"], "cat": cat}
+
+
+def _merged(name, *spellings):
+    """Merchant files merging `spellings` into one merchant with no rule yet.
+    Each test uses its own demo spellings: the app module, and its master,
+    are shared across tests."""
+    return ("merchant,master_category,sub_category,patterns,added" + chr(10) + f"{name},,,," + chr(10),
+            "spelling,merchant,status" + chr(10) + "".join(f"{s},{name},alias" + chr(10) for s in spellings))
+
+
+@pytest.fixture
+def merchant_files(appmod):
+    """Write merchant files into the app's temp data folder for one test, then
+    take them away again (the app module is shared across tests)."""
+    g_ = _live(appmod)
+    folder = g_["MASTER_PATH"].parent
+
+    def write(merchants_csv, aliases_csv):
+        (folder / "merchants.csv").write_text(merchants_csv, encoding="utf-8")
+        (folder / "merchant_aliases.csv").write_text(aliases_csv, encoding="utf-8")
+        g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
+    yield write
+    for name in ("merchants.csv", "merchant_aliases.csv"):
+        (folder / name).unlink(missing_ok=True)
+    g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
+
+
+def _merchant_group(g_, name):
+    return next(g for g in g_["_todo_groups"]("all") if g["merchant"] == name)
+
+
+def test_to_label_groups_a_merchants_spellings_and_labels_them_in_one_click(appmod, merchant_files):
+    from Modules.merchants import merchant_of, read_merchants
+    g_ = _live(appmod)
+    merchant_files(*_merged("Shelf Finds", "quillfield books", "sp lantern goods"))
+    grp = _merchant_group(g_, "Shelf Finds")
+    assert grp["spellings"] == ["quillfield books", "sp lantern goods"]
+    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
+    assert status.startswith(f"Labeled {grp['count']} Shelf Finds rows as Expense")
+    df = g_["df"]
+    mine = merchant_of(df["description"], read_merchants(g_["MASTER_PATH"].parent)) == "Shelf Finds"
+    assert mine.sum() == grp["count"] and (df.loc[mine, "master_category"] == "Expense").all()
+
+
+def test_remember_saves_the_merchants_rule_and_undo_takes_it_back(appmod, merchant_files):
+    from Modules.merchants import read_merchants
+    g_ = _live(appmod)
+    merchant_files(*_merged("Screen and Stay", "sundial cinemas", "oakridge hotel"))
+    folder = g_["MASTER_PATH"].parent
+    files = [g_["MASTER_PATH"], folder / "merchants.csv", folder / "merchant_aliases.csv"]
+    before = [f.read_bytes() for f in files]
+    grp = _merchant_group(g_, "Screen and Stay")
+    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "Outings", True, 0, "all")
+    assert status.endswith(" · remembered: Screen and Stay is Expense")
+    rule = read_merchants(folder).table.set_index("merchant").loc["Screen and Stay"]
+    assert (rule["master_category"], rule["sub_category"]) == ("Expense", "Outings")
+    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status2 == "Undone."
+    assert [f.read_bytes() for f in files] == before
+
+
+def test_remember_on_an_unmerged_spelling_makes_it_a_merchant(appmod, merchant_files):
+    from Modules.merchants import read_merchants
+    g_ = _live(appmod)
+    merchant_files(*_merged("Shelf Finds", "quillfield books"))
+    grp = _merchant_group(g_, "NORTHGATE AIRLINES")
+    status, _, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
+    assert status.endswith(" · remembered: northgate airlines is Expense")
+    m = read_merchants(g_["MASTER_PATH"].parent)
+    assert m.alias_of["northgate airlines"] == "northgate airlines"
+    assert m.table.set_index("merchant").loc["northgate airlines", "master_category"] == "Expense"
+
+
+def test_an_alias_change_makes_the_open_list_stale(appmod, merchant_files):
+    g_ = _live(appmod)
+    merchant_files(*_merged("Gym and Games", "ironworks gym", "starlight games store"))
+    grp = _merchant_group(g_, "Gym and Games")
+    merchant_files(*_merged("Gym and Games", "ironworks gym", "starlight games store",
+                            "open hands fund"))   # changed since it was drawn
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    status, _, _, _ = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
+    assert status.startswith("The list changed")
+    assert master.read_bytes() == before
+
+
+def test_a_locked_merchant_file_keeps_the_labels_and_undo(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    merchant_files(*_merged("Snacks", "tst copper pot diner", "sq little fern bakery"))
+    master = g_["MASTER_PATH"]
+    before = master.read_bytes()
+    real = os.replace
+
+    def replace(src, dst):
+        if Path(dst).name == "merchants.csv":
+            raise PermissionError(13, "open in Excel", str(dst))
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", replace)
+    status, undo, _, _ = g_["_do_label"](_group_trig(_merchant_group(g_, "Snacks")), "", True, 0, "all")
+    assert status.startswith("Labeled") and status.endswith(
+        " · not remembered: a merchant file is open in another program")
+    assert undo and undo["backup"] and master.read_bytes() != before
 
 
 def test_label_click_ignores_rerender(appmod):
@@ -362,25 +473,6 @@ def test_row_click_labels_by_row_id(appmod):
     assert (df.loc[sel, "master_category"] == "Transfer").all()
 
 
-def test_label_survives_rules_file_locked(appmod, monkeypatch):
-    from Modules.labels import read_rules, rule_check, unlabeled_groups
-    g_ = _live(appmod)
-    master = g_["MASTER_PATH"]
-    before = master.read_bytes()
-    rules = read_rules(g_["RULES_PATH"])
-    # A group whose rule is allowed, so add_rule is actually reached
-    grp = next(g for g in unlabeled_groups(g_["df"])
-               if not g["fallback"] and not g["mixed"] and rule_check(g_["df"], rules, g)["ok"])
-
-    def locked(*a, **k):
-        raise PermissionError("open in Excel")
-    monkeypatch.setitem(g_, "add_rule", locked)
-    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
-    assert status.startswith("Labeled") and "not remembered" in status
-    assert undo and undo["rule"] is None          # the label still has an undo
-    assert master.read_bytes() != before
-
-
 def test_label_refreshes_when_master_changed_underneath(appmod):
     from Modules.labels import row_ids
     g_ = _live(appmod)
@@ -411,18 +503,19 @@ def _rule_safe_group(g_):
                 if not g["fallback"] and not g["mixed"] and rule_check(g_["df"], rules, g)["ok"])
 
 
-def test_label_keeps_undo_when_rules_unreadable(appmod, monkeypatch):
+def test_label_keeps_undo_when_merchant_files_fail(appmod, monkeypatch):
     g_ = _live(appmod)
     master = g_["MASTER_PATH"]
     before = master.read_bytes()
-    grp = _rule_safe_group(g_)
+    grp = _bulk_group(g_)
 
-    def unreadable(*a, **k):
-        raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
-    monkeypatch.setitem(g_, "read_rules", unreadable)
+    def broken(*a, **k):
+        raise ValueError("can't write")
+    monkeypatch.setitem(g_, "save_merchants", broken)
     status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
-    assert status.startswith("Labeled") and "not remembered" in status
-    assert undo and undo["rule"] is None
+    assert status.startswith("Labeled") and status.endswith(
+        " · not remembered: the merchant files couldn't be read or written")
+    assert undo and undo["backup"] and "merchant_files" not in undo
     assert master.read_bytes() != before
 
 
@@ -455,26 +548,11 @@ def test_label_rejects_unknown_category(appmod):
     assert master.read_bytes() == before
 
 
-def test_remembered_label_undo_restores_master_and_removes_rule(appmod):
-    from Modules.labels import read_rules
-    g_ = _live(appmod)
-    master, rules = g_["MASTER_PATH"], g_["RULES_PATH"]
-    before = master.read_bytes()
-    grp = _rule_safe_group(g_)
-    status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", True, 0, "all")
-    assert undo["rule"] and "rule" in status
-    assert undo["rule"] in read_rules(rules)["keyword"].tolist()
-    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
-    assert status2 == "Undone."
-    assert master.read_bytes() == before
-    assert undo["rule"] not in read_rules(rules)["keyword"].tolist()
-
-
 def test_delete_rule_unlabels_its_rows(appmod):
-    from Modules.labels import add_rule, row_ids
+    from Modules.labels import add_rule, read_rules, row_ids, rule_check
     g_ = _live(appmod)
     grp = _rule_safe_group(g_)
-    kw = g_["rule_check"](g_["df"], g_["read_rules"](g_["RULES_PATH"]), grp)["keyword"]
+    kw = rule_check(g_["df"], read_rules(g_["RULES_PATH"]), grp)["keyword"]
     ids = {r["row_id"] for r in grp["rows"]}
     assert add_rule(g_["RULES_PATH"], kw, "Expense")
     g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
@@ -882,7 +960,8 @@ def test_label_them_opens_on_the_rows_holding_back_the_period(appmod):
                                                 [], [], [], [], [], [], [], [])
     groups = unlabeled_groups(g_["_without_pending_dups"](df), only_row_ids=ids)
     assert sum(gr["count"] for gr in groups) == len(blocking)
-    assert summary.startswith(f"{len(blocking):,} rows") and note in summary
+    n = len(blocking)
+    assert summary.startswith(f"{n:,} row{'s' if n != 1 else ''} ·") and note in summary
     # SHOW ALL is offered on a subset, and goes back to everything
     assert g_["show_all_button"](filt, "todo") == g_["_SHOWN_INLINE"]
     assert g_["show_all_button"]("all", "todo") == g_["_HIDDEN"]

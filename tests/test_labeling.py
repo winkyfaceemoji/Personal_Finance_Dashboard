@@ -148,18 +148,21 @@ def test_labeling_a_group_raises_totals_by_exactly_its_amount(demo):
 def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
     """The goal, end to end: labeling the top groups (remembering safe ones)
     shrinks the unreviewed dollars, loses or duplicates nothing, and the next
-    statement's matching row is labeled by the new rule automatically."""
+    statement's row from a remembered merchant is labeled by its rule
+    automatically, and nothing else is (ADR 0025)."""
     from main import main as run_ingest
-    from Modules.labels import add_rule, read_rules, rule_check
+    from Modules.merchants import read_merchants, remember, remember_check, save_merchants
     from Modules.transforms import PREDEFINED_CATEGORIES as CATS
     rules = tmp_path / "rules.csv"
     shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)
+    folder = demo.parent
     df = load_transactions(demo, rules_path=rules)
     n_rows, total = len(df), df["amount"].sum()
     unrev = lambda d: d.loc[~d["master_category"].isin(CATS), "amount"].abs().sum()
     before = unrev(df)
 
-    groups = [g for g in unlabeled_groups(df) if not g["fallback"] and not g["mixed"]][:25]
+    merchants = read_merchants(folder)
+    groups = [g for g in unlabeled_groups(df, merchants=merchants) if not g["fallback"] and not g["mixed"]][:25]
     master = pd.read_csv(demo, dtype={"card_last4": str, "master_category": str, "sub_category": str})
     labeled, remembered = 0.0, []
     for g in groups:
@@ -167,9 +170,10 @@ def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
         master, n = label_rows(master, g["rows"], cat)
         assert n == sum(r["count"] for r in g["rows"])
         labeled += g["abs_total"]
-        chk = rule_check(df, read_rules(rules), g)
-        if chk["ok"] and add_rule(rules, chk["keyword"], cat):
-            remembered.append(chk["keyword"])
+        if remember_check(df, g, merchants)["ok"]:
+            m = read_merchants(folder)
+            save_merchants(folder, *remember(m, g["mkey"], g["spellings"], cat, "", "2026-01-01"), adding=True)
+            remembered.append(g["spellings"][0])
     atomic_write_csv(master, demo)
     df2 = load_transactions(demo, rules_path=rules)
 

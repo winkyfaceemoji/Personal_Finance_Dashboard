@@ -8,7 +8,7 @@ paths:
 
 # Labeling panel, rules & transfer pairs
 
-The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, rules tab) live in `app.py`. Background: ADR 0008 and 0017.
+The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, rules tab) live in `app.py`. Background: ADR 0025 (which replaces 0008) and 0017.
 
 ## Where rules live
 - The real rules are `SORTED/rules.csv` in the data folder (`get_rules_path`), never the repo: they name real merchants (ADR 0024). `RULES_PATH` must follow the data folder when setup changes it.
@@ -24,9 +24,10 @@ The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`
 - Order in `_do_label`:
   1. Master write: lock, backup, atomic.
   2. Build the undo record.
-  3. Write the rule.
+  3. Remember: snapshot the merchant files into the undo record, then save the merchant's rule (`remember` + `save_merchants`).
 
-  The rule comes strictly after the master. A `rules.csv` failure (open in Excel, unreadable) keeps the labels and UNDO, and only appends `· not remembered: …` to the status.
+  Remember comes strictly after the master. A merchant-file failure (open in Excel, unwritable) keeps the labels and UNDO, and only appends `· not remembered: …` to the status. The snapshot goes into the record only once the save succeeded.
+- `_do_label` has a `remember` flag, so the merchants function is imported as `remember_merchant`. Calling `remember(...)` inside it calls the bool.
 - `rules.csv` writes (`add_rule`, `delete_rule`) are atomic and run under `MASTER_LOCK`. `add_rule` refuses a keyword under 4 characters, a duplicate, or an invalid category.
 - Excel import (`apply_label_import`):
   - A row with a blank or unreadable date is *skipped*. It must never be applied to every date.
@@ -38,9 +39,13 @@ The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`
 - Re-rendering the list adds buttons with `n_clicks` 0, which fires pattern-matching callbacks. Gate every handler with `_is_real_click`.
 - Card state survives re-render: `render_label_list` reads back the typed subcategory, the Remember tick and the open row list, then re-applies them. Dash doesn't report a `<details>` toggle, so each summary counts its clicks and the parity flips the last-rendered `open`.
 - The undo record stores `st_mtime_ns` as **strings**. Nanosecond times exceed 2^53, and the browser's JSON round-trip would round them, making every undo look stale.
-- Undo works only while none of the files in `_undo_files()` (the master, `rules.csv`, and later the merchant files) has changed since the click. Add a file there when a label action starts writing it.
+- Undo works only while none of the files in `_undo_files()` (the master, `rules.csv`, both merchant files) has changed since the click. Add a file there when a label action starts writing it.
+- Undo puts the merchant files back first (`restore_files`, byte for byte from the snapshot), then the master: if the merchant files are locked, nothing changed.
 
-## Grouping (`merchant_key`)
+## Grouping (`merchant_key`, then merchants)
+- The To label list groups by **merchant**: `unlabeled_groups(..., merchants=)` puts all of a merchant's spellings in one group. The list and the click must both build groups through `_todo_groups`, or a click can't find its group.
+- Every group's `sig` includes the merchant files' `version`, so any merchant change makes an open list stale.
+- A merged merchant's name shows as typed; a bare spelling (all lower case) shows in capitals.
 - The ACH code-token pattern (`rtl-`, `ppd-`, `ccd-`, `web-`) is narrow on purpose. A generic `xx-…` pattern eats names like `wal-mart`.
 - Names that start with a number or contain a hyphen must survive (`7-eleven`, `99 ranch market`).
 - After a processor prefix (`tst`, `sq`, `sp`, `paypal`), keep the next word if it has a letter. A bare number there is a phone number.
@@ -49,8 +54,12 @@ The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`
   - real-time payments (`REAL TIME PAYMENT …`): the text names the network, not the payer.
 - Group buttons appear only for groups that are neither fallback nor mixed-direction. One click must label one kind of thing. Row clicks label identical twins too, and never create a rule.
 
-## Rule safety (`rule_check`)
-- Checks run in order:
+## Remember (`remember_check`, ADR 0025)
+- Remember saves the merchant's rule. It matches whole spellings, so the old keyword checks (length, other merchants, overlapping rules) don't apply: a short name like `AB` can be remembered.
+- Still applied: nameless rows can't be remembered; money in and out has no group buttons; a single transaction, or one seen in fewer than `REMEMBER_MONTHS` months, starts unticked.
+
+## Old keyword rules (`rule_check`, until ticket 10)
+- The RULES tab still lists and deletes `rules.csv` keywords. Checks run in order:
   1. Keyword is at least `MIN_KEYWORD` (4) characters.
   2. It matches this merchant only, across **all** rows, labeled ones included.
   3. No existing rule equals, contains or is contained by it, or matches the group.
