@@ -38,7 +38,7 @@ The pure functions live in `Modules/labels.py`. The panel callbacks (`_do_label`
 - Re-rendering the list adds buttons with `n_clicks` 0, which fires pattern-matching callbacks. Gate every handler with `_is_real_click`.
 - Card state survives re-render: `render_label_list` reads back the typed subcategory, the Remember tick and the open row list, then re-applies them. Dash doesn't report a `<details>` toggle, so each summary counts its clicks and the parity flips the last-rendered `open`.
 - The undo record stores `st_mtime_ns` as **strings**. Nanosecond times exceed 2^53, and the browser's JSON round-trip would round them, making every undo look stale.
-- Undo works only while neither the master nor `rules.csv` mtime has changed since the click.
+- Undo works only while none of the files in `_undo_files()` (the master, `rules.csv`, and later the merchant files) has changed since the click. Add a file there when a label action starts writing it.
 
 ## Grouping (`merchant_key`)
 - The ACH code-token pattern (`rtl-`, `ppd-`, `ccd-`, `web-`) is narrow on purpose. A generic `xx-…` pattern eats names like `wal-mart`.

@@ -2393,6 +2393,17 @@ def _mtime(path) -> str:
     return str(Path(path).stat().st_mtime_ns) if path and Path(path).exists() else "0"
 
 
+def _undo_files() -> list:
+    """The files a label action may have written. UNDO restores only while
+    none of them has changed since the click."""
+    return [MASTER_PATH, RULES_PATH]
+
+
+def _stamps() -> dict[str, str]:
+    """Each tracked file's mtime, keyed by its path, for the undo record."""
+    return {str(p): _mtime(p) for p in _undo_files()}
+
+
 def _write_labels(rows: list[dict], cat: str, sub: str = "", relabel: bool = False):
     """The master write every label action shares; call it holding MASTER_LOCK.
     Labels exactly these rows — unlabeled ones only, or with relabel (an
@@ -2465,7 +2476,7 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
             return stale
         n, backup = written
         # The master is written: Undo is offered whatever happens to the rule
-        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH), "rule": None}
+        undo = {"backup": str(backup), "rule": None}
         rule_note = ""
         if remember and trig["type"] == "lbl-group":
             try:
@@ -2476,7 +2487,7 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
                 rule_note = " · not remembered: rules.csv is open in another program"
             except Exception:
                 rule_note = " · not remembered: rules.csv couldn't be read or written"
-        undo["rules_mtime"] = _mtime(RULES_PATH)
+        undo["stamps"] = _stamps()
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
@@ -2488,13 +2499,12 @@ def _do_label(trig: dict, sub: str, remember: bool, version, filt):
 
 
 def _do_undo(undo: dict, version):
-    """Revert the last label action — only if nothing has written the master or
-    rules.csv since (otherwise restoring would throw that newer change away)."""
+    """Revert the last label action — only if none of the tracked files has
+    changed since (otherwise restoring would throw that newer change away)."""
     global df
     if not undo:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    if (_mtime(MASTER_PATH) != str(undo["master_mtime"])
-            or _mtime(RULES_PATH) != str(undo["rules_mtime"])):
+    if undo.get("stamps") != _stamps():
         return "Can't undo — the data changed since.", None, _HIDDEN, dash.no_update
     try:
         with MASTER_LOCK:
@@ -2531,8 +2541,7 @@ def _do_label_pairs(trig: dict, version, filt=None):
         if written is None:
             return stale
         n, backup = written
-        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
-                "rules_mtime": _mtime(RULES_PATH), "rule": None}
+        undo = {"backup": str(backup), "stamps": _stamps(), "rule": None}
     note = ""
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
@@ -2615,8 +2624,7 @@ def _do_fix_suspect(trig: dict, version, filt=None):
         if written is None:
             return stale
         n, backup = written
-        undo = {"backup": str(backup), "master_mtime": _mtime(MASTER_PATH),
-                "rules_mtime": _mtime(RULES_PATH), "rule": None}
+        undo = {"backup": str(backup), "stamps": _stamps(), "rule": None}
     note = ""
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)

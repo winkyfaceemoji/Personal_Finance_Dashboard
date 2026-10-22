@@ -287,8 +287,22 @@ def test_label_then_undo_roundtrip(appmod):
 def test_undo_record_survives_json(appmod):
     g_ = _live(appmod)
     _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
-    assert isinstance(undo["master_mtime"], str) and isinstance(undo["rules_mtime"], str)
+    # nanosecond mtimes are past 2^53: as numbers the browser would round them
+    assert undo["stamps"] and all(isinstance(v, str) for v in undo["stamps"].values())
     assert json.loads(json.dumps(undo)) == undo
+
+
+def test_undo_refuses_after_any_tracked_file_changes(appmod, tmp_path, monkeypatch):
+    g_ = _live(appmod)
+    extra = tmp_path / "extra.csv"
+    extra.write_text("a\n")
+    monkeypatch.setitem(g_, "_undo_files", lambda: [g_["MASTER_PATH"], g_["RULES_PATH"], extra])
+    _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
+    after = g_["MASTER_PATH"].read_bytes()
+    extra.write_text("a\nb\n")                     # a third file changed since the click
+    status, undo2, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status.startswith("Can't undo") and undo2 is None
+    assert g_["MASTER_PATH"].read_bytes() == after
 
 
 def test_undo_refuses_after_change(appmod):
