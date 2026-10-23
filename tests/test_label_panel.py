@@ -838,6 +838,24 @@ def test_converting_keeps_every_label_retires_rules_csv_and_undoes(appmod, keep_
     assert [keep_rules.read_bytes(), *[f.read_bytes() for f in _files_of(g_)]] == before_files
 
 
+def test_a_spelling_split_out_in_the_review_is_its_own_merchant_and_keeps_its_labels(appmod, keep_rules):
+    from Modules.merchants import merchant_of
+    g_ = _live(appmod)
+    before_labels = g_["df"][["master_category", "sub_category"]].copy()
+    props = g_["_convert_proposals"]()
+    i, card = next((i, p) for i, p in enumerate(props) if len(p["spellings"]) > 1)
+    dad = card["spellings"][-1]
+    reviewed = [dict(p, split=[dad] if j == i else []) for j, p in enumerate(props)]
+    pending, text = g_["_convert_preview"](reviewed)
+    assert "no labels change" in text and "1 spelling split out, each into its own merchant" in text
+    g_["_do_merchant_change"](pending, 0)
+    owners = merchant_of(g_["df"]["description"], g_["_merchants"]())
+    keys = g_["df"]["description"].map(g_["merchant_key"])
+    assert set(owners[keys == dad]) == {dad}                                   # its own merchant
+    assert set(owners[keys == card["spellings"][0]]) == {card["name"]}
+    assert not (g_["df"][["master_category", "sub_category"]] != before_labels).any(axis=1).any()
+
+
 def test_converting_keeps_every_label_and_every_total_on_hard_keyword_sets(appmod, keep_rules, merchant_files):
     from Modules.transforms import period_totals
     g_ = _live(appmod)

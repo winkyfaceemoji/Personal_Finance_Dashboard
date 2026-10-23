@@ -514,6 +514,24 @@ def _free_name(preferred: list[str], kw: str, own: list[str], taken: set[str], s
                 if c.casefold() not in taken and (c not in spellings or c in own))
 
 
+def expand_splits(merchants: Merchants, reviewed: list[dict]) -> list[dict]:
+    """The reviewed proposals with each spelling the review split out
+    (`split`, "Zelle to Dad") as its own merchant: named after the spelling,
+    with the card's rule and no pattern. Relabel it afterwards to give it a
+    different one; its past rows keep what the card's review chose."""
+    taken = {n.casefold() for n in merchants.table["merchant"]} | {p["name"].strip().casefold() for p in reviewed}
+    every_spelling = set(merchants.alias_of) | {s for p in reviewed for s in p["spellings"]}
+    out = []
+    for p in reviewed:
+        split = [s for s in p.get("split") or [] if s in p["spellings"]]
+        out.append(dict(p, spellings=[s for s in p["spellings"] if s not in split], split=[]))
+        for s in split:
+            name = _free_name([s], s, [s], taken, every_spelling)
+            taken.add(name.casefold())
+            out.append(dict(p, name=name, pattern="", spellings=[s], split=[]))
+    return out
+
+
 def apply_conversion(merchants: Merchants, props: list[dict]):
     """Both files with each (reviewed) proposal as a merchant: its name,
     rule, pattern and the spellings left ticked. Save with save_change."""
@@ -546,7 +564,7 @@ def review_choices(defaults: list[dict], reviewed: list[dict]) -> dict:
         raise ValueError("The list changed — reopen CONVERT RULES to see it again.")
     out = {}
     for d, r in zip(defaults, reviewed):
-        for s in set(d["spellings"]) - set(r["spellings"]):
+        for s in set(d["spellings"]) - set(r["spellings"]):      # a split spelling is still ticked
             out[s] = None
         pair = (r["label"] if r["label"] != d["label"] else None,
                 r["category"] if r["category"] != d["category"] else None)

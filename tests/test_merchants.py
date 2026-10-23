@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    apply_conversion, convert_proposals, dismiss, find_merchant, freeze_keyword_labels, keep_past, label_changes,
+    apply_conversion, convert_proposals, dismiss, expand_splits, find_merchant, freeze_keyword_labels, keep_past, label_changes,
     review_choices, rule_labels, valid_keywords, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
     names_in_use, pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
@@ -706,6 +706,31 @@ def test_a_label_typed_on_a_no_rule_card_keeps_the_past_category(tmp_path):
     choices = review_choices(defaults, [dict(defaults[0], label="Expense")])      # category left as shown (blank)
     _, kept, _ = freeze_keyword_labels(hand, m, rules_path, choices)
     assert kept.values.tolist() == [["Expense", "Groceries"]]
+
+
+def test_a_spelling_split_out_in_the_review_becomes_its_own_merchant_with_the_same_rule(tmp_path):
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT TO ANN", -50.0, ""), ("2026-01-03", "ZELLE PAYMENT TO DAD", -20.0, ""))
+    m = read_merchants(tmp_path)
+    (p,) = convert_proposals(rows, _keywords(("zelle payment to", "Expense", "Zelle")), m)
+    reviewed = [dict(p, split=["zelle payment to dad"])]
+    assert review_choices([p], reviewed) == {}                        # splitting moves nothing in the past
+    out = expand_splits(m, reviewed)
+    assert [(q["name"], q["spellings"], q["label"], q["category"], q["pattern"]) for q in out] == [
+        ("zelle payment to ann", ["zelle payment to ann"], "Expense", "Zelle", "zelle payment to"),
+        ("zelle payment to dad", ["zelle payment to dad"], "Expense", "Zelle", "")]
+    after = merchants_from(*apply_conversion(m, out))
+    assert merchant_of(rows["description"], after).tolist() == ["zelle payment to ann", "zelle payment to dad"]
+
+
+def test_a_split_spelling_follows_the_cards_reviewed_label_and_never_clashes_by_name(tmp_path):
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT TO ANN", -50.0, ""), ("2026-01-03", "ZELLE PAYMENT TO DAD", -20.0, ""))
+    m = read_merchants(tmp_path)
+    (p,) = convert_proposals(rows, _keywords(("zelle payment to", "Expense", "Zelle")), m)
+    reviewed = [dict(p, name="zelle payment to dad", label="Transfer", split=["zelle payment to dad"])]
+    assert review_choices([p], reviewed) == {"zelle payment to ann": ("Transfer", None),
+                                             "zelle payment to dad": ("Transfer", None)}
+    names = [q["name"].casefold() for q in expand_splits(m, reviewed)]
+    assert len(set(names)) == 2
 
 
 def test_default_names_never_collide(tmp_path):

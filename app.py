@@ -25,6 +25,7 @@ from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
     ALIASES_NAME, MERCHANTS_NAME, apply_conversion, convert_proposals, describe_label, dismiss, display_name,
+    expand_splits,
     freeze_keyword_labels, keep_past, review_choices, spend_by_spelling, valid_keywords,
     find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
     pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, rule_labels, save_change,
@@ -1288,6 +1289,10 @@ def _convert_view():
             dcc.Checklist(id={"type": "cv-spell", "rule": i}, className="lg-remember", value=p["spellings"],
                           options=[{"label": f" {s}", "value": s} for s in p["spellings"]])
             if p["spellings"] else html.Div("Matches nothing today: kept as a pattern only", className="hint"),
+            dcc.Dropdown(id={"type": "cv-split", "rule": i}, multi=True, value=[], className="lg-sub",
+                         placeholder="Split spellings out into their own merchants",
+                         options=[{"label": s, "value": s} for s in p["spellings"]])
+            if len(p["spellings"]) > 1 else None,
             html.Div("No rule unless you pick one: the keywords labeled these rows using text beyond the spelling "
                      "(such as a store number), so a rule could label a new store's rows differently. Past rows keep "
                      "their labels either way.", className="hint") if p["partial"] else None,
@@ -2934,7 +2939,7 @@ def _conversion(m, reviewed: list[dict]):
     choices = review_choices(_convert_proposals(), reviewed)
     shown = rule_labels(master, m, RULES_PATH)
     frozen, kept, stored = freeze_keyword_labels(master, m, RULES_PATH, choices)
-    props, dropped = keep_past(frozen, kept, m, reviewed)
+    props, dropped = keep_past(frozen, kept, m, expand_splits(m, reviewed))
     after = merchants_from(*apply_conversion(m, props))
     now = rule_labels(frozen, after, None)
     moved = (now != shown).any(axis=1)
@@ -2958,6 +2963,9 @@ def _convert_preview(reviewed: list[dict]):
     n = len(reviewed)
     text = (f"Convert {n} rules.csv keyword{'s' if n != 1 else ''} into merchants: "
             f"{'; '.join(moves) or 'no labels change'}")
+    split = sum(len(p.get("split") or []) for p in reviewed)
+    if split:
+        text += f" · {split} spelling{'s' if split != 1 else ''} split out, each into its own merchant"
     if kept:
         text += f" · {kept} row{'s' if kept != 1 else ''} keep their label as a stored label"
     partial = sum(1 for p in reviewed if p.get("partial") and not (p["label"] or p["category"]))
@@ -3038,16 +3046,20 @@ def _do_convert(pending: dict, version):
     State({"type": "cv-pat", "rule": ALL}, "value"),
     State({"type": "cv-spell", "rule": ALL}, "value"),
     State({"type": "cv-spell", "rule": ALL}, "id"),
+    State({"type": "cv-split", "rule": ALL}, "value"),
+    State({"type": "cv-split", "rule": ALL}, "id"),
     prevent_initial_call=True,
 )
-def convert_click(_n, names, labels, cats, pats, spells, spell_ids):
+def convert_click(_n, names, labels, cats, pats, spells, spell_ids, splits, split_ids):
     props = _convert_proposals()
     if not props or len(props) != len(names):
         return None, _HIDDEN, "", "The list changed — reopen CONVERT RULES to see it again."
     ticked = {i["rule"]: v for i, v in zip(spell_ids, spells)}
+    split = {i["rule"]: v or [] for i, v in zip(split_ids, splits)}
     reviewed = [dict(p, name=(names[i] or "").strip(), label=labels[i] or "", category=(cats[i] or "").strip(),
                      pattern=p["pattern"] if "keep" in (pats[i] or []) else "",
-                     spellings=[s for s in p["spellings"] if s in ticked.get(i, [])])
+                     spellings=[s for s in p["spellings"] if s in ticked.get(i, [])],
+                     split=[s for s in split.get(i, []) if s in ticked.get(i, [])])
                 for i, p in enumerate(props)]
     pending, text = _convert_preview(reviewed)
     if pending is None:
