@@ -60,7 +60,7 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - Nameless rows sit in their own NO MERCHANT NAME section after the merchants, each labeled one at a time.
 
 ## All merchants (`_merchants_view`, ticket 04)
-- Read-only so far. All time: it never reads the period bar. Top `LABEL_TOP_N` in the chosen sort, the rest folded into one `Other · N merchants` line, then a `No merchant name` line.
+- Read-only so far. All time: it never reads the period bar. The `LABEL_TOP_N` biggest by spend get cards, shown in the chosen sort; the rest, always the smallest, fold into one `Other · N merchants` line (the user's choice: no sort may fold a big merchant away), then a `No merchant name` line.
 - Cards show the merchant's own rule *and* the labels its rows carry: until `rules.csv` keywords are converted (ticket 08), a row can be labeled by a keyword while its merchant says "No rule".
 - The sort switch (`merchant-sort`) lives in the static layout, hidden off this tab; a change bumps `label-version` to re-render.
 - The settings menu's LABELS & MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.

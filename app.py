@@ -1031,8 +1031,10 @@ def _merchants_view(sort: str):
     LABEL_TOP_N in the chosen order and the rest folded into one line."""
     # Copies waiting on a replacement-card question count nowhere else either
     items, nameless = merchant_overview(_without_pending_dups(df), _merchants())
-    ordered = sort_merchants(items, sort)
-    shown, rest = ordered[:LABEL_TOP_N], ordered[LABEL_TOP_N:]
+    # The biggest merchants by spend always get a card, in the chosen order;
+    # "Other" always holds the smallest, so no sort can fold a big one away
+    by_spend = sort_merchants(items, "spend")
+    shown, rest = sort_merchants(by_spend[:LABEL_TOP_N], sort), by_spend[LABEL_TOP_N:]
     out = [_merchant_card(i) for i in shown]
     if rest:
         out.append(html.Div(f"Other · {len(rest)} merchant{'s' if len(rest) != 1 else ''} · "

@@ -437,19 +437,32 @@ def test_all_merchants_lists_every_merchant_all_time_and_folds_the_rest(appmod, 
     g_ = _live(appmod)
     children, summary = _merchants_view(g_, sort)
     items, nameless = merchant_overview(g_["df"], g_["_merchants"]())
-    ordered = sort_merchants(items, sort)
     n = g_["LABEL_TOP_N"]
     assert len(items) > n                                        # the demo has enough to fold
+    by_spend = sort_merchants(items, "spend")
+    biggest, rest = by_spend[:n], by_spend[n:]                   # "Other" always holds the smallest
     texts = list(_in_order(children))
     titles = [t for t in texts if t in {i["name"] for i in items}]
-    assert titles == [i["name"] for i in ordered[:n]]            # the top ones, in the chosen order
-    rest = ordered[n:]
+    assert titles == [i["name"] for i in sort_merchants(biggest, sort)]   # the biggest, in the chosen order
+    assert max(i["out"] for i in rest) <= min(i["out"] for i in biggest)
     other = next(t for t in texts if t.startswith("Other · "))
     assert other == (f"Other · {len(rest)} merchants · {g_['_dollar0'](sum(i['out'] for i in rest))} out · "
                      f"{g_['_dollar0'](sum(i['inn'] for i in rest))} in")
     assert any(t.startswith(f"No merchant name · {nameless['rows']} rows") for t in texts)
     assert summary == (f"{len(items)} merchants · {g_['_dollar0'](sum(i['out'] for i in items))} out · "
                        f"{g_['_dollar0'](sum(i['inn'] for i in items))} in, all time")
+
+
+def test_needs_attention_never_folds_away_a_big_merchant(appmod, merchant_files):
+    g_ = _live(appmod)
+    # The biggest spender (the demo's rent) has a rule, so it needs no
+    # attention and sorts last — yet it must keep its card, not fold into Other
+    merchant_files("merchant,master_category,sub_category,patterns,added\nRent,Expense,Housing,,\n",
+                   "spelling,merchant,status\nzelle payment to alex morrow,Rent,alias\n")
+    children, _ = _merchants_view(g_, "attention")
+    texts = list(_in_order(children))
+    assert "Rent" in texts
+    assert texts.index("Rent") > texts.index("PAYMENT TO CHASE CARD ENDING IN")   # still last in attention order
 
 
 def test_all_merchants_survives_a_merchant_with_no_dates_and_counts_like_the_rest(appmod, monkeypatch):
