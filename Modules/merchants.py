@@ -70,6 +70,15 @@ def read_merchants(folder) -> Merchants:
     if aliases is None:
         problems.append(f"{ALIASES_NAME} can't be read, so no spellings are merged")
         aliases = pd.DataFrame(columns=ALIAS_COLUMNS)
+    return merchants_from(table, aliases, problems)
+
+
+def merchants_from(table: pd.DataFrame, aliases: pd.DataFrame, problems: list[str] | None = None) -> Merchants:
+    """Merchants from the two tables, trusting only what read_merchants would:
+    used for files from disk and for the result of a change (its preview)."""
+    problems = list(problems or [])
+    table = table.astype(str).apply(lambda s: s.str.strip())
+    aliases = aliases.astype(str).apply(lambda s: s.str.strip())
     table = table[table["merchant"] != ""]                       # Excel leaves empty rows
     for name in table.loc[table["merchant"].duplicated(), "merchant"].unique():
         problems.append(f"{name} is listed twice in {MERCHANTS_NAME} (the first row is used)")
@@ -238,6 +247,90 @@ def remember_check(df: pd.DataFrame, group: dict, merchants: Merchants) -> dict:
         return out
     out.update(ok=True, blocking=False)
     return out
+
+
+# ── Merge, split, rename (ticket 05) ──────────────────────────────────────────
+# Each returns (table, aliases, adding) for save_merchants(..., adding=adding):
+# adding is True when the change creates a merchant row, so that row is
+# written before any alias points at it.
+
+def _spellings(merchants: Merchants, name: str) -> list[str]:
+    """The spellings aliased to `name`, or the bare spelling itself."""
+    own = [s for s, m in merchants.alias_of.items() if m == name]
+    return own or ([name] if name not in set(merchants.table["merchant"]) else [])
+
+
+def _point(aliases: pd.DataFrame, spellings: list[str], name: str) -> pd.DataFrame:
+    """Aliases with each of `spellings` tied to `name` and nothing else."""
+    kept = aliases[~(aliases["spelling"].isin(spellings) & (aliases["status"] == "alias"))]
+    new = pd.DataFrame([{"spelling": s, "merchant": name, "status": "alias"} for s in spellings], columns=ALIAS_COLUMNS)
+    return pd.concat([kept, new], ignore_index=True)
+
+
+def _new_row(name: str) -> pd.DataFrame:
+    return pd.DataFrame([{"merchant": name, "master_category": "", "sub_category": "", "patterns": "", "added": ""}],
+                        columns=MERCHANT_COLUMNS)
+
+
+def merge(merchants: Merchants, source: str, target: str, spend: dict[str, float]):
+    """Every spelling of `source` moves to `target`, and `source`'s own row
+    (its rule) goes. Merging two bare spellings makes a new merchant, named
+    after whichever spends more (`spend`: money out by merchant)."""
+    table, named = merchants.table, set(merchants.table["merchant"])
+    moving = _spellings(merchants, source)
+    adding = target not in named
+    if adding and source not in named and spend.get(source, 0) > spend.get(target, 0):
+        source, target = target, source                       # the bigger spender names it
+        moving = _spellings(merchants, source)
+    table = table[table["merchant"] != source]
+    if adding:
+        table = pd.concat([table, _new_row(target)], ignore_index=True)
+    aliases = _point(merchants.aliases, moving + _spellings(merchants, target), target)
+    return table.reset_index(drop=True), aliases, adding
+
+
+def split(merchants: Merchants, spelling: str):
+    """`spelling` leaves its merchant and becomes its own (no rule yet)."""
+    aliases = merchants.aliases
+    aliases = aliases[~((aliases["spelling"] == spelling) & (aliases["status"] == "alias"))]
+    return merchants.table, aliases.reset_index(drop=True), False
+
+
+def rename(merchants: Merchants, old: str, new: str, taken: set[str]):
+    """`old` is called `new`, keeping its rule and spellings. A bare
+    spelling gets a merchant row of its own. `taken`: every merchant name in
+    use, which a rename may not collide with."""
+    new = new.strip()
+    if not new:
+        raise ValueError("A merchant needs a name")
+    if new != old and new in taken:
+        raise ValueError(f"Another merchant is already called {new}")
+    table = merchants.table
+    if old in set(table["merchant"]):
+        table = table.assign(merchant=table["merchant"].where(table["merchant"] != old, new))
+    else:
+        table = pd.concat([table, _new_row(new)], ignore_index=True)
+    return table, _point(merchants.aliases, _spellings(merchants, old), new), True
+
+
+def label_changes(hand: pd.DataFrame, before: Merchants, after: Merchants, rules_path) -> list[dict]:
+    """What a change would relabel: rows whose label (after rules, on top of
+    the hand labels in `hand`) differs, as [{from, to, rows, dollars}]. The
+    rules.csv keywords are applied too, so the preview is what loading shows."""
+    from Modules.transforms import apply_auto_categories
+
+    def labels(m):
+        frame = hand[["description", "amount", "master_category", "sub_category"]].copy()
+        frame["master_category"] = frame["master_category"].fillna("").astype(str).str.strip()
+        frame["sub_category"] = frame["sub_category"].fillna("").astype(str).str.strip()
+        apply_rules(frame, m)
+        apply_auto_categories(frame, rules_path)
+        return frame["master_category"]
+    a, b = labels(before), labels(after)
+    moved = pd.DataFrame({"from": a, "to": b, "dollars": hand["amount"].abs()})[a != b]
+    out = moved.groupby(["from", "to"], sort=True).agg(rows=("dollars", "size"), dollars=("dollars", "sum"))
+    return [{"from": f, "to": t, "rows": int(r.rows), "dollars": round(float(r.dollars), 2)}
+            for (f, t), r in out.iterrows()]
 
 
 def display_name(name: str) -> str:

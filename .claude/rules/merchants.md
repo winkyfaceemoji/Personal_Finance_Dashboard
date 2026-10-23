@@ -26,6 +26,11 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - `remember(merchants, name, spellings, label, category, today)` returns both files with the rule set; a merchant that doesn't exist yet is made, so an unmerged spelling becomes a merchant named after itself, with its alias. Save it with `adding=True`.
 - `snapshot_files` keeps both files' exact bytes as latin-1 text (JSON-safe), and `restore_files` writes them back through the same two-file write, aliases first. A file that was missing is removed again.
 
+## Merge, split, rename
+- `merge`, `split` and `rename` return `(table, aliases, adding)`; pass `adding` straight to `save_merchants`. It is True whenever the change creates a merchant row, so that row lands before any alias points at it.
+- Merging two bare spellings makes a new merchant named after the bigger spender. Merging away a named merchant drops its row, and with it its rule: the target's rule applies from then on.
+- `merchants_from(table, aliases)` builds Merchants exactly as the reader would, so a preview of a change (`label_changes`) trusts the same aliases loading will. `label_changes` applies the `rules.csv` keywords too, so the preview is what the next load shows.
+
 ## Overview (`merchant_overview`, `sort_merchants`)
 - One item per merchant over **all** its rows. `out`/`inn` are positive sums of money out and in. `labels` are the valid labels its rows carry; `has_rule` is the merchant's own rule only.
 - Needs attention: open suggestions (always 0 until ticket 07 fills `suggestions`), then rows whose labels differ, then no rule, each by spend.

@@ -151,6 +151,16 @@ def test_all_merchants_view_and_its_sort_stay_readable(browser, server, theme):
     _walk_pills(page, "#merchant-sort", f"{theme} merchant sort")
     _assert_readable(page, "#label-list .lg-name, #label-list .lg-tag, #label-list .lg-example, "
                            "#label-list .hint", f"{theme}: merchant cards")
+    # A change previews before it applies: rename the first merchant, see the preview, cancel
+    page.locator("#label-list .lg-rows summary", has_text="Change this merchant").first.click()
+    opened = page.locator("#label-list details[open]").first
+    opened.locator("input").first.fill("Renamed in a test")
+    opened.locator("button", has_text="RENAME").click()
+    page.wait_for_selector("#merchant-preview-text:has-text('Rename')")
+    _assert_readable(page, "#merchant-preview-text, #merchant-preview button, #label-list .lg-rows button",
+                     f"{theme}: merchant change preview")
+    page.click("#merchant-cancel")
+    page.wait_for_selector("#merchant-preview", state="hidden")
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

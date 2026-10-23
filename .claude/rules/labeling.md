@@ -60,8 +60,10 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - Nameless rows sit in their own NO MERCHANT NAME section after the merchants, each labeled one at a time.
 
 ## All merchants (`_merchants_view`, ticket 04)
-- Read-only so far. All time: it never reads the period bar. The `LABEL_TOP_N` biggest by spend get cards, shown in the chosen sort; the rest, always the smallest, fold into one `Other · N merchants` line (the user's choice: no sort may fold a big merchant away), then a `No merchant name` line.
+- All time: it never reads the period bar. The `LABEL_TOP_N` biggest by spend get cards, shown in the chosen sort; the rest, always the smallest, fold into one `Other · N merchants` line (the user's choice: no sort may fold a big merchant away), then a `No merchant name` line.
 - Cards show the merchant's own rule *and* the labels its rows carry: until `rules.csv` keywords are converted (ticket 08), a row can be labeled by a keyword while its merchant says "No rule".
+- Merge, split and rename (ticket 05) never apply on the click. `_merchant_preview` stores the pending change (with the merchant files' `version`) in `merchant-pending` and shows what it would relabel; CONFIRM (`_do_merchant_change`) applies it only if the files are still that version, else writes nothing. Both go through `_merchant_change`, so the preview and the result can't disagree. A refusal (name in use, no merge target) goes to the status line, never next to a CONFIRM.
+- A merchant change writes only the merchant files: its undo record has no `backup`, and `_do_undo` restores the master only when one is there.
 - The sort switch (`merchant-sort`) lives in the static layout, hidden off this tab; a change bumps `label-version` to re-render.
 - The settings menu's LABELS & MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
 

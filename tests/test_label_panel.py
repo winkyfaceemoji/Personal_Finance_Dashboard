@@ -499,6 +499,95 @@ def test_the_merchants_button_opens_where_the_work_is(appmod, monkeypatch):
     assert g_["_opening_tab"]("open-transfer-check") == "pairs"
 
 
+# ── Merge, split, rename (ticket 05) ──────────────────────────────────────────
+
+def _open_spellings(g_, k):
+    """k bare spellings that are still wholly unlabeled, one direction of money,
+    and not merged: the app module (and its master) is shared across tests."""
+    picks = [g["mkey"] for g in g_["_todo_groups"]("all")
+             if not g["fallback"] and not g["mixed"] and g["mkey"] == g["mkey"].lower()
+             and g["spellings"] == [g["mkey"]] and not g["mkey"].startswith(("payment", "zelle", "venmo"))]
+    assert len(picks) >= k
+    return picks[:k]
+
+
+def _travel(spelling):
+    return ("merchant,master_category,sub_category,patterns,added" + chr(10) + "Travel,Expense,Trips,," + chr(10),
+            "spelling,merchant,status" + chr(10) + f"{spelling},Travel,alias" + chr(10))
+
+
+def _files_of(g_):
+    folder = g_["MASTER_PATH"].parent
+    return [folder / "merchants.csv", folder / "merchant_aliases.csv"]
+
+
+def test_merge_previews_what_it_relabels_then_does_exactly_that_and_undoes(appmod, merchant_files):
+    from Modules.merchants import display_name, merchant_of
+    g_ = _live(appmod)
+    anchor, source = _open_spellings(g_, 2)
+    merchant_files(*_travel(anchor))
+    df = g_["df"]
+    mine = merchant_of(df["description"], g_["_merchants"]()) == source
+    n, dollars = int(mine.sum()), df.loc[mine, "amount"].abs().sum()
+    assert n and (df.loc[mine, "master_category"] == "").all()
+    before = [f.read_bytes() for f in _files_of(g_)]
+    pending, text = g_["_merchant_preview"]("merge", source, "Travel")
+    assert text == (f"Merge {display_name(source)} into Travel: {n} row{'s' if n != 1 else ''} "
+                    f"({g_['_dollar0'](dollars)}) unlabeled → Expense")
+    status, undo, _, version = g_["_do_merchant_change"](pending, 0)
+    assert status == f"Merged {display_name(source)} into Travel." and version == 1
+    df = g_["df"]
+    assert (df.loc[mine, "master_category"] == "Expense").all()          # exactly what the preview said
+    assert (merchant_of(df["description"], g_["_merchants"]())[mine] == "Travel").all()
+    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status2 == "Undone." and [f.read_bytes() for f in _files_of(g_)] == before
+
+
+def test_split_takes_a_spelling_out_and_its_rule_with_it(appmod, merchant_files):
+    g_ = _live(appmod)
+    a, b = _open_spellings(g_, 2)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10) + "Shelves,Expense,,," + chr(10),
+                   "spelling,merchant,status" + chr(10) + f"{a},Shelves,alias" + chr(10) + f"{b},Shelves,alias" + chr(10))
+    pending, text = g_["_merchant_preview"]("split", "Shelves", None, b)
+    assert text.startswith(f"Split {b} out of Shelves: ") and "Expense → unlabeled" in text
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status == f"Split {b} out of Shelves."
+    assert b in {g["mkey"] for g in g_["_todo_groups"]("all")}           # its own merchant again, unlabeled
+
+
+def test_rename_keeps_everything_and_refuses_a_name_in_use(appmod, merchant_files):
+    g_ = _live(appmod)
+    anchor, other = _open_spellings(g_, 2)
+    merchant_files(*_travel(anchor))
+    pending, text = g_["_merchant_preview"]("rename", "Travel", "Hotel")
+    assert text == "Rename Travel to Hotel: no labels change"
+    g_["_do_merchant_change"](pending, 0)
+    m = g_["_merchants"]()
+    assert m.table["merchant"].tolist() == ["Hotel"] and m.alias_of == {anchor: "Hotel"}
+    pending, text = g_["_merchant_preview"]("rename", "Hotel", other)
+    assert pending is None and text == f"Another merchant is already called {other}"
+
+
+def test_a_merchant_change_on_stale_or_locked_files_writes_nothing(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    anchor, source, third = _open_spellings(g_, 3)
+    merchant_files(*_travel(anchor))
+    pending, _ = g_["_merchant_preview"]("merge", source, "Travel")
+    files = _travel(anchor)
+    merchant_files(files[0], files[1] + f"{third},Travel,alias" + chr(10))      # changed since the preview
+    before = [f.read_bytes() for f in _files_of(g_)]
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("The merchants changed") and [f.read_bytes() for f in _files_of(g_)] == before
+    pending, _ = g_["_merchant_preview"]("merge", source, "Travel")
+
+    def locked(*a, **k):
+        raise PermissionError("Nothing changed: merchants.csv is open in another program")
+    monkeypatch.setitem(g_, "save_merchants", locked)
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("⚠ Nothing changed: merchants.csv is open in another program")
+    assert undo is g_["dash"].no_update and [f.read_bytes() for f in _files_of(g_)] == before
+
+
 def test_label_click_ignores_rerender(appmod):
     real = appmod["_is_real_click"]
     pid = '{"cat":"Expense","group":"x","sig":"s","type":"lbl-group"}.n_clicks'

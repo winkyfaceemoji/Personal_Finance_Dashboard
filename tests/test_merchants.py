@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    merchant_list, merchant_of, merchant_overview, read_merchants, remember, remember_check, restore_files,
-    save_merchants, snapshot_files, sort_merchants,
+    label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, read_merchants, remember,
+    remember_check, rename, restore_files, save_merchants, snapshot_files, sort_merchants, split,
 )
 from Modules.transforms import load_transactions
 
@@ -275,6 +275,70 @@ def test_merchant_files_round_trip_through_undo_byte_for_byte(tmp_path):
     assert read_merchants(folder).version != m.version
     restore_files(folder, json.loads(json.dumps(saved)))    # through the browser and back
     assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+# ── Merge, split, rename (ticket 05) ──────────────────────────────────────────
+
+def _after(change):
+    """The Merchants a change's (table, aliases, adding) result reads back as."""
+    table, aliases, _ = change
+    return merchants_from(table, aliases)
+
+
+def test_merging_two_bare_spellings_names_the_new_merchant_after_the_bigger_spender(tmp_path):
+    m = read_merchants(tmp_path)
+    spend = {"wholefds usq": 300.0, "wholefds ues": 900.0}
+    table, aliases, adding = merge(m, "wholefds usq", "wholefds ues", spend)
+    after = merchants_from(table, aliases)
+    assert adding and after.problems == []
+    assert after.alias_of == {"wholefds usq": "wholefds ues", "wholefds ues": "wholefds ues"}
+
+
+def test_merging_into_a_named_merchant_moves_every_spelling_and_drops_the_old_rule(tmp_path):
+    m = read_merchants(_files(tmp_path, AMAZON[0] + "Prime Video,Income,,,\n",
+                              AMAZON[1] + "prime video,Prime Video,alias\n"))
+    after = _after(merge(m, "Prime Video", "Amazon", {}))
+    assert after.alias_of == {"amzn mktp us": "Amazon", "amazon prime": "Amazon", "prime video": "Amazon"}
+    assert after.table["merchant"].tolist() == ["Amazon"]          # its rule went with it
+    assert after.problems == []
+
+
+def test_splitting_a_spelling_out_makes_it_its_own_merchant(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    table, aliases, adding = split(m, "amazon prime")
+    after = merchants_from(table, aliases)
+    assert not adding and after.alias_of == {"amzn mktp us": "Amazon"}
+    assert merchant_of(pd.Series(["AMAZON PRIME*9XZ"]), after).tolist() == ["amazon prime"]
+
+
+def test_renaming_keeps_the_rule_and_every_spelling(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    after = _after(rename(m, "Amazon", "Amazon (shopping)", taken=set()))
+    assert after.alias_of == {"amzn mktp us": "Amazon (shopping)", "amazon prime": "Amazon (shopping)"}
+    assert after.table.set_index("merchant").loc["Amazon (shopping)", "master_category"] == "Expense"
+
+
+def test_renaming_a_bare_spelling_gives_it_a_merchant_of_its_own(tmp_path):
+    after = _after(rename(read_merchants(tmp_path), "trader joe s", "Trader Joe's", taken=set()))
+    assert after.alias_of == {"trader joe s": "Trader Joe's"} and after.problems == []
+
+
+def test_a_rename_to_a_name_already_in_use_is_refused(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    with pytest.raises(ValueError, match="Another merchant is already called trader joe s"):
+        rename(m, "Amazon", "trader joe s", taken={"Amazon", "trader joe s"})
+    with pytest.raises(ValueError, match="A merchant needs a name"):
+        rename(m, "Amazon", "  ", taken=set())
+
+
+def test_label_changes_lists_what_a_change_would_relabel(tmp_path):
+    before = read_merchants(_files(tmp_path, *AMAZON))
+    hand = _rows(("2026-01-02", "AMZN Mktp US*1", -20.0, ""),           # labeled by Amazon's rule
+                 ("2026-01-03", "AMZN Mktp US*2", -30.0, "Income"),     # a hand label: never moves
+                 ("2026-01-04", "PRIME VIDEO", -9.0, ""))               # unlabeled
+    after = merchants_from(*merge(before, "prime video", "Amazon", {})[:2])
+    assert label_changes(hand, before, after, None) == [
+        {"from": "", "to": "Expense", "rows": 1, "dollars": 9.0}]
 
 
 # ── All merchants (ticket 04) ─────────────────────────────────────────────────

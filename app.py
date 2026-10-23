@@ -24,8 +24,9 @@ from Modules.linked_cards import (
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
-    ALIASES_NAME, MERCHANTS_NAME, merchant_overview, read_merchants, remember, remember_check, restore_files,
-    save_merchants, snapshot_files, sort_merchants,
+    ALIASES_NAME, MERCHANTS_NAME, display_name, label_changes, merchant_overview, merchants_from, merge,
+    read_merchants, remember, remember_check, rename, restore_files, save_merchants, snapshot_files,
+    sort_merchants, split,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -641,6 +642,7 @@ app.layout = html.Div(
         # counter bumped after every write so the list re-renders
         dcc.Store(id="label-filter", data="all"),
         dcc.Store(id="label-undo"),
+        dcc.Store(id="merchant-pending"),       # a merge / split / rename waiting for CONFIRM
         dcc.Store(id="label-version", data=0),
 
         # AI chat: the conversation (memory storage, so a reload clears it),
@@ -731,6 +733,12 @@ app.layout = html.Div(
                 html.Span(id="label-status", className="settings-status"),
                 html.Button("UNDO", id="label-undo-btn", n_clicks=0,
                             className="btn-secondary btn-small", style=_HIDDEN),
+            ]),
+            # A merchant change shows what it would relabel, and waits for CONFIRM
+            html.Div(id="merchant-preview", className="label-status-row", style=_HIDDEN, children=[
+                html.Span(id="merchant-preview-text", className="settings-status"),
+                html.Button("CONFIRM", id="merchant-confirm", n_clicks=0, className="btn-primary btn-small"),
+                html.Button("CANCEL", id="merchant-cancel", n_clicks=0, className="btn-secondary btn-small"),
             ]),
             html.Div(id="label-list"),
         ])),
@@ -1023,6 +1031,33 @@ def _merchant_card(i: dict):
         _line("Patterns", i["patterns"]) if i["patterns"] else None,
         html.Div(f"{_dollar(i['out'])} out · {_dollar(i['inn'])} in · {i['rows']} txn{'s' if i['rows'] != 1 else ''}"
                  f" · {_span_text(i) if pd.notna(i['first']) else 'no dates'}", className="hint"),
+        _merchant_changes(i),
+    ])
+
+
+def _merchant_changes(i: dict):
+    """Rename, merge into another merchant, split a spelling out. Each click
+    only previews; CONFIRM above the list applies it."""
+    key = i["mkey"]
+
+    def _act(text, act, **extra):
+        return html.Button(text, id={"type": "mer-act", "merchant": key, "act": act, **extra}, n_clicks=0,
+                           className="btn-secondary btn-small")
+    return html.Details(className="lg-rows", children=[
+        html.Summary("Change this merchant"),
+        html.Div(className="lg-options", children=[
+            dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"], className="setup-input lg-sub",
+                      debounce=False),
+            _act("RENAME", "rename"),
+        ]),
+        html.Div(className="lg-options", children=[
+            dcc.Input(id={"type": "mer-into", "merchant": key}, placeholder="Merge into… (a merchant's name)",
+                      className="setup-input lg-sub", list="mer-names", debounce=False),
+            _act("MERGE", "merge"),
+        ]),
+        *[html.Div(className="lg-options", children=[html.Span(s, className="lg-example"),
+                                                     _act("SPLIT OUT", "split", spelling=s)])
+          for s in (i["spellings"] if len(i["spellings"]) > 1 else [])],
     ])
 
 
@@ -1035,7 +1070,8 @@ def _merchants_view(sort: str):
     # "Other" always holds the smallest, so no sort can fold a big one away
     by_spend = sort_merchants(items, "spend")
     shown, rest = sort_merchants(by_spend[:LABEL_TOP_N], sort), by_spend[LABEL_TOP_N:]
-    out = [_merchant_card(i) for i in shown]
+    out = [html.Datalist(id="mer-names", children=[html.Option(value=i["name"]) for i in by_spend]),
+           *[_merchant_card(i) for i in shown]]
     if rest:
         out.append(html.Div(f"Other · {len(rest)} merchant{'s' if len(rest) != 1 else ''} · "
                             f"{_dollar0(sum(i['out'] for i in rest))} out · "
@@ -1048,7 +1084,7 @@ def _merchants_view(sort: str):
     summary = (f"{len(items)} merchant{'s' if len(items) != 1 else ''} · "
                f"{_dollar0(sum(i['out'] for i in items))} out · {_dollar0(sum(i['inn'] for i in items))} in, all time")
     if not items:
-        out.insert(0, html.Div("No merchants yet", className="hint"))
+        out.insert(1, html.Div("No merchants yet", className="hint"))
     return out, summary
 
 
@@ -2633,6 +2669,122 @@ def _do_label(trig: dict, sub: str, keep_rule: bool, version, filt):
     return status, undo, _SHOWN_INLINE, bumped
 
 
+def _hand_labels() -> pd.DataFrame:
+    """The master as saved: hand labels only, before any rule."""
+    master = pd.read_csv(MASTER_PATH, dtype=str, keep_default_na=False)
+    master["amount"] = pd.to_numeric(master["amount"], errors="coerce").fillna(0.0)
+    return master
+
+
+def _merchant_change(m, pending: dict):
+    """The (table, aliases, adding) a pending merge / split / rename makes of
+    `m`, and what to call it. ValueError for a name that can't be used."""
+    items, _ = merchant_overview(_without_pending_dups(df), m)
+    act, key, value = pending["act"], pending["mkey"], (pending.get("value") or "").strip()
+    if act == "rename":
+        if value in (key, display_name(key)):
+            raise ValueError("That's already its name")
+        taken = {i["mkey"] for i in items} | set(m.table["merchant"])
+        return rename(m, key, value, taken), f"Rename {display_name(key)} to {value}", "Renamed"
+    if act == "merge":
+        by_name = {i["name"]: i["mkey"] for i in items} | {i["mkey"]: i["mkey"] for i in items}
+        target = by_name.get(value)
+        if target is None or target == key:
+            raise ValueError("Pick another merchant to merge into (start typing its name)")
+        spend = {i["mkey"]: i["out"] for i in items}
+        return (merge(m, key, target, spend), f"Merge {display_name(key)} into {display_name(target)}",
+                f"Merged {display_name(key)} into {display_name(target)}")
+    spelling = pending["spelling"]
+    return split(m, spelling), f"Split {spelling} out of {display_name(key)}", f"Split {spelling} out of {display_name(key)}"
+
+
+def _merchant_preview(act: str, mkey: str, value=None, spelling=None):
+    """(pending change, preview text): what CONFIRM would do and which labels
+    it would move, or (None, why it can't)."""
+    m = _merchants()
+    pending = {"act": act, "mkey": mkey, "value": value, "spelling": spelling, "version": m.version}
+    try:
+        (table, aliases, _), what, _ = _merchant_change(m, pending)
+    except ValueError as e:
+        return None, str(e)
+    moves = label_changes(_hand_labels(), m, merchants_from(table, aliases), RULES_PATH)
+    effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
+                       f"{r['from'] or 'unlabeled'} → {r['to'] or 'unlabeled'}" for r in moves) or "no labels change"
+    return pending, f"{what}: {effect}"
+
+
+def _do_merchant_change(pending: dict, version):
+    """Apply a previewed change, if the merchant files are still the ones it
+    was previewed on. Only the merchant files change; UNDO puts them back.
+    Returns (status, undo, undo-button style, version)."""
+    global df
+    if not pending:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    with MASTER_LOCK:
+        m = _merchants()
+        if m.version != pending["version"]:
+            return ("The merchants changed since the preview — nothing was changed.",
+                    dash.no_update, dash.no_update, (version or 0) + 1)
+        try:
+            (table, aliases, adding), _, done = _merchant_change(m, pending)
+        except ValueError as e:
+            return str(e), dash.no_update, dash.no_update, dash.no_update
+        folder = MASTER_PATH.parent
+        saved = snapshot_files(folder)
+        try:
+            save_merchants(folder, table, aliases, adding=adding)
+        except PermissionError as e:
+            return f"⚠ {e} (Excel?) — close it and try again.", dash.no_update, dash.no_update, dash.no_update
+        undo = {"merchant_files": saved, "stamps": _stamps()}
+    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    return f"{done}.", undo, _SHOWN_INLINE, (version or 0) + 1
+
+
+@app.callback(
+    Output("merchant-pending",      "data"),
+    Output("merchant-preview",      "style"),
+    Output("merchant-preview-text", "children"),
+    Output("label-status",          "children", allow_duplicate=True),
+    Input({"type": "mer-act", "merchant": ALL, "act": ALL, "spelling": ALL}, "n_clicks"),
+    Input({"type": "mer-act", "merchant": ALL, "act": ALL}, "n_clicks"),
+    State({"type": "mer-name", "merchant": ALL}, "value"),
+    State({"type": "mer-name", "merchant": ALL}, "id"),
+    State({"type": "mer-into", "merchant": ALL}, "value"),
+    State({"type": "mer-into", "merchant": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def merchant_action(_s, _a, names, name_ids, intos, into_ids):
+    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    trig = ctx.triggered_id
+    key = trig["merchant"]
+    value = {"rename": dict(zip([i["merchant"] for i in name_ids], names)),
+             "merge": dict(zip([i["merchant"] for i in into_ids], intos))}.get(trig["act"], {}).get(key)
+    pending, text = _merchant_preview(trig["act"], key, value, trig.get("spelling"))
+    if pending is None:                           # can't be done: say why, offer nothing to confirm
+        return None, _HIDDEN, "", text
+    return pending, {"display": "flex"}, text, ""
+
+
+@app.callback(
+    Output("label-status",     "children", allow_duplicate=True),
+    Output("label-undo",       "data",     allow_duplicate=True),
+    Output("label-undo-btn",   "style",    allow_duplicate=True),
+    Output("label-version",    "data",     allow_duplicate=True),
+    Output("merchant-preview", "style",    allow_duplicate=True),
+    Output("merchant-pending", "data",     allow_duplicate=True),
+    Input("merchant-confirm", "n_clicks"),
+    Input("merchant-cancel",  "n_clicks"),
+    State("merchant-pending", "data"),
+    State("label-version",    "data"),
+    prevent_initial_call=True,
+)
+def merchant_confirm(_ok, _cancel, pending, version):
+    if ctx.triggered_id == "merchant-cancel" or not pending:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, _HIDDEN, None
+    return (*_do_merchant_change(pending, version), _HIDDEN, None)
+
+
 def _do_undo(undo: dict, version):
     """Revert the last label action — only if none of the tracked files has
     changed since (otherwise restoring would throw that newer change away)."""
@@ -2650,7 +2802,8 @@ def _do_undo(undo: dict, version):
             if undo.get("merchant_files"):
                 restore_files(folder, undo["merchant_files"])
             try:
-                restore_backup(Path(undo["backup"]), MASTER_PATH)
+                if undo.get("backup"):              # a merchant change wrote no master
+                    restore_backup(Path(undo["backup"]), MASTER_PATH)
             except PermissionError:
                 restore_files(folder, labeled)      # not half undone: put the rule back too
                 raise
