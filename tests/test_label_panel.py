@@ -448,7 +448,33 @@ def test_all_merchants_lists_every_merchant_all_time_and_folds_the_rest(appmod, 
     assert other == (f"Other · {len(rest)} merchants · {g_['_dollar0'](sum(i['out'] for i in rest))} out · "
                      f"{g_['_dollar0'](sum(i['inn'] for i in rest))} in")
     assert any(t.startswith(f"No merchant name · {nameless['rows']} rows") for t in texts)
-    assert summary == (f"{len(items)} merchants · {g_['_dollar0'](sum(i['out'] for i in items))} out, all time")
+    assert summary == (f"{len(items)} merchants · {g_['_dollar0'](sum(i['out'] for i in items))} out · "
+                       f"{g_['_dollar0'](sum(i['inn'] for i in items))} in, all time")
+
+
+def test_all_merchants_survives_a_merchant_with_no_dates_and_counts_like_the_rest(appmod, monkeypatch):
+    g_ = _live(appmod)
+    frame = g_["df"].copy()
+    hit = frame["description"].str.startswith("NORTHGATE AIRLINES")
+    frame.loc[hit, "date"] = pd.NaT                           # every date emptied in Excel
+    monkeypatch.setitem(g_, "df", frame)
+    children, summary = _merchants_view(g_)                   # must not raise
+    texts = list(_in_order(children))
+    assert any(t.endswith("· no dates") for t in texts)
+    assert summary.endswith(" in, all time") and " out · " in summary   # money in is in the summary too
+    # Copies waiting on a replacement-card question count nowhere else, so not here either
+    monkeypatch.setitem(g_, "_without_pending_dups", lambda d: d[~d["description"].str.startswith("NORTHGATE")])
+    _, summary2 = _merchants_view(g_)
+    assert summary2.split(" merchant")[0] == str(int(summary.split(" merchant")[0]) - 1)
+
+
+def test_all_merchants_still_counts_nameless_rows_with_no_merchants(appmod, monkeypatch):
+    g_ = _live(appmod)
+    frame = g_["df"]
+    monkeypatch.setitem(g_, "df", frame[frame["description"].str.startswith("REAL TIME PAYMENT")])
+    children, _ = _merchants_view(g_)
+    texts = list(_in_order(children))
+    assert "No merchants yet" in texts and any(t.startswith("No merchant name · ") for t in texts)
 
 
 def test_the_merchants_button_opens_where_the_work_is(appmod, monkeypatch):

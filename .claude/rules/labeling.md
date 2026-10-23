@@ -63,7 +63,7 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - Read-only so far. All time: it never reads the period bar. Top `LABEL_TOP_N` in the chosen sort, the rest folded into one `Other · N merchants` line, then a `No merchant name` line.
 - Cards show the merchant's own rule *and* the labels its rows carry: until `rules.csv` keywords are converted (ticket 08), a row can be labeled by a keyword while its merchant says "No rule".
 - The sort switch (`merchant-sort`) lives in the static layout, hidden off this tab; a change bumps `label-version` to re-render.
-- The settings menu's MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
+- The settings menu's LABELS & MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
 
 ## `rules.csv` keywords (until ticket 10)
 - The RULES tab still lists and deletes them. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:

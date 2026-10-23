@@ -774,7 +774,7 @@ app.layout = html.Div(
                     dcc.Download(id="export-csv-download"),
                     _settings_button("RELOAD DATA", "reload-data-btn"),
                     # The panel is otherwise reached only while something is unlabeled
-                    _settings_button("MERCHANTS", "open-merchants-btn"),
+                    _settings_button("LABELS & MERCHANTS", "open-merchants-btn"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
@@ -1018,18 +1018,20 @@ def _merchant_card(i: dict):
         # What its rows carry now, whatever labeled them (a hand label, its
         # rule, or a rules.csv keyword until those are converted)
         _line("Labeled", ", ".join(i["labels"]) or "Not labeled"),
-        _line("Spellings", shown),
+        html.Div(className="lg-text", title=", ".join(i["spellings"]), children=[
+            html.Span("Spellings", className="lg-tag"), html.Span(shown, className="lg-example")]),
         _line("Patterns", i["patterns"]) if i["patterns"] else None,
         html.Div(f"{_dollar(i['out'])} out · {_dollar(i['inn'])} in · {i['rows']} txn{'s' if i['rows'] != 1 else ''}"
-                 f" · {_span_text(i)}", className="hint"),
+                 f" · {_span_text(i) if pd.notna(i['first']) else 'no dates'}", className="hint"),
     ])
 
 
 def _merchants_view(sort: str):
     """Every merchant, all time (the period bar doesn't apply), top
     LABEL_TOP_N in the chosen order and the rest folded into one line."""
-    items, nameless = merchant_overview(df, _merchants())
-    ordered = sort_merchants(items, sort or "spend")
+    # Copies waiting on a replacement-card question count nowhere else either
+    items, nameless = merchant_overview(_without_pending_dups(df), _merchants())
+    ordered = sort_merchants(items, sort)
     shown, rest = ordered[:LABEL_TOP_N], ordered[LABEL_TOP_N:]
     out = [_merchant_card(i) for i in shown]
     if rest:
@@ -1042,9 +1044,9 @@ def _merchants_view(sort: str):
                             f" · {_dollar0(nameless['inn'])} in — they belong to no merchant",
                             className="hint lg-other"))
     summary = (f"{len(items)} merchant{'s' if len(items) != 1 else ''} · "
-               f"{_dollar0(sum(i['out'] for i in items))} out, all time")
+               f"{_dollar0(sum(i['out'] for i in items))} out · {_dollar0(sum(i['inn'] for i in items))} in, all time")
     if not items:
-        return html.Div("No merchants yet", className="hint"), summary
+        out.insert(0, html.Div("No merchants yet", className="hint"))
     return out, summary
 
 

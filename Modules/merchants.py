@@ -246,6 +246,12 @@ def display_name(name: str) -> str:
     return name if name != name.lower() else name.upper()
 
 
+def _money(rows: pd.DataFrame) -> tuple[float, float]:
+    """(money out, money in), both positive."""
+    return (round(float(-rows.loc[rows["amount"] < 0, "amount"].sum()), 2),
+            round(float(rows.loc[rows["amount"] > 0, "amount"].sum()), 2))
+
+
 def merchant_overview(df: pd.DataFrame, merchants: Merchants) -> tuple[list[dict], dict]:
     """Every merchant over all its rows, all time (the All merchants view
     ignores the period). Each item: name (as shown), mkey, spellings, label,
@@ -265,15 +271,13 @@ def merchant_overview(df: pd.DataFrame, merchants: Merchants) -> tuple[list[dict
             "spellings": sorted(set(spelling[rows.index])),
             "label": label, "category": category,
             "patterns": rule["patterns"] if rule is not None else "",
-            "out": round(float(-rows.loc[rows["amount"] < 0, "amount"].sum()), 2),
-            "inn": round(float(rows.loc[rows["amount"] > 0, "amount"].sum()), 2),
+            **dict(zip(("out", "inn"), _money(rows))),
             "rows": len(rows), "first": rows["date"].min(), "last": rows["date"].max(),
             "labels": sorted(set(rows["master_category"]) & set(PREDEFINED_CATEGORIES)),
             "has_rule": bool(label or category), "suggestions": 0,
         })
     none = df[who == ""]
-    nameless = {"rows": len(none), "out": round(float(-none.loc[none["amount"] < 0, "amount"].sum()), 2),
-                "inn": round(float(none.loc[none["amount"] > 0, "amount"].sum()), 2)}
+    nameless = {"rows": len(none), **dict(zip(("out", "inn"), _money(none)))}
     return items, nameless
 
 
