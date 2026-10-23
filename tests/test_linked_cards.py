@@ -18,7 +18,7 @@ from Modules.transforms import load_transactions
 
 REPO = Path(__file__).resolve().parent.parent
 HEAD = "Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
-PAIR = "Chase Credit|6236|9956"
+PAIR = "Chase Credit|4417|8823"
 
 
 def _row(day: str, desc: str, amount: float) -> str:
@@ -41,8 +41,8 @@ def _raw(root: Path, name: str, rows) -> None:
 
 def _replacement(root, extra_new=()):
     # The old number's export runs to Mar 27; the new number's repeats Jan–Mar
-    _raw(root, "Chase6236_Activity_20260401.csv", OLD_ONLY + SHARED + [("2026-03-27", "LAST OLD", -3.0)])
-    _raw(root, "Chase9956_Activity_20261010.csv",
+    _raw(root, "Chase4417_Activity_20260401.csv", OLD_ONLY + SHARED + [("2026-03-27", "LAST OLD", -3.0)])
+    _raw(root, "Chase8823_Activity_20261010.csv",
          SHARED + [("2026-03-27", "LAST OLD", -3.0)] + list(extra_new) + NEW_ONLY)
 
 
@@ -61,7 +61,7 @@ def _links(root) -> pd.DataFrame:
 def _write_links(root, status):
     (root / "SORTED").mkdir(parents=True, exist_ok=True)
     row = dict.fromkeys(LINK_COLUMNS, "")
-    row.update(source="Chase Credit", institution="Chase", old_card="6236", new_card="9956", status=status)
+    row.update(source="Chase Credit", institution="Chase", old_card="4417", new_card="8823", status=status)
     pd.DataFrame([row])[LINK_COLUMNS].to_csv(root / "SORTED" / "linked_cards.csv", index=False)
 
 
@@ -77,10 +77,10 @@ def test_a_replacement_is_asked_about_and_counted_once_only_after_yes(tmp_path):
     # Proposed, not merged: both numbers' copies still there
     links = _links(tmp_path)
     assert links[["source", "institution", "old_card", "new_card", "status", "matched", "from", "to"]
-                 ].values.tolist() == [["Chase Credit", "Chase", "6236", "9956", "proposed", "26/26",
+                 ].values.tolist() == [["Chase Credit", "Chase", "4417", "8823", "proposed", "26/26",
                                         "2026-01-02", "2026-03-27"]]
     assert float(links["out"].iat[0]) == DOUBLED
-    assert set(_master(tmp_path)["card_last4"]) == {"6236", "9956"}
+    assert set(_master(tmp_path)["card_last4"]) == {"4417", "8823"}
     assert "WAITING: answer the card question on the dashboard" in _report(tmp_path)
 
     # Asked again on the next import? No — one line, still waiting
@@ -92,7 +92,7 @@ def test_a_replacement_is_asked_about_and_counted_once_only_after_yes(tmp_path):
     m = _master(tmp_path)
     assert len(m) == len(OLD_ONLY) + len(SHARED) + 1 + len(NEW_ONLY)
     assert (m.groupby(["date", "description", "amount"]).size() == 1).all()
-    assert set(m["card_last4"]) == {"6236"}                                 # filed under the old number
+    assert set(m["card_last4"]) == {"4417"}                                 # filed under the old number
     assert "OK: you confirmed a replacement card" in _report(tmp_path)
 
 
@@ -100,15 +100,15 @@ def test_two_different_cards_are_never_proposed(tmp_path):
     # Overlapping for months, sharing two coincidental charges
     _raw(tmp_path, "Chase1039_Activity_20260401.csv",
          [(d, f"A {i}", -(1 + i)) for i, (d, _, _) in enumerate(SHARED)] + SHARED[:2])
-    _raw(tmp_path, "Chase6236_Activity_20260401.csv", OLD_ONLY + SHARED)
+    _raw(tmp_path, "Chase4417_Activity_20260401.csv", OLD_ONLY + SHARED)
     run_pipeline(tmp_path)
     assert not (tmp_path / "SORTED" / "linked_cards.csv").exists()
-    assert set(_master(tmp_path)["card_last4"]) == {"1039", "6236"}
+    assert set(_master(tmp_path)["card_last4"]) == {"1039", "4417"}
 
 
 def test_a_tiny_overlap_is_not_enough_to_ask(tmp_path):
-    _raw(tmp_path, "Chase6236_Activity_20260401.csv", OLD_ONLY + SHARED[:3])
-    _raw(tmp_path, "Chase9956_Activity_20261010.csv", SHARED[:3] + NEW_ONLY)
+    _raw(tmp_path, "Chase4417_Activity_20260401.csv", OLD_ONLY + SHARED[:3])
+    _raw(tmp_path, "Chase8823_Activity_20261010.csv", SHARED[:3] + NEW_ONLY)
     run_pipeline(tmp_path)
     assert not (tmp_path / "SORTED" / "linked_cards.csv").exists()
 
@@ -118,7 +118,7 @@ def test_no_keeps_them_apart_and_isnt_asked_again_but_the_check_says_so(tmp_path
     run_pipeline(tmp_path)
     assert answer_link(_mpath(tmp_path), PAIR, "proposed", "different")
     run_pipeline(tmp_path)
-    assert set(_master(tmp_path)["card_last4"]) == {"6236", "9956"}
+    assert set(_master(tmp_path)["card_last4"]) == {"4417", "8823"}
     assert _links(tmp_path)["status"].tolist() == ["different"]
     assert pending_links(_mpath(tmp_path)) == []
     assert "WARNING: you said these are different cards, but they share almost every charge" \
@@ -142,8 +142,8 @@ def test_a_typo_in_the_status_asks_again_instead_of_settling_it(tmp_path):
     _replacement(tmp_path)
     _write_links(tmp_path, "sme")
     run_pipeline(tmp_path)
-    assert set(_master(tmp_path)["card_last4"]) == {"6236", "9956"}       # not merged
-    assert read_links(_mpath(tmp_path)).attrs["unknown"] == [("Chase Credit", "6236", "9956", "sme")]
+    assert set(_master(tmp_path)["card_last4"]) == {"4417", "8823"}       # not merged
+    assert read_links(_mpath(tmp_path)).attrs["unknown"] == [("Chase Credit", "4417", "8823", "sme")]
     assert len(pending_links(_mpath(tmp_path))) == 1
     assert 'linked_cards.csv says "sme"' in _report(tmp_path)
 
@@ -158,7 +158,7 @@ def test_an_unreadable_links_file_stops_the_import_before_anything_changes(tmp_p
     bad = sorted_ / "linked_cards.csv"
     bad.write_text(bad.read_text().replace("status", "Status ", 1).replace("source", "Source x", 1))
     before = {f.name: f.read_bytes() for f in sorted_.glob("*.csv")}
-    _raw(tmp_path, "Chase9956_Activity_20261011.csv", NEW_ONLY + [("2026-04-20", "LATER", -9.0)])
+    _raw(tmp_path, "Chase8823_Activity_20261011.csv", NEW_ONLY + [("2026-04-20", "LATER", -9.0)])
 
     run_pipeline(tmp_path)
     # Nothing written: not the master (the card isn't split again), not the
@@ -179,7 +179,7 @@ def test_a_same_card_re_download_isnt_reported_as_left_out(tmp_path):
     answer_link(_mpath(tmp_path), PAIR, "proposed", "same")
     re_download = [r for r in SHARED[9:18]]
     re_download[0] = (re_download[0][0], re_download[0][1], -48.0)
-    _raw(tmp_path, "Chase6236_Activity_20260315.csv", re_download)
+    _raw(tmp_path, "Chase4417_Activity_20260315.csv", re_download)
     run_pipeline(tmp_path)
     assert read_overlap_only(_mpath(tmp_path)).empty
 
@@ -190,9 +190,9 @@ def test_a_label_on_a_charge_only_the_losing_export_has_is_kept_not_absorbed(tmp
     # remain, two labels were the new card's copies — and the third ride's
     # label is kept as unmatched (the ride itself is reported as left out).
     ride = ("2026-02-03", "TRANSIT", -2.75)
-    _raw(tmp_path, "Chase6236_Activity_20260401.csv",
+    _raw(tmp_path, "Chase4417_Activity_20260401.csv",
          OLD_ONLY + SHARED + [ride, ride, ("2026-03-27", "LAST OLD", -3.0)])
-    _raw(tmp_path, "Chase9956_Activity_20261010.csv",
+    _raw(tmp_path, "Chase8823_Activity_20261010.csv",
          SHARED + [ride, ride, ride, ("2026-03-27", "LAST OLD", -3.0)] + NEW_ONLY)
     run_pipeline(tmp_path)
     m = _master(tmp_path)
@@ -215,20 +215,20 @@ def test_labels_on_either_copy_survive_yes_and_only_a_real_conflict_is_shown(tmp
     _replacement(tmp_path)
     run_pipeline(tmp_path)                                   # proposed: both copies in the master
     m = _master(tmp_path)
-    _label(m, "SHOP 0", "6236", "Expense", "Shopping")       # only the old copy labeled
-    _label(m, "SHOP 1", "9956", "Expense", "Gifts")          # only the new copy labeled
-    _label(m, "SHOP 2", "6236", "Expense", "Shopping")       # both, the same
-    _label(m, "SHOP 2", "9956", "Expense", "Shopping")
-    _label(m, "SHOP 3", "6236", "Expense", "Shopping")       # both, different
-    _label(m, "SHOP 3", "9956", "Transfer")
-    _label(m, "SHOP 4", "9956", "Transfer")                  # a Transfer on one copy only
-    _label(m, "NEW 0", "9956", "Expense", "Gas")             # new card, outside the overlap
+    _label(m, "SHOP 0", "4417", "Expense", "Shopping")       # only the old copy labeled
+    _label(m, "SHOP 1", "8823", "Expense", "Gifts")          # only the new copy labeled
+    _label(m, "SHOP 2", "4417", "Expense", "Shopping")       # both, the same
+    _label(m, "SHOP 2", "8823", "Expense", "Shopping")
+    _label(m, "SHOP 3", "4417", "Expense", "Shopping")       # both, different
+    _label(m, "SHOP 3", "8823", "Transfer")
+    _label(m, "SHOP 4", "8823", "Transfer")                  # a Transfer on one copy only
+    _label(m, "NEW 0", "8823", "Expense", "Gas")             # new card, outside the overlap
     m.to_csv(_mpath(tmp_path), index=False)
 
     # The check, before the answer, says what YES will do to them
     report = _report(tmp_path)
     assert "Labels on the two copies: 1 same on both, 3 on one copy only, 21 on neither, 1 different" in report
-    assert "SHOP 3: 6236 says Expense / Shopping, 9956 says Transfer" in report
+    assert "SHOP 3: 4417 says Expense / Shopping, 8823 says Transfer" in report
     assert "SHOP 4: Transfer" in report
 
     answer_link(_mpath(tmp_path), PAIR, "proposed", "same")
@@ -258,7 +258,7 @@ def test_waiting_copies_are_kept_out_of_labeling(tmp_path):
     df = load_transactions(_mpath(tmp_path))
     mask = pending_duplicates(df, pending_links(_mpath(tmp_path)))
     assert mask.sum() == len(SHARED) + 1
-    assert set(df.loc[mask, "card_last4"]) == {"9956"}
+    assert set(df.loc[mask, "card_last4"]) == {"8823"}
     # Works on a slice too: one month holds both copies
     jan = df[df["date"].dt.month.eq(1) & df["date"].dt.year.eq(2026)]
     assert pending_duplicates(jan, pending_links(_mpath(tmp_path))).sum() == 9
@@ -339,7 +339,7 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     g = cardapp["_do_card_answer"].__globals__
     pending = g["_pending"]()
     ask = " ".join(_texts(g["card_question_items"](pending, [], None)))
-    assert (f"Did Chase replace your card ending 6236 with 9956? 26 charges "
+    assert (f"Did Chase replace your card ending 4417 with 8823? 26 charges "
             f"(${DOUBLED:,.0f}, Jan–Mar 2026) are on both and count twice until you answer.") in ask
     assert "YES, REPLACED" in ask and "NO, I HAVE BOTH" in ask
 
@@ -360,19 +360,19 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     assert g["_pending"]() == [] and len(g["df"]) == n_before - (len(SHARED) + 1)
     note = " ".join(_texts(g["card_question_items"](
         [], [a for a in answered_links(g["MASTER_PATH"]) if a["id"] == ui["just"]], None)))
-    assert "9956 counted as a replacement for 6236" in note and "UNDO" in note
+    assert "8823 counted as a replacement for 4417" in note and "UNDO" in note
     assert "change this in Settings → Cards" in note
     # The next load (card-ui reset) shows nothing; Settings lists the answer
     assert g["card_question_items"](g["_pending"](), [], None) == []
     rows = " ".join(_texts(g["settings_card_rows"](answered_links(g["MASTER_PATH"]))))
-    assert "CARDS" in rows and "6236 → 9956 · counted as one card" in rows and "KEEP APART" in rows
+    assert "CARDS" in rows and "4417 → 8823 · counted as one card" in rows and "KEEP APART" in rows
     assert g["_do_card_answer"](PAIR, "yes", 0)[0] == {}                       # a second tap: no-op
 
     # Settings switches it either way, any time
     assert g["_do_card_answer"](PAIR, "switch", 0)[0] == {"just": PAIR}
     assert len(g["df"]) == n_before
     rows = " ".join(_texts(g["settings_card_rows"](answered_links(g["MASTER_PATH"]))))
-    assert "6236 / 9956 · kept apart" in rows and "COUNT AS ONE" in rows
+    assert "4417 / 8823 · kept apart" in rows and "COUNT AS ONE" in rows
     g["_do_card_answer"](PAIR, "switch", 0)
     assert len(g["df"]) == n_before - (len(SHARED) + 1)
 

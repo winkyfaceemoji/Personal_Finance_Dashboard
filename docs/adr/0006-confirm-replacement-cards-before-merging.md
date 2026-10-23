@@ -6,7 +6,7 @@ Status: Accepted
 On real data, a replaced card's new-number export repeated all 116 of the old number's charges in their overlap, so $883 counted twice. Two genuinely different cards shared only 3 of 342 charges. A first version linked such pairs automatically and was reverted: the user wanted to confirm it, since it changes past totals.
 
 ## Decision
-A pair is proposed when two card numbers of one institution and source share at least 10 overlapping rows, with at least 95% matching on both sides. The import records it in `SORTED/linked_cards.csv` as `proposed` and merges nothing. The attention line asks about the real event: "Did Chase replace your card ending 6236 with 9956?"
+A pair is proposed when two card numbers of one institution and source share at least 10 overlapping rows, with at least 95% matching on both sides. The import records it in `SORTED/linked_cards.csv` as `proposed` and merges nothing. The attention line asks about the real event: "Did Chase replace your card ending 4417 with 8823?"
 
 - **YES** files the new number's rows under the oldest number. Keeping the oldest number keeps row ids stable, along with transfer-pair dismissals and last-import ids.
 - **NO** takes a second tap. On a pair this alike, NO is almost certainly a mis-tap that would keep the charges doubled.

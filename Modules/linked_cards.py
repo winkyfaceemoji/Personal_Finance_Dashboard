@@ -9,7 +9,7 @@ name, so each number would be its own account and those charges counted twice.
 The import spots two numbers whose overlapping charges are the same and
 records them in SORTED/linked_cards.csv as "proposed": nothing changes until
 the user answers the dashboard's question ("Did Chase replace your card
-ending 6236 with 9956?"). Yes → "same": the newer number's rows are filed
+ending 4417 with 8823?"). Yes → "same": the newer number's rows are filed
 under the older number and the two merge like any re-export of one account.
 No → "different": they stay apart and the pair isn't asked about again. The
 dashboard confirms an answer once, with UNDO (back to "proposed"); after
