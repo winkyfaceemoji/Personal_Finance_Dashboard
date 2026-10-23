@@ -18,6 +18,7 @@ Always use the project venv. Never use a bare `python` or `pip`.
 | Chat question set, real model (by hand, not CI) | `.venv/Scripts/python.exe ai_eval.py` |
 | Data health check (read-only) | `.venv/Scripts/python.exe check_data.py [--save f.csv \| --compare f.csv]` |
 | What the screen says (read-only) | `.venv/Scripts/python.exe screen_check.py > before.txt` |
+| What CONVERT → would do (read-only, converts a temp copy) | `.venv/Scripts/python.exe convert_check.py > convert.txt` |
 | Docker dev, hot reload | `docker build -t personal-finance .`, then `docker run -p 127.0.0.1:8050:8050 -v "%cd%:/app" personal-finance` |
 
 Docker without the `-v` mount bakes the code into the image. The labels are then written inside the container and lost when it is removed, so mount a data folder for real use.
