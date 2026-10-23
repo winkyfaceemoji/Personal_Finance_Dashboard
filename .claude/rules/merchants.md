@@ -1,6 +1,7 @@
 ---
 paths:
   - Modules/merchants.py
+  - Modules/similar.py
   - Test Data/SORTED/merchants.csv
   - Test Data/SORTED/merchant_aliases.csv
 ---
@@ -56,3 +57,9 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 
 ## Rules on load
 - `load_transactions` applies merchants' rules (`apply_rules`) **before** the `rules.csv` keywords, so a merchant's rule wins and the keywords only fill what's left (until ticket 10 removes them). Same semantics as the keywords: the label goes only on rows with none (a hand label wins), and the category only fills a blank one where the labels agree. A category-only merchant fills any of its rows.
+
+## Name-similarity suggestions (`Modules/similar.py`)
+- `PREFIX` and `CUTOFF` were measured together on EmbeddingGemma 2. A different prefix or model moves every score, so re-run `merchant_eval.py` against the answer key before changing either. The research embedded spellings further cleaned (punctuation, `sq`/`tst` prefixes and `inc`/`llc` suffixes stripped); the module sends the bare spelling, so `merchant_eval.py` is the number to trust.
+- Raw cosines bunch high (most pairs 0.75–0.95), so a score alone doesn't mean "alike". Only the closest merchant counts, and only at or above the cutoff.
+- `embed` returns None, never raises, when the server is down, slow or answers badly; `similar_merchants` then returns `{}`. The feature must stay silent then, with pattern suggestions unaffected. Each call to a down server still waits for the refusal (about 2 s on Windows) or the timeout.
+- Vectors are cached in memory per `http_embedder`, by text, for the life of the process. Make one embedder and reuse it, or every call re-sends every spelling.
