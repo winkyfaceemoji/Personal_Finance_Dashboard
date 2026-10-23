@@ -39,7 +39,7 @@ paths:
   - It lives in the `selected-category` Store, and `highlight_category` Patches the opacities.
   - Reset `clickData` to `None` after a click, or re-clicking the same bar won't fire.
   - `update_category_chart` must ignore the stored selection when the *period* triggered it. Otherwise a never-clicked bar lights up in the new period.
-  - `select_category` alone writes `category-pick.value` (ADR 0027). It takes the Store as an Input so the picker follows a selection set elsewhere (the chat). A second callback writing the picker from the Store would make a cycle across callbacks, which Dash rejects.
+  - `select_category` alone writes `category-pick.value` (ADR 0028). It takes the Store as an Input so the picker follows a selection set elsewhere (the chat). A second callback writing the picker from the Store would make a cycle across callbacks, which Dash rejects.
 - The chart, the drilldown and the AI chat all use `category_split` (through `_category_split` in the app), so a drilldown total or a chat answer always equals its bar, including Other.
 - Outputs written by several callbacks (`setup-overlay.style`, `setup-status`, `setup-path-input.value`, `refresh-trigger`, …) need `allow_duplicate=True`.
 - Reload and import leave the settings menu open so their status line stays visible.
@@ -48,12 +48,15 @@ paths:
 
 ## Keyboard & screen readers (WCAG 2.1 AA; tests in `test_ui_states.py`)
 - **`dcc` components take no `aria-*` props** (Input, Dropdown, RadioItems, Graph, Upload all raise). Name a text box with `_labeled(text, input)`, a `<label>` with `.input-label { display: contents }` so it adds no box. Name pills or a dropdown with `_named_group`. Never leave a placeholder as the only name. `html.*` components do take `aria-*` via `**{...}`, and a callback can output one (`Output(id, "aria-pressed")`).
-- `#label-panel` is a dialog. `assets/dialog.js` moves focus in on open, keeps Tab inside, closes on Escape (through DONE, so the close callback runs) and returns focus to the opener. It watches the panel's `style`, so keep opening and closing it through `display`. Its key handler runs in the capture phase and leaves Escape alone while a dropdown is open (Dash renders those in a portal outside the panel), so Escape closes the dropdown first.
+- `#label-panel` is a dialog. `assets/dialog.js` moves focus in on open, keeps Tab inside, closes on Escape (through Done, so the close callback runs) and returns focus to the opener. It watches the panel's `style`, so keep opening and closing it through `display`. Its key handler runs in the capture phase and leaves Escape alone while a dropdown is open (Dash renders those in a portal outside the panel), so Escape closes the dropdown first.
 - Pill groups stay Dash's `listbox`/`option` markup, named by `_named_group`. A script rewriting them to tabs or radios was turned down: it would break on a Dash update, and the listbox already announces the selected option.
-- Buttons repeated per row (EXPENSE / INCOME / TRANSFER, YES / NO) carry an `aria-label` naming their row or merchant. A screen reader lists dozens of identical words otherwise.
-- The bars can't take focus. `category-pick` is the keyboard's way to a bar click (ADR 0027), and each chart has a `.sr-only` text version. Keep those in step when the chart changes.
-- Chat output regions are live (`role="log"`, `role="status"`). The chat rule covers SEND while the model is down.
+- Buttons repeated per row (Expense / Income / Transfer, Yes / No) carry an `aria-label` naming their row or merchant. A screen reader lists dozens of identical words otherwise.
+- The bars can't take focus. `category-pick` is the keyboard's way to a bar click (ADR 0028), and each chart has a `.sr-only` text version. Keep those in step when the chart changes.
+- Chat output regions are live (`role="log"`, `role="status"`). The chat rule covers Send while the model is down.
 - A word a reader needs explained gets visible text (the All merchants view's `Spellings:` line). A `title` reaches only mouse users.
-- No text under 12px, chart text included.
+- Text comes in four sizes: 12 (labels, hints, meta), 14 (body, buttons, pills, inputs, rows), 18 (titles: wordmark, period), 28 (headline and stat numbers; the headline drops to 18 on a phone). Dash's dropdown defaults to 16px, so app.css sets it. `test_text_comes_in_four_sizes` walks every screen.
+- Buttons, pills and tabs are sentence case ("Label them →"). Only small section labels are upper case, and the EXPENSES dropdown, which is its card's title. On-screen sentences name a button as it reads ("use Reload data").
+- The header's red line holds chores only: things with a button, or a broken file to fix. How far the data reaches (`attention_parts(...)["coverage"]`: stale data, an account lagging) is a fact, shown grey under the date (`att-coverage`). The line puts the ⚠ before each item, so item text never carries its own.
+- Expense | Income | Transfer is one segmented control (`_segmented`, app.css `.seg`): one outline round the three, `border: 0` on the buttons, no `overflow: hidden` (it would clip the focus ring).
 - `dcc.Upload`'s own file `<input>` is a second, nameless tab stop. app.css hides it (`display: none`); its button still opens the picker.
 - Empty states use `empty_figure(message)`. Never ship Plotly's bare `-1…6` grid.

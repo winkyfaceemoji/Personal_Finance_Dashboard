@@ -1,4 +1,4 @@
-# 0027. The keyboard picks a category with a visible picker beside the chart
+# 0028. The keyboard picks a category with a visible picker beside the chart
 
 Status: Accepted
 

@@ -39,7 +39,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - `RAW/<institution>/*.csv` is the input. The top-level folder is the institution (ADR 0004). Files may sit at any depth.
 - `SORTED/edited_combined_transactions.csv` is **the master**: the unified columns plus `master_category` / `sub_category`.
 - `SORTED/combined_transactions.csv` is raw pipeline output. The app doesn't read it.
-- `SORTED/rules.csv` holds the old keywords, only until the panel's CONVERT → turns them into merchants and moves it to `backups/rules-converted-<date>.csv` (ADR 0026). It names real merchants, so it is data, not code (ADR 0024).
+- `SORTED/rules.csv` holds the old keywords, only until the panel's Convert → turns them into merchants and moves it to `backups/rules-converted-<date>.csv` (ADR 0026). It names real merchants, so it is data, not code (ADR 0024).
 - `SORTED/merchants.csv` and `SORTED/merchant_aliases.csv` hold merchants and which spellings belong to them. Read with `read_merchants`, written only with `save_merchants` (ADR 0025). When they disagree or can't be read, the header's attention line says so.
 - `SORTED/backups/` holds rotating master backups (10 kept), the daily `before-labeling-*.csv` snapshots and the retired `rules-converted-*.csv`; the last two are never pruned.
 - Other side files in `SORTED/` feed the header's attention line:
@@ -99,4 +99,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0025](docs/adr/0025-merchants-own-rules-and-labeling.md) Merchants own the rules; one panel labels and reviews them, with every 0008 safeguard
 - [0026](docs/adr/0026-conversion-stores-the-past.md) Converting rules.csv stores the keywords' past labels on the rows; only the review moves the past
 - [0027](docs/adr/0027-partly-matched-spellings-get-no-rule.md) A spelling a keyword matched by its store number gets no rule at conversion
-- [0027](docs/adr/0027-keyboard-picks-a-category-with-a-visible-picker.md) The keyboard picks a category with a visible picker beside the chart; charts carry hidden text versions
+- [0028](docs/adr/0028-keyboard-picks-a-category-with-a-visible-picker.md) The keyboard picks a category with a visible picker beside the chart; charts carry hidden text versions

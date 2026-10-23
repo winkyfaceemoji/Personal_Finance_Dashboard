@@ -376,7 +376,7 @@ def test_label_buttons_say_what_they_label(browser, server):
     page.wait_for_selector("#label-list .lg-buttons button")
     page.locator("#label-list .lg-rows summary").first.click()        # one row list open too
     names = page.evaluate("""() => [...document.querySelectorAll('#label-list button')]
-        .filter(b => b.getClientRects().length && /^(★ )?(EXPENSE|INCOME|TRANSFER|YES|NO)$/.test(b.innerText.trim()))
+        .filter(b => b.getClientRects().length && /^(★ )?(expense|income|transfer|yes|no)$/i.test(b.innerText.trim()))
         .map(b => b.getAttribute('aria-label') || '')""")
     assert names and all(names), "a label button has only its one word as a name"
     assert len(set(names)) == len(names), "two label buttons have the same name"
@@ -423,33 +423,63 @@ def test_import_csv_is_one_tab_stop_and_still_opens_the_file_picker(browser, ser
         page.click("#import-csv-upload button")
 
 
-_SMALL_TEXT = """() => {
-  const out = new Set();
+_SIZES = """() => {
+  const out = {};
   const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   while (walk.nextNode()) {
     const el = walk.currentNode.parentElement, t = walk.currentNode.textContent.trim();
     if (!t || !el || !el.getClientRects().length || el.closest('.sr-only')) continue;
-    if (parseFloat(getComputedStyle(el).fontSize) < 12) out.add(t.slice(0, 30));
+    const s = Math.round(parseFloat(getComputedStyle(el).fontSize));
+    if (![12, 14, 18, 28].includes(s)) out[t.slice(0, 30)] = s;
   }
-  return [...out];
+  return out;
 }"""
 
+# Buttons, pills and tabs read in sentence case; only the small section
+# labels are upper case (the EXPENSES dropdown is its card's title). An
+# all-caps word is fine when it's an acronym
+_SHOUTING = """() => [...document.querySelectorAll('button, .pills label, .dash-dropdown-option')]
+    .filter(b => b.getClientRects().length && !b.closest('.title-dropdown'))
+    .map(b => b.innerText.trim())
+    .filter(t => /[A-Z]{2}/.test(t.replace(/\\bCSV\\b/g, '')) && t === t.toUpperCase())"""
 
-def test_no_text_is_smaller_than_12px(browser, server):
-    page = _open(browser, server, "light")
-    assert page.evaluate(_SMALL_TEXT) == [], "main page"              # charts' SVG text included
+
+def _walk_every_screen(page, check):
+    check(page, "main page")
+    page.click("#chat-toggle")
+    page.wait_for_selector("#chat-panel.open")
+    check(page, "chat")
+    page.click("#chat-close")
     page.click("#settings-menu-btn")
     page.wait_for_selector("#settings-menu-panel", state="visible")
-    assert page.evaluate(_SMALL_TEXT) == [], "settings menu"
+    check(page, "settings menu")
     page.click("#open-merchants-btn")
     page.wait_for_selector("#label-tab label")
-    for tab in ("TO LABEL", "ALL MERCHANTS", "TRANSFER PAIRS", "CONVERT RULES"):
-        page.locator("#label-tab label", has_text=tab).click()
+    for i in range(page.locator("#label-tab label").count()):
+        page.locator("#label-tab label").nth(i).click()
         page.wait_for_timeout(1200)
         for s in page.locator("#label-list details summary").all()[:3]:
-            s.click()                                                  # open a few row lists too
-        assert page.evaluate(_SMALL_TEXT) == [], tab
-        assert "txn" not in page.inner_text("#label-panel"), tab
+            s.click()
+        check(page, f"panel tab {i}")
+
+
+def test_text_comes_in_four_sizes(browser, server):
+    def check(page, where):
+        assert page.evaluate(_SIZES) == {}, where
+    _walk_every_screen(_open(browser, server, "light"), check)
+
+
+def test_buttons_are_in_sentence_case(browser, server):
+    def check(page, where):
+        assert page.evaluate(_SHOUTING) == [], where
+    _walk_every_screen(_open(browser, server, "light"), check)
+
+
+def test_the_panel_says_transactions_not_txns(browser, server):
+    # text sizes: test_text_comes_in_four_sizes walks the same screens
+    def check(page, where):
+        assert "txn" not in page.inner_text("body"), where
+    _walk_every_screen(_open(browser, server, "light"), check)
 
 
 def test_spellings_say_what_a_spelling_is(browser, server):
@@ -462,6 +492,47 @@ def test_spellings_say_what_a_spelling_is(browser, server):
     # said once, as visible text above the cards (a title shows only on hover)
     assert page.locator("#label-list .lg-legend").inner_text().startswith(
         "Spellings: the bank's text with store numbers")
+
+
+def test_the_red_line_holds_only_chores_and_coverage_is_a_grey_note(browser, server):
+    page = _open(browser, server, "light")
+    note = page.locator("#att-coverage")
+    assert note.is_visible() and "no transactions in" in note.inner_text()   # the demo data is old
+    assert "no transactions in" not in page.inner_text("#attention")
+    assert page.evaluate("getComputedStyle(document.getElementById('att-coverage'), '::before').content") == "none"
+    assert page.evaluate("""getComputedStyle(document.getElementById('att-coverage')).color
+                            === getComputedStyle(document.getElementById('data-updated')).color""")
+
+
+def test_each_label_choice_is_one_segmented_control(browser, server):
+    """Expense | Income | Transfer reads as one choice: one outline around
+    the three, none of their own, and still a visible focus ring."""
+    page = _open(browser, server, "light")
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    page.locator("#label-tab label", has_text="To label").click()
+    page.wait_for_selector("#label-list .lg-buttons button")
+    page.locator("#label-list .lg-rows summary").first.click()
+    got = page.evaluate("""() => [...document.querySelectorAll('#label-list .lg-row, #label-list .lg-main')]
+        .filter(r => r.getClientRects().length && r.querySelector('button'))
+        .map(r => {
+          const seg = r.querySelector('.seg');
+          if (!seg) return 'no segmented control';
+          const b = [...seg.querySelectorAll('button')];
+          if (b.length !== 3) return `${b.length} buttons`;
+          if (seg.getAttribute('role') !== 'group' || !seg.getAttribute('aria-label')) return 'unnamed group';
+          if (getComputedStyle(seg).borderTopWidth !== '1px') return 'no outline round the group';
+          if (b.some(x => getComputedStyle(x).borderTopWidth !== '0px')) return 'a button keeps its own outline';
+          if (getComputedStyle(seg).overflow !== 'visible') return 'clips the focus ring';
+          return 'ok';
+        })""")
+    assert got and set(got) == {"ok"}, got
+    page.locator("#label-list .lg-row .seg button").first.focus()
+    page.keyboard.press("Tab")                                         # reached by keyboard, so
+    page.keyboard.press("Shift+Tab")                                   # :focus-visible applies
+    assert page.evaluate("!!document.activeElement.closest('.lg-row .seg')")
+    assert page.evaluate("getComputedStyle(document.activeElement).outlineStyle") == "solid"
 
 
 def test_each_chart_has_a_text_version(browser, server):

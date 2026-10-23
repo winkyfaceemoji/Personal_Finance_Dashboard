@@ -341,13 +341,13 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     ask = " ".join(_texts(g["card_question_items"](pending, [], None)))
     assert (f"Did Chase replace your card ending 4417 with 8823? 26 charges "
             f"(${DOUBLED:,.0f}, Jan–Mar 2026) are on both and count twice until you answer.") in ask
-    assert "YES, REPLACED" in ask and "NO, I HAVE BOTH" in ask
+    assert "Yes, replaced" in ask and "No, I have both" in ask
 
     # NO asks once more, writing nothing; GO BACK returns to the question
     ui, _ = g["_do_card_answer"](PAIR, "no", 0)
     assert ui == {"confirm": PAIR} and g["_pending"]()
     again = " ".join(_texts(g["card_question_items"](g["_pending"](), [], ui["confirm"])))
-    assert "stays counted twice" in again and "KEEP BOTH" in again and "GO BACK" in again
+    assert "stays counted twice" in again and "Keep both" in again and "Go back" in again
     assert g["_do_card_answer"](PAIR, "back", 0)[0] == {}
 
     # NO and GO BACK only change what the line shows: nothing else re-renders
@@ -360,12 +360,12 @@ def test_the_question_its_second_tap_and_undo(cardapp):
     assert g["_pending"]() == [] and len(g["df"]) == n_before - (len(SHARED) + 1)
     note = " ".join(_texts(g["card_question_items"](
         [], [a for a in answered_links(g["MASTER_PATH"]) if a["id"] == ui["just"]], None)))
-    assert "8823 counted as a replacement for 4417" in note and "UNDO" in note
+    assert "8823 counted as a replacement for 4417" in note and "Undo" in note
     assert "change this in Settings → Cards" in note
     # The next load (card-ui reset) shows nothing; Settings lists the answer
     assert g["card_question_items"](g["_pending"](), [], None) == []
     rows = " ".join(_texts(g["settings_card_rows"](answered_links(g["MASTER_PATH"]))))
-    assert "CARDS" in rows and "4417 → 8823 · counted as one card" in rows and "KEEP APART" in rows
+    assert "CARDS" in rows and "4417 → 8823 · counted as one card" in rows and "Keep apart" in rows
     assert g["_do_card_answer"](PAIR, "yes", 0)[0] == {}                       # a second tap: no-op
 
     # Settings switches it either way, any time

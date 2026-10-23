@@ -1099,7 +1099,7 @@ def test_label_keeps_undo_when_reload_fails(appmod, monkeypatch):
         status, undo, _, _ = g_["_do_label"](_group_trig(grp), "", False, 0, "all")
     finally:
         g_["df"] = real_load(master, rules_path=g_["RULES_PATH"])
-    assert status.startswith("Labeled") and "RELOAD DATA" in status
+    assert status.startswith("Labeled") and "Reload data" in status
     assert undo and undo["backup"]
     assert master.read_bytes() != before
 
@@ -1316,6 +1316,13 @@ def test_headline_refuses_on_stale_or_unlabeled_data(appmod):
     assert "over a typical month" in str(view(s, "month", a_little, c)[0])
 
 
+def test_the_transfer_warning_has_one_warning_sign(appmod):
+    # the line puts a ⚠ before every item, so the text carries none of its own
+    text = appmod["transfer_check_text"]([{"counted": 115.0}])
+    assert text == ("1 likely transfer between your accounts is labeled Expense or Income — "
+                    "$115 counted that probably shouldn't be.")
+
+
 def test_attention_line_is_silent_when_healthy(appmod):
     parts = appmod["attention_parts"]
     frame = pd.DataFrame({
@@ -1329,12 +1336,14 @@ def test_attention_line_is_silent_when_healthy(appmod):
     frame.loc[1, "date"] = pd.Timestamp("2026-10-20")
     got = parts(frame, [], None, 2, [("x.csv", "unrecognized format")], pd.Timestamp("2026-11-30"))
     assert got["unlabeled"] == "1 unlabeled ($5) not counted"
-    assert "no transactions in 41 days" in got["other"]
-    assert "Chase Debit only through Oct 1" in got["other"]
+    # How far the data reaches is a fact, not a chore: its own grey note, no ⚠
+    assert got["coverage"] == "no transactions in 41 days — add newer statements and reload · " \
+                              "Chase Debit only through Oct 1"
+    assert "only through" not in got["other"] and "no transactions" not in got["other"]
     # ...unless its export was downloaded later: then it was just quiet
     quiet = parts(frame, [], None, 0, [], pd.Timestamp("2026-11-30"),
                   exported={"Chase Debit": pd.Timestamp("2026-10-19")})
-    assert "Chase Debit" not in quiet["other"]
+    assert "Chase Debit" not in quiet["coverage"]
     assert "2 labels match no transaction" in got["other"] and "x.csv" in got["other"]
     left = pd.DataFrame({"file": ["CapitalOne/c.csv"] * 2, "date": ["2026-08-14"] * 2,
                          "description": ["A", "B"], "amount": [-52.26, -10.0]})

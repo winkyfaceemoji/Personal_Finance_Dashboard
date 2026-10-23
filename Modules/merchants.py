@@ -572,7 +572,7 @@ def review_choices(defaults: list[dict], reviewed: list[dict]) -> dict:
     None for a field left as shown (a no-rule card shows blanks, which must
     not wipe what the keyword gave)."""
     if len(defaults) != len(reviewed):
-        raise ValueError("The list changed — reopen CONVERT RULES to see it again.")
+        raise ValueError("The list changed — reopen Convert rules to see it again.")
     out = {}
     for d, r in zip(defaults, reviewed):
         for s in set(d["spellings"]) - set(r["spellings"]):      # a split spelling is still ticked

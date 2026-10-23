@@ -23,7 +23,7 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - The forgiving reader ignores an alias that points at a missing merchant, or a spelling filed under two merchants. That spelling stays its own merchant, and `problems` says why. Empty rows, a merchant listed twice (first row wins) and an unreadable file are reported the same way; an unreadable `merchants.csv` means no merchants at all, never a crash. `attention_parts` shows the problems in the header's "other" item; never guess which alias was meant.
 - Alias spellings are normalized on read (`normalize_description`), so a hand-typed `AMZN  Mktp US` still matches.
 
-## Remember and UNDO
+## Remember and Undo
 - `remember(merchants, name, spellings, label, category, today)` returns both files with the rule set; a merchant that doesn't exist yet is made, so an unmerged spelling becomes a merchant named after itself, with its alias. Save it with `adding=True`.
 - `snapshot_files` keeps both files' exact bytes as latin-1 text (JSON-safe), and `restore_files` writes them back through the same two-file write, aliases first. A file that was missing is removed again.
 
@@ -38,7 +38,7 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - `merge` resolves a target that is a spelling of another merchant to that merchant: it never pulls a spelling out of its merchant.
 
 ## Patterns and pattern suggestions (ticket 07)
-- Patterns live in `merchants.csv`'s `patterns` cell, `"a | b"` (`PATTERN_SEP`), and match normalized spellings by substring. They only ever **suggest** (`pattern_suggestions`): a spelling joins on CONFIRM (a merge), never on its own (ADR 0025).
+- Patterns live in `merchants.csv`'s `patterns` cell, `"a | b"` (`PATTERN_SEP`), and match normalized spellings by substring. They only ever **suggest** (`pattern_suggestions`): a spelling joins on Confirm (a merge), never on its own (ADR 0025).
 - Only spellings with no alias get suggestions; a dismissed pairing (`dismiss` writes a `dismissed` alias row) never comes back. The longest matching pattern wins.
 - `merchant_overview` fills `suggested` / `suggestions` (pattern suggestions by default; pass `suggested=` to add others), which the needs-attention sort ranks first.
 - `set_patterns` gives a bare spelling a merchant row (and its alias) to hold them, so it refuses empty patterns there (the alias would stop it ever being suggested elsewhere), and any pattern under `MIN_PATTERN` (3) letters.
@@ -68,5 +68,5 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - Raw cosines bunch high (most pairs 0.75–0.95), so a score alone doesn't mean "alike". Only the closest merchant counts, and only at or above the cutoff.
 - `embed` returns None, never raises, when the server is down, slow or answers badly; `similar_merchants` then returns `{}`. The feature must stay silent then, with pattern suggestions unaffected. Each call to a down server still waits for the refusal (about 2 s on Windows) or the timeout.
 - Vectors are cached in memory per `http_embedder`, by text, for the life of the process. Make one embedder and reuse it, or every call re-sends every spelling.
-- In the app, `_suggestions` is the one place both kinds meet: pattern matches first, similarity only for spellings no pattern names. YES and NO re-check through it. The first `None` from the server sets `_EMBED_DOWN`, and it isn't asked again until restart (ADR 0023), so a down server costs one wait, not one per page.
+- In the app, `_suggestions` is the one place both kinds meet: pattern matches first, similarity only for spellings no pattern names. Yes and No re-check through it. The first `None` from the server sets `_EMBED_DOWN`, and it isn't asked again until restart (ADR 0023), so a down server costs one wait, not one per page.
 - Until the embedding session's server lands (ADR 0023), `FINANCE_EMBED_URL` names a server; unset, similarity suggestions stay off.

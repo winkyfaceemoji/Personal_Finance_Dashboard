@@ -22,18 +22,19 @@ html, body {
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .app-header { position: relative; margin-bottom: 20px; padding-right: 136px; }
-.wordmark { font-weight: 600; line-height: 1.2; font-size: 22px; letter-spacing: -0.02em; }
+.wordmark { font-weight: 600; line-height: 1.2; font-size: 18px; letter-spacing: -0.02em; }
 .wordmark .accent { color: var(--subtext); font-weight: 500; }
-.header-meta { color: var(--subtext); font-size: 13px; margin-top: 6px; }
+.header-meta { color: var(--subtext); font-size: 12px; margin-top: 6px; }
+.header-meta:empty { display: none; }
 /* The attention line: everything that needs you, in red, one line that wraps */
 .attention {
     flex-wrap: wrap; align-items: center; gap: 6px 18px;
-    font-size: 13px; margin-top: 8px; color: var(--text);
+    font-size: 14px; margin-top: 8px; color: var(--text);
 }
 /* A warning is a chore, not overspending: ink text, only the ⚠ is red */
 .attention-item::before { content: "⚠ "; color: var(--accent2); }
 .attention-item:empty { display: none; }
-.attention .btn-small { padding: 3px 10px; font-size: 12px; margin-left: 8px; }
+.attention .btn-small { padding: 3px 10px; margin-left: 8px; }
 .warn-text { color: var(--accent2); }
 /* Replacement-card questions lead the line; on a phone the sentence wraps and
    its buttons drop below it. An answered one (with UNDO) is a note, no ⚠. */
@@ -68,7 +69,7 @@ html, body {
 @media (max-width: 640px) {
     .stepper { width: 100%; }
     .period-text { min-width: 0; flex: 1; }
-    .period-label { font-size: 17px; }
+    .headline-status { font-size: 18px; }   /* the 28px headline wraps badly on a phone */
 }
 
 /* ── Pills (dcc.RadioItems styled as chips) ─────────────────────────────── */
@@ -82,7 +83,7 @@ html, body {
    state rule; tests/test_ui_states.py checks every state in a browser. */
 #app-root .pills label {
     position: relative; padding: 6px 14px; white-space: nowrap; border-radius: 999px; cursor: pointer;
-    font-size: 13px; font-weight: 500;
+    font-size: 14px; font-weight: 500;
     color: var(--subtext); background: transparent; border: 1px solid transparent;
     transition: background 0.15s, color 0.15s;
 }
@@ -149,7 +150,7 @@ html, body {
 /* ── Headline: this period's spending against a typical one ────────────── */
 .pace-card { padding: 18px 20px; margin-bottom: 16px; }
 .headline-status {
-    font-size: clamp(20px, 4vw, 26px); font-weight: 600; letter-spacing: -0.02em;
+    font-size: 28px; font-weight: 600; letter-spacing: -0.02em;
     line-height: 1.25; margin: 6px 0 12px;
 }
 .pace-card .btn-small { margin-top: 10px; }
@@ -165,7 +166,7 @@ html, body {
 /* ── Drilldown ──────────────────────────────────────────────────────────── */
 .drilldown { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 20px; }
 .drill-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-.drill-name { flex: 0 0 220px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drill-name { flex: 0 0 220px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drill-track { flex: 1; height: 8px; border-radius: 4px; background: var(--accent-weak); }
 .drill-fill { height: 8px; border-radius: 4px; background: var(--subtext); }
 .drill-fill.muted { opacity: 0.4; }
@@ -197,7 +198,7 @@ html, body {
 .btn-secondary.active, .btn-secondary.active:hover {
     background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
 }
-.btn-small { font-size: 13px; padding: 6px 14px; }
+.btn-small { font-size: 14px; padding: 6px 14px; }
 /* Keyboard focus is always visible */
 button:focus-visible, input:focus-visible, .dash-dropdown:focus-visible,
 summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
@@ -240,7 +241,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 /* ── Setup overlay ──────────────────────────────────────────────────────── */
 #setup-overlay { position: fixed; inset: 0; z-index: 100; background: var(--bg); align-items: center; justify-content: center; }
 .setup-card { width: 480px; max-width: 90vw; padding: 48px; margin: 0; }
-.setup-copy { margin: 24px 0 16px; color: var(--subtext); font-size: 13px; line-height: 1.5; }
+.setup-copy { margin: 24px 0 16px; color: var(--subtext); font-size: 14px; line-height: 1.5; }
 .setup-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .setup-input {
     flex: 1; min-width: 0; padding: 10px 14px; border-radius: 12px;
@@ -267,7 +268,9 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .dash-dropdown-option.selected::after { content: "✓"; margin-left: auto; padding-left: 12px; }
 .dash-dropdown-placeholder, .dash-dropdown-clear, .dash-dropdown-trigger-icon { color: var(--subtext) !important; }
 /* Metric dropdown styled as a card title — matches the .app-label headers */
-.title-dropdown .dash-dropdown-value, .title-dropdown .dash-dropdown-placeholder {
+/* Dash's dropdown text defaults to 16px, outside the four sizes */
+#app-root .dash-dropdown { font-size: 14px; }
+.title-dropdown .dash-dropdown-value {
     font-size: 12px !important; letter-spacing: 0.04em !important;
     font-weight: 500 !important; text-transform: uppercase;
 }
@@ -291,21 +294,29 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-main { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lg-info { min-width: 0; flex: 1 1 260px; }   /* below 260px the buttons drop under it */
 .lg-title { margin-bottom: 4px; }
-.lg-name { font-weight: 600; font-size: 15px; }
+.lg-name { font-weight: 600; font-size: 14px; }
 .lg-unclear { font-weight: 500; color: var(--subtext); }
 .lg-text { font-size: 12px; margin-bottom: 4px; overflow-wrap: anywhere; }
-.lg-tag { color: var(--subtext); margin-right: 8px; }
+.lg-tag { color: var(--subtext); margin-right: 8px; font-size: 12px; }
 .lg-more { color: var(--subtext); margin-left: 8px; white-space: nowrap; }
 .lg-badge { margin-left: 8px; font-size: 12px; font-weight: 500; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 999px; padding: 1px 8px; }
 .lg-example { overflow-wrap: anywhere; }   /* the bank's text in full, never cut */
 .lg-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
 /* Suggested: filled and starred — plain buttons are only outlined */
 .btn-secondary.suggested { background: var(--accent-weak); color: var(--text); font-weight: 600; }
+/* Expense | Income | Transfer: one outline round the three, a hairline
+   between them. No overflow clip, so the focus ring shows in full */
+.seg { display: inline-flex; border: 1px solid var(--control); border-radius: 999px; }
+.seg .btn-secondary { border: 0; border-radius: 0; }
+.seg .btn-secondary:first-child { border-radius: 999px 0 0 999px; }
+.seg .btn-secondary:last-child { border-radius: 0 999px 999px 0; }
+.seg .btn-secondary + .btn-secondary { box-shadow: inset 1px 0 0 var(--border); }
+.seg .btn-secondary:focus-visible { position: relative; z-index: 1; }
 .lg-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.lg-sub { flex: 0 0 230px; padding: 6px 10px; font-size: 12px; }
+.lg-sub { flex: 0 0 230px; padding: 6px 10px; font-size: 14px; }
 .lg-remember { font-size: 12px; }
 .lg-rows summary { cursor: pointer; font-size: 12px; color: var(--subtext); margin-top: 10px; }
-.lg-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
+.lg-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 14px; flex-wrap: wrap; }
 .lg-date { flex: 0 0 52px; color: var(--subtext); }
 .lg-desc { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
 .lg-desc-same { min-width: 0; }   /* no text to show: keep date and amount on one line */
@@ -323,7 +334,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
    the price, how often and when it last charged */
 .recurring-row {
     display: grid; grid-template-columns: 1fr auto; column-gap: 12px; row-gap: 2px;
-    padding: 10px 0; border-top: 1px solid var(--border); font-size: 13px;
+    padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px;
 }
 .rc-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .rc-year { text-align: right; white-space: nowrap; }
@@ -352,7 +363,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 }
 .chat-head { display: flex; justify-content: space-between; align-items: center; }
 .chat-health:not(:empty)::before { content: "⚠ "; color: var(--accent2); }
-.chat-health { font-size: 13px; }
+.chat-health { font-size: 14px; }
 .chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .chat-msg { font-size: 14px; line-height: 1.45; padding: 10px 12px; border-radius: 12px; }
 .chat-msg:empty { display: none; }

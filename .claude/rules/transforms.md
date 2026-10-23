@@ -15,7 +15,7 @@ paths:
 - Rules are applied **in memory on every load and never written to the master**:
   - Editing `rules.csv` relabels all history.
   - Deleting a rule un-labels rows on the next load.
-  - EXPORT CSV reads the loaded frame, so an exported-then-imported file makes rule labels permanent.
+  - Export CSV reads the loaded frame, so an exported-then-imported file makes rule labels permanent.
 - Precedence:
   - A hand label always wins, and the first matching rule wins.
   - Merchants' rules run first in `load_transactions`, so they beat `rules.csv` keywords (ADR 0025; see the merchants rule).

@@ -23,7 +23,7 @@ Background: ADR 0021 and `docs/specs/ai-chat.md`. Terms are in `CONTEXT.md`.
 - Dash rejects callback cycles, so a Store can't drive a loop. One ordinary callback (`chat_send` → `_chat_turn` → `run_turn`) runs the whole turn and writes its status to `_CHAT_PROGRESS`.
 - `chat-poll` (an Interval, switched on by `running=` only while the turn runs) reads that status. The poll never calls the model. This isn't a background callback (ADR 0010).
 - `chat_send` clears `chat-status` itself: the Interval stops before its last tick, so the final status would otherwise stay on screen.
-- While the model server is down, `toggle_chat` disables SEND *and* the box. Disabling SEND alone isn't enough: Enter in the box still fires `chat_send`, and its `running=` turns SEND back on when the turn ends. A model still loading keeps both on.
+- While the model server is down, `toggle_chat` disables Send *and* the box. Disabling Send alone isn't enough: Enter in the box still fires `chat_send`, and its `running=` turns Send back on when the turn ends. A model still loading keeps both on.
 - `run_turn` stops after 4 model calls and never raises. A server problem comes back as `error`, telling the user how to start it.
 
 ## Model settings

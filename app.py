@@ -182,7 +182,7 @@ def empty_figure(message: str, theme: str, height: int) -> go.Figure:
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
     fig.add_annotation(text=message, showarrow=False, x=0.5, y=0.5,
-                       xref="paper", yref="paper", font=dict(color=c["subtext"], size=13))
+                       xref="paper", yref="paper", font=dict(color=c["subtext"], size=14))
     return fig
 
 
@@ -314,7 +314,9 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
-    transfers each come with a button; other is what has no in-app fix.
+    transfers each come with a button; other is what has no in-app fix;
+    coverage is how far the data reaches, a fact shown grey beside the
+    data date, not a chore under a red ⚠.
     exported: {source: date} its exports are known to reach (from their file
     names), so a quiet card with a recent download isn't "behind".
     links_broken: SORTED/linked_cards.csv can't be read, so imports are
@@ -331,13 +333,13 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     _, need = last_import_text(frame, import_ids)
     review = f"{need} new from the last import need a label" if need else ""
 
-    other = []
+    other, coverage = [], []
     if links_broken:
         other.append("SORTED/linked_cards.csv can't be read — imports are paused so your card totals "
-                     "stay right. Fix or close it, then Reload")
+                     "stay right. Fix or close it, then Reload data")
     age = data_age(frame, today)
     if age is not None and age > STALE_DAYS:
-        other.append(f"no transactions in {age} days — add newer statements and reload")
+        coverage.append(f"no transactions in {age} days — add newer statements and reload")
     if not frame.empty:
         newest = frame["date"].max().normalize()
         # A source lagging the newest by over a week: its recent spending is
@@ -346,7 +348,7 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
         for src, d in source_freshness(frame).items():
             through = max(d.normalize(), exported.get(src, d).normalize())
             if (newest - through).days > 7:
-                other.append(f"{src} only through {d:%b} {d.day}")
+                coverage.append(f"{src} only through {d:%b} {d.day}")
     if orphans:
         other.append(f"{orphans} label{'s' if orphans != 1 else ''} match no transaction "
                      f"(kept in SORTED/orphaned_labels.csv)")
@@ -360,7 +362,7 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     convert = (f"{keywords_left} rules.csv keyword{'s' if keywords_left != 1 else ''} "
                f"{'aren' if keywords_left != 1 else 'isn'}'t a merchant yet" if keywords_left else "")
     return {"unlabeled": unlabeled, "review": review, "transfers": transfer_check_text(suspects),
-            "convert": convert, "other": " · ".join(other)}
+            "convert": convert, "other": " · ".join(other), "coverage": " · ".join(coverage)}
 
 
 def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> html.Div:
@@ -436,12 +438,12 @@ def card_question_items(pending: list[dict], answered: list[dict], confirm: str 
         span = month_span(q["from"], q["to"])
         if confirm == q["id"]:
             text = f"Then {_dollar0(q['out'])} in {span} stays counted twice."
-            buttons = [("KEEP BOTH", "keep"), ("GO BACK", "back")]
+            buttons = [("Keep both", "keep"), ("Go back", "back")]
         else:
             text = (f"Did {q['institution'] or q['source']} replace your card ending {q['old_card']} "
                     f"with {q['new_card']}? {q['n']} charges ({_dollar0(q['out'])}, {span}) are on both "
                     f"and count twice until you answer.")
-            buttons = [("YES, REPLACED", "yes"), ("NO, I HAVE BOTH", "no")]
+            buttons = [("Yes, replaced", "yes"), ("No, I have both", "no")]
         items.append(html.Span(className="attention-item attention-question",
                                children=[html.Span(text), _buttons(q["id"], buttons)]))
     for a in answered:
@@ -451,7 +453,7 @@ def card_question_items(pending: list[dict], answered: list[dict], confirm: str 
                 f"{a['old_card']} and {a['new_card']} kept apart — {_dollar0(a['out'])} in {span} "
                 f"stays counted twice.") + " You can change this in Settings → Cards."
         items.append(html.Span(className="attention-item attention-note",
-                               children=[html.Span(text), _buttons(a["id"], [("UNDO", "undo")])]))
+                               children=[html.Span(text), _buttons(a["id"], [("Undo", "undo")])]))
     return items
 
 
@@ -612,6 +614,12 @@ def _labeled(text, field):
     return html.Label([html.Span(text, className="sr-only"), field], className="input-label")
 
 
+def _segmented(name, buttons):
+    """Expense | Income | Transfer as one control: one outline round the
+    three (app.css .seg), named for screen readers by what it labels."""
+    return html.Div(className="seg", role="group", **{"aria-label": name}, children=buttons)
+
+
 def _named_group(name, field):
     """A named group around a control that takes no aria props (pills, a
     dropdown), so a screen reader says what it is for."""
@@ -673,7 +681,7 @@ app.layout = html.Div(
         html.Aside(id="chat-panel", className="chat-panel", children=[
             html.Div(className="chat-head", children=[
                 html.Div("CHAT", className="app-label"),
-                html.Button("CLOSE", id="chat-close", n_clicks=0, className="btn-secondary btn-small"),
+                html.Button("Close", id="chat-close", n_clicks=0, className="btn-secondary btn-small"),
             ]),
             html.P("Answers cover the period picked on the page, from labeled transactions only.",
                    className="hint"),
@@ -686,7 +694,7 @@ app.layout = html.Div(
                 _labeled("Question", dcc.Input(
                     id="chat-input", type="text", placeholder="Ask about this period's money",
                     debounce=False, n_submit=0, className="chat-input", autoComplete="off")),
-                html.Button("SEND", id="chat-send", n_clicks=0, className="btn-primary btn-small"),
+                html.Button("Send", id="chat-send", n_clicks=0, className="btn-primary btn-small"),
             ]),
         ]),
 
@@ -707,12 +715,12 @@ app.layout = html.Div(
                         debounce=False,
                         className="setup-input",
                     )),
-                    html.Button("BROWSE", id="setup-browse-btn", n_clicks=0, className="btn-secondary"),
+                    html.Button("Browse", id="setup-browse-btn", n_clicks=0, className="btn-secondary"),
                 ]),
                 html.Div(className="setup-row", children=[
-                    html.Button("CANCEL", id="setup-cancel-btn", n_clicks=0,
+                    html.Button("Cancel", id="setup-cancel-btn", n_clicks=0,
                                 className="btn-secondary", style={"flex": "1"}),
-                    html.Button("SAVE & LAUNCH", id="setup-save-btn", n_clicks=0,
+                    html.Button("Save & launch", id="setup-save-btn", n_clicks=0,
                                 className="btn-primary", style={"flex": "2"}),
                 ]),
                 html.Div(id="setup-status", className="setup-status"),
@@ -730,27 +738,27 @@ app.layout = html.Div(
                           html.Div(className="label-summary-row", children=[
                               html.Span(id="label-summary", className="hint"),
                               # Opened on a subset (REVIEW →, LABEL THEM →): the way to everything
-                              html.Button("SHOW ALL", id="label-show-all", n_clicks=0,
+                              html.Button("Show all", id="label-show-all", n_clicks=0,
                                           className="btn-secondary btn-small", style=_HIDDEN),
                               # All merchants only: biggest spend first, or what needs a look
                               _named_group("Sort merchants", dcc.RadioItems(
                                   id="merchant-sort", className="pills", value="spend", inline=True,
                                   inputStyle=_PILL_INPUT, style=_HIDDEN,
-                                  options=[{"label": "BY SPEND", "value": "spend"},
-                                           {"label": "NEEDS ATTENTION", "value": "attention"}])),
+                                  options=[{"label": "By spend", "value": "spend"},
+                                           {"label": "Needs attention", "value": "attention"}])),
                               # Convert rules only: turns every reviewed keyword into a merchant (previewed)
-                              html.Button("CONVERT ALL", id="cv-go", n_clicks=0, className="btn-primary btn-small",
+                              html.Button("Convert all", id="cv-go", n_clicks=0, className="btn-primary btn-small",
                                           style=_HIDDEN),
                           ])]),
                 _named_group("Panel section", dcc.RadioItems(
                     id="label-tab", className="pills", value="todo", inline=True,
                     inputStyle=_PILL_INPUT,
-                    options=[{"label": "TO LABEL", "value": "todo"},
-                             {"label": "ALL MERCHANTS", "value": "merchants"},
-                             {"label": "TRANSFER PAIRS", "value": "pairs"},
-                             {"label": "CONVERT RULES", "value": "rules"}],
+                    options=[{"label": "To label", "value": "todo"},
+                             {"label": "All merchants", "value": "merchants"},
+                             {"label": "Transfer pairs", "value": "pairs"},
+                             {"label": "Convert rules", "value": "rules"}],
                 )),
-                html.Button("DONE", id="close-label-panel", n_clicks=0, className="btn-primary"),
+                html.Button("Done", id="close-label-panel", n_clicks=0, className="btn-primary"),
             ]),
             html.Details(className="label-guide", children=[
                 html.Summary("How to choose a label"),
@@ -758,14 +766,14 @@ app.layout = html.Div(
             ]),
             html.Div(className="label-status-row", children=[
                 html.Span(id="label-status", className="settings-status"),
-                html.Button("UNDO", id="label-undo-btn", n_clicks=0,
+                html.Button("Undo", id="label-undo-btn", n_clicks=0,
                             className="btn-secondary btn-small", style=_HIDDEN),
             ]),
             # A merchant change shows what it would relabel, and waits for CONFIRM
             html.Div(id="merchant-preview", className="label-status-row", style=_HIDDEN, children=[
                 html.Span(id="merchant-preview-text", className="hint"),
-                html.Button("CONFIRM", id="merchant-confirm", n_clicks=0, className="btn-primary btn-small"),
-                html.Button("CANCEL", id="merchant-cancel", n_clicks=0, className="btn-secondary btn-small"),
+                html.Button("Confirm", id="merchant-confirm", n_clicks=0, className="btn-primary btn-small"),
+                html.Button("Cancel", id="merchant-cancel", n_clicks=0, className="btn-secondary btn-small"),
             ]),
             html.Div(id="label-list"),
         ])),
@@ -777,19 +785,21 @@ app.layout = html.Div(
         html.Div(className="app-header", children=[
             html.H1(["Finance ", html.Span("Dashboard", className="accent")], className="wordmark"),
             html.P(id="data-updated", className="header-meta"),
+            # How far the data reaches: a fact, grey, under the date — not a red chore
+            html.P(id="att-coverage", className="header-meta"),
             # One red line for everything that needs you — shown only when
             # something fires. Buttons stay in the layout (callbacks listen to
             # them) and hide with their item.
             html.Div(id="attention", className="attention", style=_HIDDEN, children=[
                 html.Span(id="att-cards", className="attention-cards"),
-                _attention_item("att-unlabeled", "LABEL →", "open-label-panel"),
-                _attention_item("att-review", "REVIEW →", "open-label-review"),
-                _attention_item("att-transfers", "CHECK →", "open-transfer-check"),
-                _attention_item("att-convert", "CONVERT →", "open-convert"),
+                _attention_item("att-unlabeled", "Label →", "open-label-panel"),
+                _attention_item("att-review", "Review →", "open-label-review"),
+                _attention_item("att-transfers", "Check →", "open-transfer-check"),
+                _attention_item("att-convert", "Convert →", "open-convert"),
                 html.Span(id="att-other", className="attention-item"),
             ]),
 
-            html.Button("CHAT", id="chat-toggle", n_clicks=0, className="btn-secondary btn-small",
+            html.Button("Chat", id="chat-toggle", n_clicks=0, className="btn-secondary btn-small",
                         title="Ask about this period in plain English"),
 
             html.Div(id="settings-menu-wrapper", children=[
@@ -800,27 +810,27 @@ app.layout = html.Div(
                     html.Div(className="settings-row", children=[
                         dcc.Upload(
                             id="import-csv-upload",
-                            children=html.Button("IMPORT CSV", className="btn-secondary btn-small",
+                            children=html.Button("Import CSV", className="btn-secondary btn-small",
                                                  style={"width": "100%"}),
                             accept=".csv",
                             multiple=False,
                         ),
-                        _settings_button("EXPORT CSV", "export-csv-btn"),
+                        _settings_button("Export CSV", "export-csv-btn"),
                     ]),
                     dcc.Download(id="export-csv-download"),
-                    _settings_button("RELOAD DATA", "reload-data-btn"),
+                    _settings_button("Reload data", "reload-data-btn"),
                     # The panel is otherwise reached only while something is unlabeled
-                    _settings_button("LABELS & MERCHANTS", "open-merchants-btn"),
+                    _settings_button("Labels & merchants", "open-merchants-btn"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
-                    _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
+                    _settings_button("Change data folder", "open-setup-btn"),
                     # Replacement-card answers, switchable (filled when any exist)
                     html.Div(id="settings-cards", className="settings-cards"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("THEME", className="settings-label"),
                     html.Div(className="settings-row", children=[
-                        _settings_button("LIGHT", "theme-light-btn"),
-                        _settings_button("DARK", "theme-dark-btn"),
+                        _settings_button("Light", "theme-light-btn"),
+                        _settings_button("Dark", "theme-dark-btn"),
                     ]),
                     # Single status slot at the bottom — reload + import messages
                     # land here. dcc.Loading tracks these spans (the slow
@@ -846,9 +856,9 @@ app.layout = html.Div(
                 id="period-freq",
                 className="pills",
                 options=[
-                    {"label": "WEEK",  "value": "week"},
-                    {"label": "MONTH", "value": "month"},
-                    {"label": "YEAR",  "value": "year"},
+                    {"label": "Week",  "value": "week"},
+                    {"label": "Month", "value": "month"},
+                    {"label": "Year",  "value": "year"},
                 ],
                 value="month",
                 inline=True,
@@ -864,7 +874,7 @@ app.layout = html.Div(
                 ]),
                 html.Button("›", id="period-next", n_clicks=0, className="step-btn", title="Next period",
                             **{"aria-label": "Next period"}),
-                html.Button("LATEST", id="period-latest", n_clicks=0, className="btn-secondary btn-small",
+                html.Button("Latest", id="period-latest", n_clicks=0, className="btn-secondary btn-small",
                             title="Jump to the period with your newest transactions"),
             ]),
         ]),
@@ -873,7 +883,7 @@ app.layout = html.Div(
         # ── Headline: this period's spending against a typical one ───────────
         html.Div(className="app-card pace-card", children=[
             html.Div(id="headline"),
-            html.Button("LABEL THEM →", id="headline-label", n_clicks=0,
+            html.Button("Label them →", id="headline-label", n_clicks=0,
                         className="btn-secondary btn-small", style=_HIDDEN),
         ]),
 
@@ -909,7 +919,7 @@ app.layout = html.Div(
                 html.Div(id="category-title", className="app-label"),
                 # The keyboard's way to a bar click (the bars can't take focus)
                 _named_group("Category", dcc.Dropdown(
-                    id="category-pick", className="title-dropdown", options=[], placeholder="Pick a category",
+                    id="category-pick", options=[], placeholder="Pick a category",
                     clearable=True, searchable=False, style={"width": "220px"})),
             ]),
             dcc.Graph(id="category-chart", config={"displayModeBar": False}),
@@ -945,9 +955,9 @@ def _suggestion_line(mkey: str, target: str):
     return html.Div(className="lg-text", children=[
         html.Span(f"Same as {name}?", className="lg-example"),
         # Named in full: a screen reader lists many YES / NO buttons
-        html.Button("YES", id={"type": "mer-act", "merchant": mkey, "act": "accept"}, n_clicks=0,
+        html.Button("Yes", id={"type": "mer-act", "merchant": mkey, "act": "accept"}, n_clicks=0,
                     className="btn-secondary btn-small", **{"aria-label": f"Same as {name}: {merchant}"}),
-        html.Button("NO", id={"type": "mer-act", "merchant": mkey, "act": "dismiss"}, n_clicks=0,
+        html.Button("No", id={"type": "mer-act", "merchant": mkey, "act": "dismiss"}, n_clicks=0,
                     className="btn-secondary btn-small", **{"aria-label": f"Not {name}: {merchant}"}),
     ])
 
@@ -969,7 +979,7 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
         id_ = ({"type": "lbl-group", "group": key, "sig": g["sig"], "cat": cat} if row is None
                else {"type": "lbl-row", "group": key, "row": row["row_id"], "cat": cat})
         cls = "btn-secondary btn-small"
-        text = cat.upper()
+        text = cat
         if cat == "Transfer" and g["suggest_transfer"]:
             # Filled and starred: every button is already outlined in the
             # accent, so colour alone didn't stand out
@@ -1012,7 +1022,9 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
                           className="lg-desc" + ("" if _row_text(r) else " lg-desc-same"),
                           title=r["description"]),
                 html.Span(_dollar(r["amount"]), className="lg-amt"),
-                html.Div(className="lg-buttons", children=[_btn(c, r) for c in PREDEFINED_CATEGORIES]),
+                html.Div(className="lg-buttons", children=_segmented(
+                    f"Label {pd.Timestamp(r['date']):%b} {pd.Timestamp(r['date']).day} · {r['description']}",
+                    [_btn(c, r) for c in PREDEFINED_CATEGORIES])),
             ]) for r in g["rows"]]
 
     others = len({r["description"] for r in g["rows"]}) - 1     # the bank's other wordings
@@ -1039,7 +1051,8 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
                 html.Div(f'{g["count"]} transaction{"s" if g["count"] != 1 else ""} · '
                          f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
             ]),
-            html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
+            html.Div(className="lg-buttons", children=_segmented(
+                f"Label all {g['count']} {who} rows", [_btn(c) for c in PREDEFINED_CATEGORIES])) if bulk
             else html.Div("Label these one at a time below", className="hint"),
         ]),
         _suggestion_line(g["mkey"], suggested) if suggested else None,
@@ -1107,7 +1120,7 @@ def _merchant_changes(i: dict):
     def _act(text, act, **extra):
         # Named in full: every merchant card repeats these buttons
         what = extra.get("spelling") or i["name"]
-        aria = f"Relabel every {what} row: {extra['cat']}" if act == "relabel" else f"{text.capitalize()}: {what}"
+        aria = f"Relabel every {what} row: {extra['cat']}" if act == "relabel" else f"{text}: {what}"
         return html.Button(text, id={"type": "mer-act", "merchant": key, "act": act, **extra}, n_clicks=0,
                            className="btn-secondary btn-small", **{"aria-label": aria})
     return html.Details(className="lg-rows", children=[
@@ -1115,34 +1128,35 @@ def _merchant_changes(i: dict):
         html.Div(className="lg-options", children=[
             _labeled("New name", dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"],
                                            className="setup-input lg-sub")),
-            _act("RENAME", "rename"),
+            _act("Rename", "rename"),
         ]),
         html.Div(className="lg-options", children=[
             _labeled("Merge into", dcc.Input(id={"type": "mer-into", "merchant": key},
                                              placeholder="Merge into… (a merchant's name)",
                                              className="setup-input lg-sub", list="mer-names")),
-            _act("MERGE", "merge"),
+            _act("Merge", "merge"),
         ]),
         # One spelling of a merged merchant: on its own, or moved to another merchant
         *[html.Div(className="lg-options", children=[
               html.Span(s, className="lg-example"),
-              _act("SPLIT OUT", "split", spelling=s),
+              _act("Split out", "split", spelling=s),
               _labeled(f"Move {s} to", dcc.Input(id={"type": "mer-move", "merchant": key, "spelling": s},
                                                  placeholder="Move to…", className="setup-input lg-sub",
                                                  list="mer-names")),
-              _act("MOVE", "move", spelling=s)])
+              _act("Move", "move", spelling=s)])
           for s in (i["spellings"] if len(i["spellings"]) > 1 else [])],
         # What new spellings it should be suggested for ("a | b")
         html.Div(className="lg-options", children=[
             _labeled("Patterns", dcc.Input(id={"type": "mer-pat", "merchant": key}, value=i["patterns"],
                                            placeholder="Patterns, e.g. zelle payment from | zelle from",
                                            className="setup-input lg-sub")),
-            _act("SAVE PATTERNS", "patterns"),
+            _act("Save patterns", "patterns"),
         ]),
         # Fixes a past call: its hand-labeled rows and its rule, after a preview
         html.Div(className="lg-options", children=[
             html.Span("Relabel every row", className="lg-tag"),
-            *[_act(c.upper(), "relabel", cat=c) for c in PREDEFINED_CATEGORIES],
+            _segmented(f"Relabel every {i['name']} row",
+                       [_act(c, "relabel", cat=c) for c in PREDEFINED_CATEGORIES]),
             _labeled("Subcategory for the relabel",
                      dcc.Input(id={"type": "mer-cat", "merchant": key}, placeholder="Subcategory (optional)",
                                className="setup-input lg-sub", list="lbl-sub-options")),
@@ -1204,7 +1218,7 @@ def _pair_card(p: dict):
                 html.Span(f"{_dollar(p['amount'])} moved between your accounts", className="lg-name"),
                 html.Div(f"{p['gap']} day{'s' if p['gap'] != 1 else ''} apart", className="hint"),
             ]),
-            html.Button("LABEL BOTH TRANSFER" if n == 2 else "LABEL AS TRANSFER",
+            html.Button("Label both Transfer" if n == 2 else "Label as Transfer",
                         id={"type": "lbl-pair", "pair": p["key"], "sig": p["key"]}, n_clicks=0,
                         className="btn-secondary btn-small suggested", **{"aria-label": aria}),
         ]),
@@ -1252,7 +1266,7 @@ def transfer_check_text(suspects: list[dict]) -> str:
     if not suspects:
         return ""
     n = len(suspects)
-    return (f"⚠ {n} likely transfer{'s' if n != 1 else ''} between your accounts "
+    return (f"{n} likely transfer{'s' if n != 1 else ''} between your accounts "
             f"{'are' if n != 1 else 'is'} labeled Expense or Income — "
             f"{_dollar0(sum(p['counted'] for p in suspects))} counted that probably shouldn't be.")
 
@@ -1267,10 +1281,10 @@ def _suspect_card(p: dict):
                          f"{_dollar0(p['counted'])} of it is in your totals", className="hint"),
             ]),
             html.Div(className="lg-buttons", children=[
-                html.Button("RELABEL AS TRANSFER",
+                html.Button("Relabel as Transfer",
                             id={"type": "lbl-fix", "pair": p["key"], "act": "fix"}, n_clicks=0,
                             className="btn-secondary btn-small suggested"),
-                html.Button("NOT A TRANSFER",
+                html.Button("Not a transfer",
                             id={"type": "lbl-fix", "pair": p["key"], "act": "dismiss"}, n_clicks=0,
                             className="btn-secondary btn-small",
                             title="Keep the labels and stop flagging this pair"),
@@ -1304,7 +1318,7 @@ def _pairs_view(pairs: list[dict], suspects: list[dict] | None = None) -> list:
             html.Span(f"The same amount left one of your accounts and arrived in another within "
                       f"{TRANSFER_PAIR_DAYS} days — a card payment or a move between your own accounts. "
                       f"Only certain matches are shown.", className="hint"),
-            html.Button(f"LABEL ALL {len(pairs)} SHOWN",
+            html.Button(f"Label all {len(pairs)} shown",
                         id={"type": "lbl-pair", "pair": "__all__", "sig": _pairs_sig(pairs)},
                         n_clicks=0, className="btn-secondary btn-small pairs-all",
                         title=f"Label the {rows} unlabeled rows of the pairs below as Transfer"),
@@ -1359,7 +1373,7 @@ def _convert_view():
     subs = sorted(s for s in df["sub_category"].unique() if s)
     return ([html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs]),
              html.Div("Each keyword becomes a merchant with its rule. Untick a spelling that isn't that merchant, "
-                      "then convert them all at once: you'll see what changes first, and UNDO takes it back.",
+                      "then convert them all at once: you'll see what changes first, and Undo takes it back.",
                       className="hint"),
              *[_card(i, p) for i, p in enumerate(props)]],
             f"{len(props)} rules.csv keyword{'s' if len(props) != 1 else ''} to turn into merchants")
@@ -1457,6 +1471,7 @@ def _without_pending_dups(frame: pd.DataFrame, pending: list[dict] | None = None
     *[Output(f"att-{k}", "children") for k in _ATTENTION_ITEMS],
     Output("att-other", "children"),
     Output("att-cards", "children"),
+    Output("att-coverage", "children"),
     Input("refresh-trigger", "data"),
     Input("card-ui", "data"),
 )
@@ -1479,11 +1494,12 @@ def update_attention(_refresh, card_ui):
         merchant_problems=read_merchants(MASTER_PATH.parent).problems if MASTER_PATH else None,
         keywords_left=len(valid_keywords(read_rules(RULES_PATH))),
     )
+    coverage = parts.pop("coverage")
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
             *[_SHOWN_INLINE if parts[k] else _HIDDEN for k in _ATTENTION_ITEMS],
             *[parts[k] for k in _ATTENTION_ITEMS],
-            parts["other"], cards)
+            parts["other"], cards, coverage)
 
 
 @app.callback(
@@ -1532,7 +1548,7 @@ def _do_card_answer(pid: str, act: str, trigger) -> tuple[dict, int]:
             df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
         except Exception as e:
             return {"error": f"Answer saved, but the reload failed ({e}) — close any open data file "
-                             f"and press Reload."}, bump
+                             f"and press Reload data."}, bump
     return ({"just": pid} if changed and status != "proposed" else {}), bump
 
 
@@ -1543,7 +1559,7 @@ def settings_card_rows(answered: list[dict]) -> list:
     rows = []
     for a in answered:
         if a["status"] == "same":
-            text, button = f"{a['old_card']} → {a['new_card']} · counted as one card", "KEEP APART"
+            text, button = f"{a['old_card']} → {a['new_card']} · counted as one card", "Keep apart"
         else:
             text = (f"{a['old_card']} / {a['new_card']} · kept apart "
                     f"({_dollar0(a['out'])} counted twice)")
@@ -2678,7 +2694,7 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
     if len(named) > LABEL_TOP_N or len(nameless) > LABEL_TOP_N:
         summary += f" · showing the top {LABEL_TOP_N}"
     if n_pairs:
-        summary += f" · {n_pairs} transfer pair{'s' if n_pairs != 1 else ''} found (TRANSFER PAIRS tab)"
+        summary += f" · {n_pairs} transfer pair{'s' if n_pairs != 1 else ''} found (Transfer pairs tab)"
     return [datalist, *cards], summary
 
 
@@ -2862,7 +2878,7 @@ def _do_label(trig: dict, sub: str, keep_rule: bool, version, filt):
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
-        rule_note += " · couldn't reload the data — use RELOAD DATA"
+        rule_note += " · couldn't reload the data — use Reload data"
     status = (f"Labeled {n} {group['merchant']} row{'s' if n != 1 else ''} as {cat}"
               + (f" · remembered: {remembered} is {cat}" if remembered else "") + rule_note)
     return status, undo, _SHOWN_INLINE, bumped
@@ -3005,7 +3021,7 @@ def _do_relabel(pending: dict, version):
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
-        note += " · couldn't reload the data — use RELOAD DATA"
+        note += " · couldn't reload the data — use Reload data"
     rewritten = f" · {done} hand label{'s' if done != 1 else ''} rewritten" if done else ""
     left = f" · {skipped} row{'s' if skipped != 1 else ''} left as it was (its label changed since)" if skipped else ""
     return (f"Relabeled {display_name(pending['mkey'])} as {describe_label(cat, sub)}{rewritten}{note}{left}",
@@ -3146,7 +3162,7 @@ def _do_convert(pending: dict, version):
 def convert_click(_n, names, labels, cats, pats, spells, spell_ids, splits, split_ids):
     props = _convert_proposals()
     if not props or len(props) != len(names):
-        return None, _HIDDEN, "", "The list changed — reopen CONVERT RULES to see it again."
+        return None, _HIDDEN, "", "The list changed — reopen Convert rules to see it again."
     ticked = {i["rule"]: v for i, v in zip(spell_ids, spells)}
     split = {i["rule"]: v or [] for i, v in zip(split_ids, splits)}
     reviewed = [dict(p, name=(names[i] or "").strip(), label=labels[i] or "", category=(cats[i] or "").strip(),
@@ -3341,7 +3357,7 @@ def _do_label_pairs(trig: dict, version, filt=None):
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
-        note = " · couldn't reload the data — use RELOAD DATA"
+        note = " · couldn't reload the data — use Reload data"
     what = f"{len(chosen)} pair{'s' if len(chosen) != 1 else ''}"
     return (f"Labeled {n} row{'s' if n != 1 else ''} ({what}) as Transfer" + note,
             undo, _SHOWN_INLINE, bumped)
@@ -3424,7 +3440,7 @@ def _do_fix_suspect(trig: dict, version, filt=None):
     try:
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except Exception:
-        note = " · couldn't reload the data — use RELOAD DATA"
+        note = " · couldn't reload the data — use Reload data"
     return (f"Relabeled {n} row{'s' if n != 1 else ''} as Transfer "
             f"({_dollar0(pair['counted'])} no longer counted)" + note, undo, _SHOWN_INLINE, bumped)
 
