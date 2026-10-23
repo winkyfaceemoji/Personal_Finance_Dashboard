@@ -472,8 +472,11 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
     is taken; the keyword is the first proposal's pattern. A keyword that
     matches nothing today keeps only its pattern. These are the merchants'
     rules for *new* rows: the past is kept by freeze_keyword_labels, and
-    keep_past drops any rule that would still move it. Each: {keyword,
-    name, label, category, pattern, spellings, rows}."""
+    keep_past drops any rule that would still move it. A merchant one of
+    whose spellings a keyword matches only by text beyond the spelling (a
+    store number) gets no rule: its new rows could be labeled other than the
+    keywords would (`partial`). Each: {keyword, name, label, category,
+    pattern, spellings, rows, partial}."""
     keywords = valid_keywords(rules)
     spelling = rows["description"].map(merchant_key)
     text = rows["description"].map(normalize_description)
@@ -481,6 +484,9 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
     taken = {n.casefold() for n in set(merchants.table["merchant"]) | set(merchants.alias_of.values())}
     every_spelling = set(spelling) | set(merchants.alias_of)
     claimed = set(merchants.alias_of) | (set(spelling) & set(merchants.table["merchant"]))
+    partial = set()
+    for k in keywords:
+        partial |= {s for s in set(spelling[text.str.contains(k["kw"], regex=False)]) if k["kw"] not in s}
     props = []
     for k in keywords:
         hit = text.str.contains(k["kw"], regex=False)
@@ -494,8 +500,10 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
             name = _free_name([min(spellings, key=lambda x: (-spend.get(x, 0.0), x))] if spellings else [],
                               k["kw"], spellings, taken, every_spelling)
             taken.add(name.casefold())
-            props.append({"keyword": k["keyword"], "name": name, "label": label, "category": sub,
-                          "pattern": k["kw"] if n == 0 else "", "spellings": spellings, "rows": int(hit.sum())})
+            part = bool(partial & set(spellings))
+            props.append({"keyword": k["keyword"], "name": name, "label": "" if part else label,
+                          "category": "" if part else sub, "pattern": k["kw"] if n == 0 else "",
+                          "spellings": spellings, "rows": int(hit.sum()), "partial": part})
     return props
 
 

@@ -595,7 +595,9 @@ def test_the_past_is_frozen_and_a_rule_that_would_move_it_is_dropped(tmp_path):
     assert changed.tolist() == [True, False]
     assert frozen[["master_category", "sub_category"]].values.tolist() == [["Expense", "Groceries"], ["", ""]]
     props = convert_proposals(hand, read_rules_csv(rules_path), m)
-    kept, dropped = keep_past(frozen, shown, m, props)
+    assert props[0]["partial"] and (props[0]["label"], props[0]["category"]) == ("", "")
+    typed = [dict(props[0], label="Expense", category="Groceries")]          # given a rule in the review anyway
+    kept, dropped = keep_past(frozen, shown, m, typed)
     assert dropped == 1 and (kept[0]["label"], kept[0]["category"]) == ("", "")   # it would label the 0377 row
     after = merchants_from(*apply_conversion(m, kept))
     assert rule_labels(frozen, after, None).equals(shown)
@@ -660,6 +662,21 @@ def test_conversion_names_clash_ignoring_case(tmp_path):
         apply_conversion(read_merchants(folder), [prop])
     with pytest.raises(ValueError, match="Two merchants"):
         apply_conversion(read_merchants(tmp_path / "none"), [prop, dict(prop, name="VENMO")])
+
+
+def test_a_keyword_matching_only_part_of_a_spellings_text_gives_its_merchant_no_rule(tmp_path):
+    # Store numbers are stripped from spellings, so a new store's rows would
+    # get the merchant's rule where the keywords gave them something else
+    rules = _keywords(("maple street grocery 0142", "Expense", "Groceries"), ("grocery", "", "Food"),
+                      ("brightleaf", "Expense", "Health"))
+    rows = _rows(("2026-01-02", "MAPLE STREET GROCERY 0142", -20.0, ""),
+                 ("2026-01-09", "MAPLE STREET GROCERY 0142", -25.0, ""),
+                 ("2026-01-03", "BRIGHTLEAF PHARMACY 0377", -9.0, ""))
+    props = convert_proposals(rows, rules, read_merchants(tmp_path))
+    maple = next(p for p in props if p["spellings"] == ["maple street grocery"])
+    assert (maple["label"], maple["category"], maple["partial"]) == ("", "", True)
+    brightleaf = next(p for p in props if p["spellings"] == ["brightleaf pharmacy"])
+    assert (brightleaf["label"], brightleaf["category"], brightleaf["partial"]) == ("Expense", "Health", False)
 
 
 def test_default_names_never_collide(tmp_path):

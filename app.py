@@ -1288,6 +1288,9 @@ def _convert_view():
             dcc.Checklist(id={"type": "cv-spell", "rule": i}, className="lg-remember", value=p["spellings"],
                           options=[{"label": f" {s}", "value": s} for s in p["spellings"]])
             if p["spellings"] else html.Div("Matches nothing today: kept as a pattern only", className="hint"),
+            html.Div("No rule: this keyword matches only part of the bank text (a store number?), so a new "
+                     "row could get a different label than it did. Its past rows keep theirs; new ones wait for you.",
+                     className="hint") if p["partial"] else None,
         ])
     subs = sorted(s for s in df["sub_category"].unique() if s)
     return ([html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs]),
@@ -2957,6 +2960,10 @@ def _convert_preview(reviewed: list[dict]):
             f"{'; '.join(moves) or 'no labels change'}")
     if kept:
         text += f" · {kept} row{'s' if kept != 1 else ''} keep their label as a stored label"
+    partial = sum(1 for p in reviewed if p.get("partial") and not (p["label"] or p["category"]))
+    if partial:
+        text += (f" · {partial} merchant{'s get' if partial != 1 else ' gets'} no rule (its keyword matched only "
+                 "part of the bank text): new rows of them wait for you")
     if dropped:
         text += (f" · {dropped} merchant{'s get' if dropped != 1 else ' gets'} no rule (it would relabel past rows): "
                  "new rows of them wait for you")
