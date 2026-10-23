@@ -289,6 +289,7 @@ def merchant_files(appmod):
     take them away again (the app module is shared across tests)."""
     g_ = _live(appmod)
     folder = g_["MASTER_PATH"].parent
+    master = g_["MASTER_PATH"].read_bytes()       # put back after, so later tests still find unlabeled rows
 
     def write(merchants_csv, aliases_csv):
         (folder / "merchants.csv").write_text(merchants_csv, encoding="utf-8")
@@ -297,6 +298,7 @@ def merchant_files(appmod):
     yield write
     for name in ("merchants.csv", "merchant_aliases.csv"):
         (folder / name).unlink(missing_ok=True)
+    g_["MASTER_PATH"].write_bytes(master)
     g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
 
 
@@ -533,7 +535,7 @@ def test_merge_previews_what_it_relabels_then_does_exactly_that_and_undoes(appmo
     before = [f.read_bytes() for f in _files_of(g_)]
     pending, text = g_["_merchant_preview"]("merge", source, "Travel")
     assert text == (f"Merge {display_name(source)} into Travel: {n} row{'s' if n != 1 else ''} "
-                    f"({g_['_dollar0'](dollars)}) unlabeled → Expense")
+                    f"({g_['_dollar0'](dollars)}) unlabeled → Expense · Trips")
     status, undo, _, version = g_["_do_merchant_change"](pending, 0)
     assert status == f"Merged {display_name(source)} into Travel." and version == 1
     df = g_["df"]
@@ -555,6 +557,22 @@ def test_split_takes_a_spelling_out_and_its_rule_with_it(appmod, merchant_files)
     assert b in {g["mkey"] for g in g_["_todo_groups"]("all")}           # its own merchant again, unlabeled
 
 
+def test_move_takes_one_spelling_to_another_merchant_and_undo_brings_it_back(appmod, merchant_files):
+    g_ = _live(appmod)
+    a, b, c = _open_spellings(g_, 3)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10) + "Pair,,,," + chr(10)
+                   + "Travel,Expense,,," + chr(10),
+                   "spelling,merchant,status" + chr(10) + f"{a},Pair,alias" + chr(10) + f"{b},Pair,alias" + chr(10)
+                   + f"{c},Travel,alias" + chr(10))
+    before = [f.read_bytes() for f in _files_of(g_)]
+    pending, text = g_["_merchant_preview"]("move", "Pair", "travel", b)       # typed in any case
+    assert text.startswith(f"Move {b} to Travel: ") and "unlabeled → Expense" in text
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status == f"Moved {b} to Travel." and g_["_merchants"]().alias_of == {a: "Pair", b: "Travel", c: "Travel"}
+    g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert [f.read_bytes() for f in _files_of(g_)] == before
+
+
 def test_rename_keeps_everything_and_refuses_a_name_in_use(appmod, merchant_files):
     g_ = _live(appmod)
     anchor, other = _open_spellings(g_, 2)
@@ -565,7 +583,7 @@ def test_rename_keeps_everything_and_refuses_a_name_in_use(appmod, merchant_file
     m = g_["_merchants"]()
     assert m.table["merchant"].tolist() == ["Hotel"] and m.alias_of == {anchor: "Hotel"}
     pending, text = g_["_merchant_preview"]("rename", "Hotel", other)
-    assert pending is None and text == f"Another merchant is already called {other}"
+    assert pending is None and text == f"Another merchant or spelling is already called {other}"
 
 
 def test_a_merchant_change_on_stale_or_locked_files_writes_nothing(appmod, merchant_files, monkeypatch):
@@ -582,10 +600,94 @@ def test_a_merchant_change_on_stale_or_locked_files_writes_nothing(appmod, merch
 
     def locked(*a, **k):
         raise PermissionError("Nothing changed: merchants.csv is open in another program")
-    monkeypatch.setitem(g_, "save_merchants", locked)
+    monkeypatch.setitem(g_, "save_change", locked)
     status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
     assert status.startswith("⚠ Nothing changed: merchants.csv is open in another program")
     assert undo is g_["dash"].no_update and [f.read_bytes() for f in _files_of(g_)] == before
+
+
+# ── Relabel a merchant (ticket 06) ────────────────────────────────────────────
+
+def _hand_labeled(g_, spelling, cat="Expense"):
+    """Label every row of a bare spelling by hand (a group click, no rule)."""
+    grp = next(g for g in g_["_todo_groups"]("all") if g["mkey"] == spelling)
+    status, _, _, _ = g_["_do_label"](_group_trig(grp, cat=cat), "", False, 0, "all")
+    assert status.startswith("Labeled")
+    return grp["count"]
+
+
+def test_relabel_rewrites_past_hand_labels_and_the_rule_then_undoes(appmod, merchant_files):
+    from Modules.merchants import merchant_of
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    n = _hand_labeled(g_, spelling)
+    files = [g_["MASTER_PATH"], *_files_of(g_)]
+    before = [f.read_bytes() for f in files]
+    df = g_["df"]
+    mine = merchant_of(df["description"], g_["_merchants"]()) == spelling
+    dollars = df.loc[mine, "amount"].abs().sum()
+    pending, text = g_["_merchant_preview"]("relabel", spelling, "Gifts", cat="Transfer")
+    assert text == (f"Relabel {spelling.upper()} as Transfer · Gifts: {n} row{'s' if n != 1 else ''} "
+                    f"({g_['_dollar0'](dollars)}) Expense → Transfer · Gifts")
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status == f"Relabeled {n} {spelling.upper()} row{'s' if n != 1 else ''} as Transfer · rule saved"
+    df = g_["df"]
+    assert (df.loc[mine, "master_category"] == "Transfer").all() and (df.loc[mine, "sub_category"] == "Gifts").all()
+    rule = g_["_merchants"]().table.set_index("merchant").loc[spelling]
+    assert (rule["master_category"], rule["sub_category"]) == ("Transfer", "Gifts")
+    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status2 == "Undone." and [f.read_bytes() for f in files] == before
+
+
+def test_relabel_leaves_a_row_whose_label_changed_since_and_says_so(appmod, merchant_files):
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    n = _hand_labeled(g_, spelling)
+    pending, _ = g_["_merchant_preview"]("relabel", spelling, "", cat="Income")
+    master = g_["MASTER_PATH"]
+    raw = pd.read_csv(master, dtype=str, keep_default_na=False)
+    from Modules.labels import merchant_key
+    first = raw.index[raw["description"].map(merchant_key) == spelling][0]
+    raw.loc[first, "master_category"] = "Transfer"                      # changed in Excel since the preview
+    raw.to_csv(master, index=False)
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith(f"Relabeled {n - 1} ") and "1 row left as it was (its label changed since)" in status
+    assert pd.read_csv(master, dtype=str, keep_default_na=False).loc[first, "master_category"] == "Transfer"
+
+
+def test_relabel_keeps_labels_and_undo_when_the_rule_cant_be_saved(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    _hand_labeled(g_, spelling)
+    pending, _ = g_["_merchant_preview"]("relabel", spelling, "", cat="Income")
+
+    def locked(*a, **k):
+        raise PermissionError("Nothing changed: merchants.csv is open in another program")
+    monkeypatch.setitem(g_, "save_change", locked)
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("Relabeled ") and status.endswith(
+        " · rule not saved: a merchant file is open in another program")
+    assert undo["backup"] and "merchant_files" not in undo
+
+
+def test_relabel_preview_lists_refunds_on_their_own(appmod, merchant_files):
+    g_ = _live(appmod)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    harbor = next(g for g in g_["_todo_groups"]("all") if g["mkey"] == "harbor outfitters")   # money in and out
+    for row in harbor["rows"]:                                      # label it row by row, as the panel would
+        g_["_do_label"]({"type": "lbl-row", "group": harbor["key"], "row": row["row_id"], "cat": "Expense"},
+                        "", False, 0, "all")
+    _, text = g_["_merchant_preview"]("relabel", "harbor outfitters", "", cat="Transfer")
+    refunds = [r for r in harbor["rows"] if r["amount"] > 0]
+    n = sum(r["count"] for r in refunds)
+    assert f" · includes {n} refund{'s' if n != 1 else ''} (" in text
 
 
 def test_label_click_ignores_rerender(appmod):

@@ -27,9 +27,13 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - `snapshot_files` keeps both files' exact bytes as latin-1 text (JSON-safe), and `restore_files` writes them back through the same two-file write, aliases first. A file that was missing is removed again.
 
 ## Merge, split, rename
-- `merge`, `split` and `rename` return `(table, aliases, adding)`; pass `adding` straight to `save_merchants`. It is True whenever the change creates a merchant row, so that row lands before any alias points at it.
-- Merging two bare spellings makes a new merchant named after the bigger spender. Merging away a named merchant drops its row, and with it its rule: the target's rule applies from then on.
-- `merchants_from(table, aliases)` builds Merchants exactly as the reader would, so a preview of a change (`label_changes`) trusts the same aliases loading will. `label_changes` applies the `rules.csv` keywords too, so the preview is what the next load shows.
+- `merge`, `split` and `rename` return the new `(table, aliases)`. Save them with **`save_change(folder, before, table, aliases)`**, never `save_merchants` directly: it works out the crash-safe order from what the change adds and removes. A change that does both (a rename; a merge into a new merchant) goes in two saves, first with the old row still there. A plain `adding=` flag got this wrong for renames: a crash left aliases pointing at the old name.
+- `merge` takes a merchant (all its spellings move; its row, and rule, go) or one spelling of a merged merchant (only it moves: the MOVE button). A bare-spelling target becomes a new merchant named after its highest-spend spelling (`spend` is money out *by spelling*).
+- Dismissed suggestions follow a rename or merge (`_renamed`), and tying a spelling to a merchant clears any dismissal of that same pairing (`_tie`).
+- `split` of a merchant's last spelling ends the merchant, rule and all: otherwise an invisible merchant keeps its name taken.
+- A new name may not equal any merchant name or spelling in use, whatever its case (`names_in_use`), including the merchant's own spellings: that would make SPLIT OUT of the spelling impossible. Typed names resolve with `find_merchant`, case-insensitive.
+- `merchants_from(table, aliases)` builds Merchants exactly as the reader would, so a preview of a change (`label_changes`) trusts the same aliases loading will. `rule_labels` gives label *and* category per row (the keywords applied too), so the preview shows a category that goes away, as `describe_label` text ("unlabeled · Venmo").
+- `_write_pair` says "Nothing changed: <file> is open in another program" whichever of the two swaps is refused.
 
 ## Overview (`merchant_overview`, `sort_merchants`)
 - One item per merchant over **all** its rows. `out`/`inn` are positive sums of money out and in. `labels` are the valid labels its rows carry; `has_rule` is the merchant's own rule only.

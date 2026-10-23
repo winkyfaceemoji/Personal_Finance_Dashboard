@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from config import get_data_dir, get_master_path, get_rules_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
-    unlabeled_groups, read_rules, label_rows, delete_rule,
+    unlabeled_groups, read_rules, label_rows, delete_rule, merchant_key,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
 from Modules.linked_cards import (
@@ -24,9 +24,9 @@ from Modules.linked_cards import (
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
-    ALIASES_NAME, MERCHANTS_NAME, display_name, label_changes, merchant_overview, merchants_from, merge,
-    read_merchants, remember, remember_check, rename, restore_files, save_merchants, snapshot_files,
-    sort_merchants, split,
+    ALIASES_NAME, MERCHANTS_NAME, describe_label, display_name, find_merchant, label_changes, merchant_of,
+    merchant_overview, merchants_from, merge, names_in_use, read_merchants, remember, remember_check, rename,
+    restore_files, rule_labels, save_change, save_merchants, snapshot_files, sort_merchants, split,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -736,7 +736,7 @@ app.layout = html.Div(
             ]),
             # A merchant change shows what it would relabel, and waits for CONFIRM
             html.Div(id="merchant-preview", className="label-status-row", style=_HIDDEN, children=[
-                html.Span(id="merchant-preview-text", className="settings-status"),
+                html.Span(id="merchant-preview-text", className="hint"),
                 html.Button("CONFIRM", id="merchant-confirm", n_clicks=0, className="btn-primary btn-small"),
                 html.Button("CANCEL", id="merchant-cancel", n_clicks=0, className="btn-secondary btn-small"),
             ]),
@@ -1046,18 +1046,29 @@ def _merchant_changes(i: dict):
     return html.Details(className="lg-rows", children=[
         html.Summary("Change this merchant"),
         html.Div(className="lg-options", children=[
-            dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"], className="setup-input lg-sub",
-                      debounce=False),
+            dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"], className="setup-input lg-sub"),
             _act("RENAME", "rename"),
         ]),
         html.Div(className="lg-options", children=[
             dcc.Input(id={"type": "mer-into", "merchant": key}, placeholder="Merge into… (a merchant's name)",
-                      className="setup-input lg-sub", list="mer-names", debounce=False),
+                      className="setup-input lg-sub", list="mer-names"),
             _act("MERGE", "merge"),
         ]),
-        *[html.Div(className="lg-options", children=[html.Span(s, className="lg-example"),
-                                                     _act("SPLIT OUT", "split", spelling=s)])
+        # One spelling of a merged merchant: on its own, or moved to another merchant
+        *[html.Div(className="lg-options", children=[
+              html.Span(s, className="lg-example"),
+              _act("SPLIT OUT", "split", spelling=s),
+              dcc.Input(id={"type": "mer-move", "merchant": key, "spelling": s}, placeholder="Move to…",
+                        className="setup-input lg-sub", list="mer-names"),
+              _act("MOVE", "move", spelling=s)])
           for s in (i["spellings"] if len(i["spellings"]) > 1 else [])],
+        # Fixes a past call: its hand-labeled rows and its rule, after a preview
+        html.Div(className="lg-options", children=[
+            html.Span("Relabel every row", className="lg-tag"),
+            *[_act(c.upper(), "relabel", cat=c) for c in PREDEFINED_CATEGORIES],
+            dcc.Input(id={"type": "mer-cat", "merchant": key}, placeholder="Subcategory (optional)",
+                      className="setup-input lg-sub", list="lbl-sub-options"),
+        ]),
     ])
 
 
@@ -2672,44 +2683,143 @@ def _do_label(trig: dict, sub: str, keep_rule: bool, version, filt):
 def _hand_labels() -> pd.DataFrame:
     """The master as saved: hand labels only, before any rule."""
     master = pd.read_csv(MASTER_PATH, dtype=str, keep_default_na=False)
-    master["amount"] = pd.to_numeric(master["amount"], errors="coerce").fillna(0.0)
-    return master
+    master["amount"] = pd.to_numeric(master["amount"], errors="coerce")
+    return master.dropna(subset=["amount"])          # as load_transactions does
 
 
 def _merchant_change(m, pending: dict):
     """The (table, aliases, adding) a pending merge / split / rename makes of
     `m`, and what to call it. ValueError for a name that can't be used."""
-    items, _ = merchant_overview(_without_pending_dups(df), m)
+    frame = _without_pending_dups(df)
+    items, _ = merchant_overview(frame, m)
     act, key, value = pending["act"], pending["mkey"], (pending.get("value") or "").strip()
     if act == "rename":
-        if value in (key, display_name(key)):
-            raise ValueError("That's already its name")
-        taken = {i["mkey"] for i in items} | set(m.table["merchant"])
-        return rename(m, key, value, taken), f"Rename {display_name(key)} to {value}", "Renamed"
-    if act == "merge":
-        by_name = {i["name"]: i["mkey"] for i in items} | {i["mkey"]: i["mkey"] for i in items}
-        target = by_name.get(value)
+        in_use = names_in_use(m, frame["description"].map(merchant_key))
+        return rename(m, key, value, in_use), f"Rename {display_name(key)} to {value}", "Renamed"
+    if act in ("merge", "move"):
+        target = find_merchant(value, {i["name"]: i["mkey"] for i in items} | {i["mkey"]: i["mkey"] for i in items})
         if target is None or target == key:
-            raise ValueError("Pick another merchant to merge into (start typing its name)")
-        spend = {i["mkey"]: i["out"] for i in items}
-        return (merge(m, key, target, spend), f"Merge {display_name(key)} into {display_name(target)}",
-                f"Merged {display_name(key)} into {display_name(target)}")
-    spelling = pending["spelling"]
-    return split(m, spelling), f"Split {spelling} out of {display_name(key)}", f"Split {spelling} out of {display_name(key)}"
+            raise ValueError("Pick another merchant (start typing its name)")
+        out = frame[frame["amount"] < 0]
+        spend = (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
+        source = pending["spelling"] if act == "move" else key
+        what = (f"Move {source} to {display_name(target)}" if act == "move"
+                else f"Merge {display_name(key)} into {display_name(target)}")
+        done = (f"Moved {source} to {display_name(target)}" if act == "move"
+                else f"Merged {display_name(key)} into {display_name(target)}")
+        return merge(m, source, target, spend), what, done
+    what = f"Split {pending['spelling']} out of {display_name(key)}"
+    return split(m, pending["spelling"]), what, what
 
 
-def _merchant_preview(act: str, mkey: str, value=None, spelling=None):
+def _relabel_plan(m, pending: dict):
+    """A relabel's parts: the merchant's hand-labeled rows whose label (or,
+    with a subcategory, whose subcategory) differs, as row dicts carrying the
+    label seen; the hand labels with those rewritten; and both merchant files
+    with the merchant's rule set to the new label."""
+    key, cat, sub = pending["mkey"], pending["cat"], (pending.get("value") or "").strip()
+    if cat not in PREDEFINED_CATEGORIES:
+        raise ValueError(f"{cat} isn't a label")
+    hand = _hand_labels()
+    mine = (merchant_of(hand["description"], m) == key) & hand["master_category"].isin(PREDEFINED_CATEGORIES)
+    change = mine & ((hand["master_category"] != cat) | ((sub != "") & (hand["sub_category"] != sub)))
+    ids = ["date", "description", "amount", "source", "card_last4", "master_category"]
+    rows = [{**dict(zip(ids, k)), "amount": float(k[2]), "label": k[-1], "count": int(n)}
+            for k, n in hand[change].groupby(ids, sort=False).size().items()]
+    rewritten = hand.copy()
+    rewritten.loc[change, "master_category"] = cat
+    if sub:
+        rewritten.loc[change, "sub_category"] = sub
+    items, _ = merchant_overview(_without_pending_dups(df), m)
+    spellings = next((i["spellings"] for i in items if i["mkey"] == key), [key])
+    files = remember(m, key, spellings, cat, sub, date.today().isoformat())
+    return rows, hand, rewritten, files
+
+
+def _relabel_preview(m, pending: dict):
+    """The preview text. It also stores in `pending` the rows it showed, with
+    the label seen on each: CONFIRM rewrites exactly those, never a row whose
+    label changed since."""
+    rows, hand, rewritten, (table, aliases) = _relabel_plan(m, pending)
+    pending["rows"] = rows
+    was = rule_labels(hand, m, RULES_PATH)
+    now = rule_labels(rewritten, merchants_from(table, aliases), RULES_PATH)
+    changed = (was != now).any(axis=1)
+    moved = pd.DataFrame({"from": [describe_label(*x) for x in was[changed].itertuples(index=False)],
+                          "to": [describe_label(*x) for x in now[changed].itertuples(index=False)],
+                          "amount": hand.loc[changed, "amount"].to_numpy()})
+    effect = "; ".join(f"{len(g)} row{'s' if len(g) != 1 else ''} ({_dollar0(g['amount'].abs().sum())}) "
+                       f"{f} → {t}" for (f, t), g in moved.groupby(["from", "to"])) or "no labels change"
+    refunds = moved[moved["amount"] > 0] if (moved["amount"] < 0).any() else moved.iloc[0:0]
+    if len(refunds):
+        effect += (f" · includes {len(refunds)} refund{'s' if len(refunds) != 1 else ''} "
+                   f"({_dollar0(refunds['amount'].sum())}), also labeled {pending['cat']}")
+    sub = (pending.get("value") or "").strip()
+    return f"Relabel {display_name(pending['mkey'])} as {pending['cat']}{' · ' + sub if sub else ''}: {effect}"
+
+
+def _do_relabel(pending: dict, version):
+    """Rewrite the merchant's hand labels that still show the label seen
+    (others are left and counted), then save its rule. Master first, as every
+    label write; a rule that can't be saved keeps the labels and UNDO."""
+    global df
+    with MASTER_LOCK:
+        m = _merchants()
+        if m.version != pending["version"]:
+            return ("The merchants changed since the preview — nothing was changed.",
+                    dash.no_update, dash.no_update, (version or 0) + 1)
+        _, _, _, (table, aliases) = _relabel_plan(m, pending)
+        rows = pending["rows"]                      # as previewed, with the label seen on each
+        cat, sub = pending["cat"], (pending.get("value") or "").strip()
+        master = pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
+        done = skipped = 0
+        for r in rows:
+            new, k = label_rows(master, [r], cat, sub, relabel_from={r["label"]})
+            if k == r["count"]:
+                master, done = new, done + k
+            else:                                   # its label changed since: leave it
+                skipped += r["count"]
+        undo = {}
+        try:
+            if done:
+                undo["backup"] = str(backup_master(MASTER_PATH))
+                atomic_write_csv(master, MASTER_PATH)
+        except PermissionError:
+            return _LOCKED_MSG, dash.no_update, dash.no_update, dash.no_update
+        folder, note = MASTER_PATH.parent, " · rule saved"
+        try:
+            saved = snapshot_files(folder)
+            save_change(folder, m, table, aliases)
+            undo["merchant_files"] = saved
+        except PermissionError:
+            note = " · rule not saved: a merchant file is open in another program"
+        except Exception:
+            note = " · rule not saved: the merchant files couldn't be read or written"
+        undo["stamps"] = _stamps()
+    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    name = display_name(pending["mkey"])
+    left = f" · {skipped} row{'s' if skipped != 1 else ''} left as it was (its label changed since)" if skipped else ""
+    return (f"Relabeled {done} {name} row{'s' if done != 1 else ''} as {cat}{note}{left}",
+            undo, _SHOWN_INLINE, (version or 0) + 1)
+
+
+def _merchant_preview(act: str, mkey: str, value=None, spelling=None, cat=None):
     """(pending change, preview text): what CONFIRM would do and which labels
     it would move, or (None, why it can't)."""
     m = _merchants()
-    pending = {"act": act, "mkey": mkey, "value": value, "spelling": spelling, "version": m.version}
+    pending = {"act": act, "mkey": mkey, "value": value, "spelling": spelling, "cat": cat, "version": m.version}
+    if act == "relabel":
+        try:
+            return pending, _relabel_preview(m, pending)
+        except ValueError as e:
+            return None, str(e)
     try:
-        (table, aliases, _), what, _ = _merchant_change(m, pending)
+        (table, aliases), what, _ = _merchant_change(m, pending)
     except ValueError as e:
         return None, str(e)
     moves = label_changes(_hand_labels(), m, merchants_from(table, aliases), RULES_PATH)
     effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
-                       f"{r['from'] or 'unlabeled'} → {r['to'] or 'unlabeled'}" for r in moves) or "no labels change"
+                       f"{r['from']} → {r['to']}" for r in moves) or "no labels change"
     return pending, f"{what}: {effect}"
 
 
@@ -2720,19 +2830,25 @@ def _do_merchant_change(pending: dict, version):
     global df
     if not pending:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    if pending["act"] == "relabel":
+        return _do_relabel(pending, version)
     with MASTER_LOCK:
         m = _merchants()
         if m.version != pending["version"]:
             return ("The merchants changed since the preview — nothing was changed.",
                     dash.no_update, dash.no_update, (version or 0) + 1)
         try:
-            (table, aliases, adding), _, done = _merchant_change(m, pending)
+            (table, aliases), _, done = _merchant_change(m, pending)
         except ValueError as e:
             return str(e), dash.no_update, dash.no_update, dash.no_update
         folder = MASTER_PATH.parent
+        locked = _first_locked([folder / MERCHANTS_NAME, folder / ALIASES_NAME])
+        if locked:
+            return (f"⚠ Nothing changed: {locked} is open in another program (Excel?) — close it and try again.",
+                    dash.no_update, dash.no_update, dash.no_update)
         saved = snapshot_files(folder)
         try:
-            save_merchants(folder, table, aliases, adding=adding)
+            save_change(folder, m, table, aliases)
         except PermissionError as e:
             return f"⚠ {e} (Excel?) — close it and try again.", dash.no_update, dash.no_update, dash.no_update
         undo = {"merchant_files": saved, "stamps": _stamps()}
@@ -2747,20 +2863,28 @@ def _do_merchant_change(pending: dict, version):
     Output("label-status",          "children", allow_duplicate=True),
     Input({"type": "mer-act", "merchant": ALL, "act": ALL, "spelling": ALL}, "n_clicks"),
     Input({"type": "mer-act", "merchant": ALL, "act": ALL}, "n_clicks"),
+    Input({"type": "mer-act", "merchant": ALL, "act": ALL, "cat": ALL}, "n_clicks"),
     State({"type": "mer-name", "merchant": ALL}, "value"),
     State({"type": "mer-name", "merchant": ALL}, "id"),
     State({"type": "mer-into", "merchant": ALL}, "value"),
     State({"type": "mer-into", "merchant": ALL}, "id"),
+    State({"type": "mer-cat", "merchant": ALL}, "value"),
+    State({"type": "mer-cat", "merchant": ALL}, "id"),
+    State({"type": "mer-move", "merchant": ALL, "spelling": ALL}, "value"),
+    State({"type": "mer-move", "merchant": ALL, "spelling": ALL}, "id"),
     prevent_initial_call=True,
 )
-def merchant_action(_s, _a, names, name_ids, intos, into_ids):
+def merchant_action(_s, _a, _c, names, name_ids, intos, into_ids, cats, cat_ids, moves, move_ids):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     trig = ctx.triggered_id
     key = trig["merchant"]
     value = {"rename": dict(zip([i["merchant"] for i in name_ids], names)),
-             "merge": dict(zip([i["merchant"] for i in into_ids], intos))}.get(trig["act"], {}).get(key)
-    pending, text = _merchant_preview(trig["act"], key, value, trig.get("spelling"))
+             "merge": dict(zip([i["merchant"] for i in into_ids], intos)),
+             "relabel": dict(zip([i["merchant"] for i in cat_ids], cats))}.get(trig["act"], {}).get(key)
+    if trig["act"] == "move":
+        value = dict(zip([(i["merchant"], i["spelling"]) for i in move_ids], moves)).get((key, trig["spelling"]))
+    pending, text = _merchant_preview(trig["act"], key, value, trig.get("spelling"), trig.get("cat"))
     if pending is None:                           # can't be done: say why, offer nothing to confirm
         return None, _HIDDEN, "", text
     return pending, {"display": "flex"}, text, ""

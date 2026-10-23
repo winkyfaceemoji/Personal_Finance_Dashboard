@@ -8,8 +8,9 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, read_merchants, remember,
-    remember_check, rename, restore_files, save_merchants, snapshot_files, sort_merchants, split,
+    find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
+    names_in_use, read_merchants, remember, remember_check, rename, restore_files, save_change, save_merchants,
+    snapshot_files, sort_merchants, split,
 )
 from Modules.transforms import load_transactions
 
@@ -279,56 +280,134 @@ def test_merchant_files_round_trip_through_undo_byte_for_byte(tmp_path):
 
 # ── Merge, split, rename (ticket 05) ──────────────────────────────────────────
 
-def _after(change):
-    """The Merchants a change's (table, aliases, adding) result reads back as."""
-    table, aliases, _ = change
-    return merchants_from(table, aliases)
+VENMO = ("merchant,master_category,sub_category,patterns,added\nVenmo,,Venmo,venmo,\n",
+         "spelling,merchant,status\nvenmo payment,Venmo,alias\nvenmo cashout,Venmo,alias\n"
+         "zelle payment to alex morrow,Venmo,dismissed\n")
 
 
 def test_merging_two_bare_spellings_names_the_new_merchant_after_the_bigger_spender(tmp_path):
     m = read_merchants(tmp_path)
-    spend = {"wholefds usq": 300.0, "wholefds ues": 900.0}
-    table, aliases, adding = merge(m, "wholefds usq", "wholefds ues", spend)
-    after = merchants_from(table, aliases)
-    assert adding and after.problems == []
+    after = merchants_from(*merge(m, "wholefds usq", "wholefds ues", {"wholefds usq": 300.0, "wholefds ues": 900.0}))
+    assert after.problems == []
     assert after.alias_of == {"wholefds usq": "wholefds ues", "wholefds ues": "wholefds ues"}
+
+
+def test_a_merchant_made_by_a_merge_takes_its_highest_spend_spelling(tmp_path):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    spend = {"venmo payment": 5500.0, "venmo cashout": 0.0, "atm withdrawal": 2200.0}
+    after = merchants_from(*merge(m, "Venmo", "atm withdrawal", spend))
+    assert after.alias_of == {s: "venmo payment" for s in ("venmo payment", "venmo cashout", "atm withdrawal")}
+    assert after.problems == []
 
 
 def test_merging_into_a_named_merchant_moves_every_spelling_and_drops_the_old_rule(tmp_path):
     m = read_merchants(_files(tmp_path, AMAZON[0] + "Prime Video,Income,,,\n",
                               AMAZON[1] + "prime video,Prime Video,alias\n"))
-    after = _after(merge(m, "Prime Video", "Amazon", {}))
+    after = merchants_from(*merge(m, "Prime Video", "Amazon", {}))
     assert after.alias_of == {"amzn mktp us": "Amazon", "amazon prime": "Amazon", "prime video": "Amazon"}
     assert after.table["merchant"].tolist() == ["Amazon"]          # its rule went with it
     assert after.problems == []
 
 
+def test_one_spelling_of_a_merged_merchant_can_move_on_its_own(tmp_path):
+    m = read_merchants(_files(tmp_path, AMAZON[0] + "Video,Expense,,,\n", AMAZON[1]))
+    after = merchants_from(*merge(m, "amazon prime", "Video", {}))
+    assert after.alias_of == {"amzn mktp us": "Amazon", "amazon prime": "Video"}
+    assert sorted(after.table["merchant"]) == ["Amazon", "Video"]  # Amazon keeps its other spelling and rule
+
+
+def test_dismissed_suggestions_follow_a_rename_or_merge(tmp_path):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    table, aliases = rename(m, "Venmo", "Pay apps", in_use=set())
+    assert aliases.query("status == 'dismissed'")["merchant"].tolist() == ["Pay apps"]
+    # tying a dismissed spelling to that very merchant clears the dismissal
+    _, aliases = merge(m, "zelle payment to alex morrow", "Venmo", {})
+    assert (aliases["status"] == "dismissed").sum() == 0
+
+
 def test_splitting_a_spelling_out_makes_it_its_own_merchant(tmp_path):
     m = read_merchants(_files(tmp_path, *AMAZON))
-    table, aliases, adding = split(m, "amazon prime")
-    after = merchants_from(table, aliases)
-    assert not adding and after.alias_of == {"amzn mktp us": "Amazon"}
+    after = merchants_from(*split(m, "amazon prime"))
+    assert after.alias_of == {"amzn mktp us": "Amazon"}
     assert merchant_of(pd.Series(["AMAZON PRIME*9XZ"]), after).tolist() == ["amazon prime"]
+
+
+def test_splitting_out_the_last_spelling_ends_the_merchant(tmp_path):
+    m = read_merchants(_files(tmp_path, AMAZON[0], "spelling,merchant,status\namzn mktp us,Amazon,alias\n"))
+    after = merchants_from(*split(m, "amzn mktp us"))
+    assert after.table.empty and after.alias_of == {}
 
 
 def test_renaming_keeps_the_rule_and_every_spelling(tmp_path):
     m = read_merchants(_files(tmp_path, *AMAZON))
-    after = _after(rename(m, "Amazon", "Amazon (shopping)", taken=set()))
+    after = merchants_from(*rename(m, "Amazon", "Amazon (shopping)", in_use=set()))
     assert after.alias_of == {"amzn mktp us": "Amazon (shopping)", "amazon prime": "Amazon (shopping)"}
     assert after.table.set_index("merchant").loc["Amazon (shopping)", "master_category"] == "Expense"
 
 
 def test_renaming_a_bare_spelling_gives_it_a_merchant_of_its_own(tmp_path):
-    after = _after(rename(read_merchants(tmp_path), "trader joe s", "Trader Joe's", taken=set()))
+    after = merchants_from(*rename(read_merchants(tmp_path), "trader joe s", "Trader Joe's", in_use=set()))
     assert after.alias_of == {"trader joe s": "Trader Joe's"} and after.problems == []
 
 
-def test_a_rename_to_a_name_already_in_use_is_refused(tmp_path):
+def test_a_rename_to_a_name_or_spelling_in_use_is_refused_whatever_its_case(tmp_path):
     m = read_merchants(_files(tmp_path, *AMAZON))
-    with pytest.raises(ValueError, match="Another merchant is already called trader joe s"):
-        rename(m, "Amazon", "trader joe s", taken={"Amazon", "trader joe s"})
+    in_use = names_in_use(m, ["trader joe s", "amzn mktp us", "amazon prime"])
+    for taken in ("trader joe s", "TRADER JOE S", "amazon prime"):        # another merchant, or its own spelling
+        with pytest.raises(ValueError, match=f"Another merchant or spelling is already called {taken}"):
+            rename(m, "Amazon", taken, in_use)
+    with pytest.raises(ValueError, match="That's already its name"):
+        rename(m, "Amazon", "amazon", in_use)
     with pytest.raises(ValueError, match="A merchant needs a name"):
-        rename(m, "Amazon", "  ", taken=set())
+        rename(m, "Amazon", "  ", in_use)
+
+
+def test_find_merchant_matches_a_typed_name_whatever_its_case():
+    names = {"Amazon": "Amazon", "TRADER JOE S": "trader joe s"}
+    assert find_merchant("trader Joe s", names) == "trader joe s"
+    assert find_merchant(" amazon ", names) == "Amazon"
+    assert find_merchant("nobody", names) is None
+
+
+def _steps_state(monkeypatch, folder):
+    """read_merchants at every moment a crash could stop a save: before each swap."""
+    states, real = [], os.replace
+
+    def replace(src, dst):
+        if Path(dst).parent == Path(folder) and not Path(dst).name.startswith("."):
+            states.append(read_merchants(folder).problems)
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", replace)
+    return states
+
+
+@pytest.mark.parametrize("change", ["rename", "merge named into bare", "merge into named", "split", "bare into bare"])
+def test_a_crash_at_any_point_of_a_change_leaves_files_that_agree(tmp_path, monkeypatch, change):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    table, aliases = {
+        "rename": lambda: rename(m, "Venmo", "Pay apps", in_use=set()),
+        "merge named into bare": lambda: merge(m, "Venmo", "atm withdrawal", {"atm withdrawal": 1.0}),
+        "merge into named": lambda: merge(m, "atm withdrawal", "Venmo", {}),
+        "split": lambda: split(m, "venmo cashout"),
+        "bare into bare": lambda: merge(m, "atm withdrawal", "atm cash", {}),
+    }[change]()
+    states = _steps_state(monkeypatch, tmp_path)
+    save_change(tmp_path, m, table, aliases)
+    assert states and all(p == [] for p in states)
+    assert read_merchants(tmp_path).problems == []
+
+
+def test_a_locked_first_file_says_nothing_changed(tmp_path, monkeypatch):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    real = os.replace
+
+    def replace(src, dst):
+        if Path(dst).name == "merchant_aliases.csv":                   # split writes the aliases first
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", replace)
+    with pytest.raises(PermissionError, match="Nothing changed: merchant_aliases.csv is open in another program"):
+        save_change(tmp_path, m, *split(m, "venmo cashout"))
 
 
 def test_label_changes_lists_what_a_change_would_relabel(tmp_path):
@@ -336,9 +415,19 @@ def test_label_changes_lists_what_a_change_would_relabel(tmp_path):
     hand = _rows(("2026-01-02", "AMZN Mktp US*1", -20.0, ""),           # labeled by Amazon's rule
                  ("2026-01-03", "AMZN Mktp US*2", -30.0, "Income"),     # a hand label: never moves
                  ("2026-01-04", "PRIME VIDEO", -9.0, ""))               # unlabeled
-    after = merchants_from(*merge(before, "prime video", "Amazon", {})[:2])
+    after = merchants_from(*merge(before, "prime video", "Amazon", {}))
     assert label_changes(hand, before, after, None) == [
-        {"from": "", "to": "Expense", "rows": 1, "dollars": 9.0}]
+        {"from": "unlabeled", "to": "Expense · Shopping", "rows": 1, "dollars": 9.0}]
+
+
+def test_label_changes_shows_a_category_that_goes_away(tmp_path):
+    before = read_merchants(_files(tmp_path, *VENMO))
+    hand = _rows(("2026-01-02", "VENMO PAYMENT 1", -20.0, ""))
+    after = merchants_from(*rename(before, "Venmo", "Pay apps", in_use=set()))
+    assert label_changes(hand, before, after, None) == []
+    after = merchants_from(*split(before, "venmo payment"))
+    assert label_changes(hand, before, after, None) == [
+        {"from": "unlabeled · Venmo", "to": "unlabeled", "rows": 1, "dollars": 20.0}]
 
 
 # ── All merchants (ticket 04) ─────────────────────────────────────────────────

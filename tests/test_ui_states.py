@@ -161,6 +161,16 @@ def test_all_merchants_view_and_its_sort_stay_readable(browser, server, theme):
                      f"{theme}: merchant change preview")
     page.click("#merchant-cancel")
     page.wait_for_selector("#merchant-preview", state="hidden")
+    # A merge all the way through: CONFIRM applies it, UNDO takes it back
+    second = page.locator("#label-list .lg-name").nth(1).inner_text()
+    opened.locator("input").nth(1).fill(second)
+    opened.locator("button", has_text="MERGE").click()
+    page.wait_for_selector("#merchant-preview-text:has-text('Merge')")
+    page.click("#merchant-confirm")
+    page.wait_for_selector("#label-status:has-text('Merged')")
+    _assert_readable(page, "#label-status, #label-undo-btn", f"{theme}: after a merge")
+    page.click("#label-undo-btn")
+    page.wait_for_selector("#label-status:has-text('Undone.')")
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
