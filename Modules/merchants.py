@@ -290,6 +290,7 @@ def merge(merchants: Merchants, source: str, target: str, spend: dict[str, float
     table, named = merchants.table, set(merchants.table["merchant"])
     target = merchants.alias_of.get(target, target)        # a spelling of a merchant means that merchant
     one_spelling = merchants.alias_of.get(source, source) != source
+    carried = "" if one_spelling or source not in named else table.set_index("merchant").loc[source, "patterns"]
     moving = [source] if one_spelling else _spellings(merchants, source)
     aliases = merchants.aliases
     if not one_spelling and source in named:
@@ -300,6 +301,11 @@ def merge(merchants: Merchants, source: str, target: str, spend: dict[str, float
         table = pd.concat([table, _new_row(target)], ignore_index=True)
     if not one_spelling:
         aliases = _renamed(aliases, source, target)
+    if carried:                                             # its patterns follow it, like its dismissals
+        mine = table["merchant"] == target
+        own = table.loc[mine, "patterns"].iloc[0]
+        joined = list(dict.fromkeys(p.strip() for p in f"{own}{PATTERN_SEP}{carried}".split(PATTERN_SEP) if p.strip()))
+        table = table.assign(patterns=table["patterns"].where(~mine, f" {PATTERN_SEP} ".join(joined)))
     return table.reset_index(drop=True), _tie(aliases, everything, target)
 
 
@@ -375,6 +381,7 @@ def save_change(folder, before: Merchants, table: pd.DataFrame, aliases: pd.Data
 # ── Patterns and pattern suggestions (ticket 07) ──────────────────────────────
 
 PATTERN_SEP = "|"
+MIN_PATTERN = 3     # "e" suggested 22 spellings in review
 
 
 def _patterns(cell: str) -> list[str]:
@@ -408,12 +415,87 @@ def dismiss(merchants: Merchants, spelling: str, name: str):
 def set_patterns(merchants: Merchants, name: str, text: str):
     """`name`'s patterns become those in `text` ("a | b"). A bare spelling
     gets a merchant row of its own to hold them."""
-    cell = f" {PATTERN_SEP} ".join(p.strip() for p in str(text or "").split(PATTERN_SEP) if p.strip())
+    pats = [p.strip() for p in str(text or "").split(PATTERN_SEP) if p.strip()]
+    short = [p for p in pats if len(normalize_description(p)) < MIN_PATTERN]
+    if short:
+        raise ValueError(f"A pattern needs at least {MIN_PATTERN} letters: {short[0]}")
+    cell = f" {PATTERN_SEP} ".join(pats)
     table, aliases = merchants.table, merchants.aliases
+    if not cell and name not in set(table["merchant"]):
+        raise ValueError("No patterns to save")
     if name in set(table["merchant"]):
         return table.assign(patterns=table["patterns"].where(table["merchant"] != name, cell)), aliases
     row = _new_row(name).assign(patterns=cell)
     return pd.concat([table, row], ignore_index=True), _tie(aliases, [name], name)
+
+
+# ── Converting the old rules (ticket 08) ──────────────────────────────────────
+
+def _keyword_rule(text: str, rules: list[tuple[str, str, str]]) -> tuple[str, str]:
+    """The (label, category) the rules.csv keywords give one unlabeled bank
+    text on load: the first keyword with a label labels it, and each keyword
+    with a category fills a blank one where its label (if any) agrees —
+    exactly apply_auto_categories, for one row."""
+    label = sub = ""
+    for kw, mc, sc in rules:
+        if kw in text:
+            if mc and not label:
+                label = mc
+            if sc and not sub and (not mc or label == mc):
+                sub = sc
+    return label, sub
+
+
+def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Merchants) -> list[dict]:
+    """Proposed merchants for the rules.csv keywords, in rule order. Each
+    spelling not already a merchant's goes to the first keyword that matches
+    it, with the label and category the keywords give it today (several can
+    stack: one labels, a later one adds a category). A keyword's spellings
+    that end up labeled differently make one proposal each. Each is named
+    after its spelling with the most money out; the keyword becomes its
+    pattern (on the first only). A keyword that matches nothing today is kept
+    as a merchant with only its pattern. Each: {keyword, name, label,
+    category, pattern, spellings, rows}."""
+    spelling = rows["description"].map(merchant_key)
+    text = rows["description"].map(normalize_description)
+    out = rows[rows["amount"] < 0]
+    spend = (-out["amount"]).groupby(spelling[out.index]).sum().to_dict()
+    valid = [(normalize_description(r.keyword), r.master_category if r.master_category in PREDEFINED_CATEGORIES else "",
+              r.sub_category, r.keyword) for r in rules.itertuples()]
+    valid = [v for v in valid if v[0] and (v[1] or v[2])]         # skipped on load too
+    first_text = dict(zip(spelling, text))
+    claimed, props = set(merchants.alias_of), []
+    for kw, mc, sc, original in valid:
+        hit = text.str.contains(kw, regex=False)
+        mine = sorted(set(spelling[hit]) - {""} - claimed)
+        claimed |= set(mine)
+        groups: dict[tuple[str, str], list[str]] = {}
+        for s in mine:
+            groups.setdefault(_keyword_rule(first_text[s], [v[:3] for v in valid]), []).append(s)
+        for n, ((label, sub), spellings) in enumerate(groups.items() or [((mc, sc), [])]):
+            props.append({"keyword": original, "label": label, "category": sub, "pattern": kw if n == 0 else "",
+                          "name": min(spellings, key=lambda x: (-spend.get(x, 0.0), x)) if spellings else kw,
+                          "spellings": spellings, "rows": int(hit.sum())})
+    return props
+
+
+def apply_conversion(merchants: Merchants, props: list[dict]):
+    """Both files with each (reviewed) proposal as a merchant: its name,
+    rule, pattern and the spellings left ticked. Save with save_change."""
+    names = [p["name"].strip() for p in props]
+    for name in names:
+        if not name:
+            raise ValueError("A merchant needs a name")
+        if names.count(name) > 1:
+            raise ValueError(f"Two merchants would be called {name}")
+        if name in set(merchants.table["merchant"]):
+            raise ValueError(f"A merchant called {name} already exists")
+    rows = pd.DataFrame([{"merchant": n, "master_category": p["label"], "sub_category": p["category"],
+                          "patterns": p["pattern"], "added": ""} for n, p in zip(names, props)], columns=MERCHANT_COLUMNS)
+    aliases = merchants.aliases
+    for name, p in zip(names, props):
+        aliases = _tie(aliases, p["spellings"], name)
+    return pd.concat([merchants.table, rows], ignore_index=True), aliases
 
 
 def rule_labels(hand: pd.DataFrame, merchants: Merchants, rules_path) -> pd.DataFrame:
@@ -433,12 +515,15 @@ def describe_label(label: str, category: str) -> str:
     return (label or "unlabeled") + (f" · {category}" if category else "")
 
 
-def label_changes(hand: pd.DataFrame, before: Merchants, after: Merchants, rules_path) -> list[dict]:
+def label_changes(hand: pd.DataFrame, before: Merchants, after: Merchants, rules_path,
+                  rules_path_after="same") -> list[dict]:
     """What a change would relabel: rows whose label or category (after
     rules, on top of the hand labels in `hand`) differs, as [{from, to, rows,
     dollars}]. The rules.csv keywords are applied too, so the preview is what
-    loading shows."""
-    was, now = rule_labels(hand, before, rules_path), rule_labels(hand, after, rules_path)
+    loading shows. `rules_path_after`: the keywords after the change, when
+    it retires them (None)."""
+    after_rules = rules_path if rules_path_after == "same" else rules_path_after
+    was, now = rule_labels(hand, before, rules_path), rule_labels(hand, after, after_rules)
     moved = (was != now).any(axis=1)
     frame = pd.DataFrame({"from": [describe_label(*x) for x in was[moved].itertuples(index=False)],
                           "to": [describe_label(*x) for x in now[moved].itertuples(index=False)],

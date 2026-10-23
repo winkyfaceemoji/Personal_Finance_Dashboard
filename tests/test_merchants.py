@@ -8,11 +8,11 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    dismiss, find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
+    apply_conversion, convert_proposals, dismiss, find_merchant, label_changes, rule_labels, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
     names_in_use, pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
-from Modules.transforms import load_transactions
+from Modules.transforms import load_transactions, read_rules_csv
 
 
 def _files(folder: Path, merchants: str, aliases: str) -> Path:
@@ -500,6 +500,16 @@ def test_patterns_are_set_on_a_merchant_and_a_bare_spelling_gets_a_row(tmp_path)
     assert after.table.set_index("merchant").loc["trader joe s", "patterns"] == "trader joe"
 
 
+def test_patterns_follow_a_merge_and_short_or_empty_ones_are_refused(tmp_path):
+    m = read_merchants(_files(tmp_path, *ZELLE))
+    after = merchants_from(*merge(m, "Bakery", "Zelle in", {}))
+    assert after.table.set_index("merchant").loc["Zelle in", "patterns"] == "zelle payment from | bake | bread"
+    with pytest.raises(ValueError, match="A pattern needs at least 3 letters: e"):
+        set_patterns(m, "Bakery", "bake | e")
+    with pytest.raises(ValueError, match="No patterns to save"):
+        set_patterns(m, "trader joe s", " | ")
+
+
 def test_suggestions_count_in_the_overview_and_needs_attention(tmp_path):
     m = read_merchants(_files(tmp_path, *ZELLE))
     df = _rows(("2026-01-02", "ZELLE PAYMENT FROM ANN", 20.0, ""), ("2026-01-03", "TRADER JOE S #1", -5.0, ""))
@@ -507,6 +517,81 @@ def test_suggestions_count_in_the_overview_and_needs_attention(tmp_path):
     by = {i["mkey"]: i for i in items}
     assert by["zelle payment from ann"]["suggestions"] == 1 and by["trader joe s"]["suggestions"] == 0
     assert by["zelle payment from ann"]["suggested"] == "Zelle in"
+
+
+# ── Converting the old rules (ticket 08) ──────────────────────────────────────
+
+def _keywords(*rows):
+    return pd.DataFrame([dict(zip(["keyword", "master_category", "sub_category"], r)) for r in rows])
+
+
+CONVERT_ROWS = (("2026-01-02", "ZELLE PAYMENT FROM ANN", 50.0, ""),
+                ("2026-01-03", "ZELLE PAYMENT FROM BO", 20.0, ""),
+                ("2026-01-04", "SQ *THE BEAN", -5.0, ""),
+                ("2026-01-05", "SQ *THE EGG SHOP", -9.0, ""),
+                ("2026-01-06", "VENMO PAYMENT 1", -8.0, ""))
+
+
+def test_each_rule_proposes_one_merchant_with_the_spellings_it_matches_today(tmp_path):
+    rules = _keywords(("zelle payment from", "Income", ""), ("sq *the", "Expense", ""), ("venmo", "", "Venmo"),
+                      ("nothing matches this", "Expense", ""))
+    props = convert_proposals(_rows(*CONVERT_ROWS), rules, read_merchants(tmp_path))
+    assert [(p["keyword"], p["name"], p["label"], p["category"], p["spellings"]) for p in props] == [
+        ("zelle payment from", "zelle payment from ann", "Income", "", ["zelle payment from ann", "zelle payment from bo"]),
+        ("sq *the", "sq the egg shop", "Expense", "", ["sq the bean", "sq the egg shop"]),
+        ("venmo", "venmo payment", "", "Venmo", ["venmo payment"]),
+        ("nothing matches this", "nothing matches this", "Expense", "", []),   # kept as a pattern only
+    ]
+
+
+def test_keywords_that_stack_on_a_spelling_stay_stacked(tmp_path):
+    # "cashout" labels it, then "venmo" adds a category to the same row: one merchant carries both
+    rows = _rows(("2026-01-02", "VENMO CASHOUT", 40.0, ""), ("2026-01-03", "VENMO PAYMENT 1", -8.0, ""))
+    props = convert_proposals(rows, _keywords(("cashout", "Income", ""), ("venmo", "", "Venmo")), read_merchants(tmp_path))
+    assert [(p["keyword"], p["label"], p["category"], p["spellings"]) for p in props] == [
+        ("cashout", "Income", "Venmo", ["venmo cashout"]),
+        ("venmo", "", "Venmo", ["venmo payment"])]
+
+
+def test_a_keyword_whose_spellings_end_up_labeled_differently_splits_in_two(tmp_path):
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT FROM ANN", 40.0, ""), ("2026-01-03", "ZELLE PAYMENT FROM DAD", 9.0, ""))
+    rules = _keywords(("zelle payment from dad", "Transfer", ""), ("zelle payment from", "Income", ""),
+                      ("dad", "", "Family"))
+    props = convert_proposals(rows, rules, read_merchants(tmp_path))
+    assert [(p["keyword"], p["label"], p["category"], p["spellings"]) for p in props] == [
+        ("zelle payment from dad", "Transfer", "Family", ["zelle payment from dad"]),   # "dad" adds its category
+        ("zelle payment from", "Income", "", ["zelle payment from ann"]),
+        ("dad", "", "Family", [])]
+
+
+def test_a_spelling_goes_to_the_first_rule_that_matches_it_and_never_one_already_merged(tmp_path):
+    m = read_merchants(_files(tmp_path, "merchant,master_category,sub_category,patterns,added\nCafe,Expense,,,\n",
+                              "spelling,merchant,status\nsq the bean,Cafe,alias\n"))
+    props = convert_proposals(_rows(*CONVERT_ROWS), _keywords(("sq *the", "Expense", ""), ("egg", "Income", "")), m)
+    assert [p["spellings"] for p in props] == [["sq the egg shop"], []]
+
+
+def test_converting_keeps_every_label_the_rules_gave(tmp_path):
+    rules_path = tmp_path / "rules.csv"
+    rules_path.write_text("keyword,master_category,sub_category\nzelle payment from,Income,\nsq *the,Expense,\n"
+                          "venmo,,Venmo\n", encoding="utf-8")
+    m = read_merchants(tmp_path / "m")
+    hand = _rows(*CONVERT_ROWS)
+    props = convert_proposals(hand, read_rules_csv(rules_path), m)
+    after = merchants_from(*apply_conversion(m, props))
+    assert rule_labels(hand, after, None).equals(rule_labels(hand, m, rules_path))   # no keywords needed now
+    assert after.table.set_index("merchant").loc["zelle payment from ann", "patterns"] == "zelle payment from"
+
+
+def test_the_review_can_split_spellings_out_drop_a_pattern_and_rename(tmp_path):
+    m = read_merchants(tmp_path)
+    props = convert_proposals(_rows(*CONVERT_ROWS), _keywords(("sq *the", "Expense", "")), m)
+    props[0].update(name="The Bean", spellings=["sq the bean"], pattern="")
+    after = merchants_from(*apply_conversion(m, props))
+    assert after.alias_of == {"sq the bean": "The Bean"}                       # the egg shop is left on its own
+    assert after.table.set_index("merchant").loc["The Bean", "patterns"] == ""
+    with pytest.raises(ValueError, match="Two merchants would be called The Bean"):
+        apply_conversion(m, props + [dict(props[0], spellings=[])])
 
 
 # ── All merchants (ticket 04) ─────────────────────────────────────────────────

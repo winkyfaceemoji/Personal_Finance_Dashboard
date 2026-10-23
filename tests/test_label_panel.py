@@ -755,6 +755,9 @@ def test_a_pattern_suggestion_shows_on_both_views_and_joins_only_on_confirm(appm
     status, _, _, _ = g_["_do_merchant_change"](pending, 0)
     assert status == f"Joined {display_name(spelling)} to Look-alikes."
     assert g_["_merchants"]().alias_of[spelling] == "Look-alikes"
+    from Modules.merchants import merchant_of
+    mine = merchant_of(g_["df"]["description"], g_["_merchants"]()) == "Look-alikes"
+    assert mine.any() and (g_["df"].loc[mine, "master_category"] == "Expense").all()   # its rule labels them now
 
 
 def test_a_dismissed_suggestion_never_comes_back(appmod, merchant_files):
@@ -763,8 +766,12 @@ def test_a_dismissed_suggestion_never_comes_back(appmod, merchant_files):
     merchant_files(*_with_pattern(spelling))
     pending, text = g_["_merchant_preview"]("dismiss", spelling)
     assert text.endswith("no labels change")
+    before = [f.read_bytes() for f in _files_of(g_)]
     status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
     assert status.startswith("Won't suggest")
+    g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert [f.read_bytes() for f in _files_of(g_)] == before           # UNDO brings the suggestion back
+    status, undo, _, _ = g_["_do_merchant_change"](g_["_merchant_preview"]("dismiss", spelling)[0], 0)
     todo, _ = g_["render_label_list"]({"display": "block"}, 0, "todo", "all", [], [], [], [], [], [], [], [])
     assert "Same as Look-alikes?" not in list(_in_order(todo))
     assert spelling not in g_["_merchants"]().alias_of                    # dismissing joins nothing
@@ -780,6 +787,57 @@ def test_saving_patterns_previews_what_they_would_suggest(appmod, merchant_files
     assert text.startswith(f"Patterns for Look-alikes: {word}: no labels change · suggests ")
     g_["_do_merchant_change"](pending, 0)
     assert g_["_merchants"]().table.set_index("merchant").loc["Look-alikes", "patterns"] == word
+
+
+# ── Converting the old rules (ticket 08) ──────────────────────────────────────
+
+@pytest.fixture
+def keep_rules(appmod, merchant_files):
+    """The shared rules.csv back as it was after the test (conversion retires it)."""
+    g_ = _live(appmod)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10), "spelling,merchant,status" + chr(10))
+    rules = Path(g_["RULES_PATH"])
+    saved = rules.read_bytes()
+    yield rules
+    rules.write_bytes(saved)
+    g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
+
+
+def test_the_header_offers_to_convert_while_keywords_are_left(appmod):
+    parts = appmod["attention_parts"]
+    frame = pd.DataFrame({"date": pd.to_datetime(["2026-10-01"]), "description": ["SHOP"], "amount": [-5.0],
+                          "source": ["Chase Credit"], "card_last4": [""], "master_category": ["Expense"]})
+    assert parts(frame, [], None, 0, [], pd.Timestamp("2026-10-03"))["convert"] == ""
+    got = parts(frame, [], None, 0, [], pd.Timestamp("2026-10-03"), keywords_left=3)
+    assert got["convert"] == "3 rules.csv keywords aren't a merchant yet"
+    assert _live(appmod)["_opening_tab"]("open-convert") == "rules"
+
+
+def test_converting_keeps_every_label_retires_rules_csv_and_undoes(appmod, keep_rules):
+    g_ = _live(appmod)
+    before_labels = g_["df"][["master_category", "sub_category"]].copy()
+    before_files = [keep_rules.read_bytes(), *[f.read_bytes() for f in _files_of(g_)]]
+    props = g_["_convert_proposals"]()
+    assert len(props) == len(g_["read_rules"](keep_rules))
+    pending, text = g_["_convert_preview"](props)
+    assert text == f"Convert {len(props)} rules.csv keywords into merchants: no labels change"
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith(f"Converted {len(props)} keywords into merchants · rules.csv kept as SORTED/backups/")
+    assert not keep_rules.exists()
+    assert g_["df"][["master_category", "sub_category"]].equals(before_labels)       # same labels, from merchants now
+    assert (g_["MASTER_PATH"].parent / "backups" / status.rsplit("/", 1)[1]).read_bytes() == before_files[0]
+    status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert status2 == "Undone."
+    assert [keep_rules.read_bytes(), *[f.read_bytes() for f in _files_of(g_)]] == before_files
+
+
+def test_a_conversion_previewed_before_rules_csv_changed_writes_nothing(appmod, keep_rules):
+    g_ = _live(appmod)
+    pending, _ = g_["_convert_preview"](g_["_convert_proposals"]())
+    keep_rules.write_text(keep_rules.read_text(encoding="utf-8") + "newshop,Expense,," + chr(10), encoding="utf-8")
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("The merchants or rules.csv changed since the preview")
+    assert keep_rules.exists()
 
 
 def test_label_click_ignores_rerender(appmod):

@@ -69,6 +69,11 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - The sort switch (`merchant-sort`) lives in the static layout, hidden off this tab; a change bumps `label-version` to re-render.
 - The settings menu's LABELS & MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
 
+## Converting rules.csv (ticket 08)
+- While `rules.csv` holds keywords, the header shows CONVERT →, which opens the CONVERT RULES tab: one editable proposal per keyword (`_convert_view`). CONVERT ALL (`cv-go`, in the static layout because every callback id must be) previews the whole result with `label_changes(..., rules_path_after=None)`, since the keywords stop applying.
+- CONFIRM (`_do_convert`) refuses if the merchant files or `rules.csv` changed since the preview (a hash of its bytes rides in the pending change), or if any of the three is open elsewhere. It saves the merchants first, then moves `rules.csv` to `SORTED/backups/rules-converted-<date>.csv`. One UNDO restores both merchant files and `rules.csv` byte for byte.
+- Until then the keywords keep applying on load, under the merchants' rules.
+
 ## `rules.csv` keywords (until ticket 10)
 - The RULES tab still lists and deletes them. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:
   1. Keyword is at least `MIN_KEYWORD` (4) characters.

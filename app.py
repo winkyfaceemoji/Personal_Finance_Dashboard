@@ -24,10 +24,10 @@ from Modules.linked_cards import (
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
-    ALIASES_NAME, MERCHANTS_NAME, describe_label, dismiss, display_name, find_merchant, label_changes, merchant_of,
-    merchant_overview, merchants_from, merge, names_in_use, pattern_suggestions, read_merchants, remember,
-    remember_check, rename, set_patterns,
-    restore_files, rule_labels, save_change, save_merchants, snapshot_files, sort_merchants, split,
+    ALIASES_NAME, MERCHANTS_NAME, apply_conversion, convert_proposals, describe_label, dismiss, display_name,
+    find_merchant, label_changes, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
+    pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, rule_labels, save_change,
+    save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -309,7 +309,7 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
                     left_out: pd.DataFrame | None = None,
                     exported: dict | None = None, links_broken: bool = False,
                     uncounted_ids: set | None = None,
-                    merchant_problems: list[str] | None = None) -> dict[str, str]:
+                    merchant_problems: list[str] | None = None, keywords_left: int = 0) -> dict[str, str]:
     """
     The header's one attention line, item by item — each "" when it doesn't
     fire, so a healthy dashboard shows no line at all. unlabeled / review /
@@ -356,8 +356,10 @@ def attention_parts(frame: pd.DataFrame, suspects: list[dict], import_ids, orpha
     if merchant_problems:
         other.append(f"SORTED/merchants.csv and merchant_aliases.csv disagree ({'; '.join(merchant_problems)})"
                      " — those spellings count as their own merchants")
-    return {"unlabeled": unlabeled, "review": review,
-            "transfers": transfer_check_text(suspects), "other": " · ".join(other)}
+    convert = (f"{keywords_left} rules.csv keyword{'s' if keywords_left != 1 else ''} "
+               f"{'aren' if keywords_left != 1 else 'isn'}'t a merchant yet" if keywords_left else "")
+    return {"unlabeled": unlabeled, "review": review, "transfers": transfer_check_text(suspects),
+            "convert": convert, "other": " · ".join(other)}
 
 
 def _track(spent: float, ref: float, c: dict, over: bool, marker_title: str) -> html.Div:
@@ -715,6 +717,9 @@ app.layout = html.Div(
                                              inputStyle=_PILL_INPUT, style=_HIDDEN,
                                              options=[{"label": "BY SPEND", "value": "spend"},
                                                       {"label": "NEEDS ATTENTION", "value": "attention"}]),
+                              # Convert rules only: turns every reviewed keyword into a merchant (previewed)
+                              html.Button("CONVERT ALL", id="cv-go", n_clicks=0, className="btn-primary btn-small",
+                                          style=_HIDDEN),
                           ])]),
                 dcc.RadioItems(
                     id="label-tab", className="pills", value="todo", inline=True,
@@ -722,7 +727,7 @@ app.layout = html.Div(
                     options=[{"label": "TO LABEL", "value": "todo"},
                              {"label": "ALL MERCHANTS", "value": "merchants"},
                              {"label": "TRANSFER PAIRS", "value": "pairs"},
-                             {"label": "RULES", "value": "rules"}],
+                             {"label": "CONVERT RULES", "value": "rules"}],
                 ),
                 html.Button("DONE", id="close-label-panel", n_clicks=0, className="btn-primary"),
             ]),
@@ -759,6 +764,7 @@ app.layout = html.Div(
                 _attention_item("att-unlabeled", "LABEL →", "open-label-panel"),
                 _attention_item("att-review", "REVIEW →", "open-label-review"),
                 _attention_item("att-transfers", "CHECK →", "open-transfer-check"),
+                _attention_item("att-convert", "CONVERT →", "open-convert"),
                 html.Span(id="att-other", className="attention-item"),
             ]),
 
@@ -1250,6 +1256,47 @@ def _pairs_view(pairs: list[dict], suspects: list[dict] | None = None) -> list:
     ]
 
 
+def _convert_proposals():
+    return convert_proposals(_without_pending_dups(df), read_rules(RULES_PATH), _merchants())
+
+
+def _convert_view():
+    """The one-time review that turns rules.csv keywords into merchants:
+    each keyword's proposed merchant, editable, then CONVERT ALL (previewed;
+    CONFIRM applies all at once; UNDO takes it back)."""
+    props = _convert_proposals()
+    if not props:
+        return (html.Div("No rules.csv keywords left: every rule belongs to a merchant.", className="hint"),
+                "Nothing to convert")
+
+    def _card(i, p):
+        return html.Div(className="app-card label-group", children=[
+            html.Div(className="lg-text", children=[html.Span("Keyword", className="lg-tag"),
+                                                    html.Span(p["keyword"], className="lg-example")]),
+            html.Div(className="lg-options", children=[
+                dcc.Input(id={"type": "cv-name", "rule": i}, value=p["name"], className="setup-input lg-sub"),
+                dcc.Dropdown(id={"type": "cv-label", "rule": i}, value=p["label"], clearable=False,
+                             className="lg-sub", options=[{"label": c, "value": c} for c in PREDEFINED_CATEGORIES]
+                             + [{"label": "No label (category only)", "value": ""}]),
+                dcc.Input(id={"type": "cv-cat", "rule": i}, value=p["category"], placeholder="Subcategory (optional)",
+                          className="setup-input lg-sub", list="lbl-sub-options"),
+            ]),
+            dcc.Checklist(id={"type": "cv-pat", "rule": i}, className="lg-remember", value=["keep"],
+                          options=[{"label": f" Keep \"{p['pattern']}\" as a pattern (suggests new spellings)",
+                                    "value": "keep"}]),
+            dcc.Checklist(id={"type": "cv-spell", "rule": i}, className="lg-remember", value=p["spellings"],
+                          options=[{"label": f" {s}", "value": s} for s in p["spellings"]])
+            if p["spellings"] else html.Div("Matches nothing today: kept as a pattern only", className="hint"),
+        ])
+    subs = sorted(s for s in df["sub_category"].unique() if s)
+    return ([html.Datalist(id="lbl-sub-options", children=[html.Option(value=s) for s in subs]),
+             html.Div("Each keyword becomes a merchant with its rule. Untick a spelling that isn't that merchant, "
+                      "then convert them all at once: you'll see what changes first, and UNDO takes it back.",
+                      className="hint"),
+             *[_card(i, p) for i, p in enumerate(props)]],
+            f"{len(props)} rules.csv keyword{'s' if len(props) != 1 else ''} to turn into merchants")
+
+
 def _rules_view():
     """The Rules tab: rules this panel added (with DELETE), then hand-written ones."""
     rules = read_rules(RULES_PATH)
@@ -1351,7 +1398,7 @@ def update_data_note(_refresh):
     return f"Data through {as_of:%b} {as_of.day}, {as_of.year}"
 
 
-_ATTENTION_ITEMS = ("unlabeled", "review", "transfers")
+_ATTENTION_ITEMS = ("unlabeled", "review", "transfers", "convert")
 
 
 def _pending() -> list[dict]:
@@ -1392,6 +1439,7 @@ def update_attention(_refresh, card_ui):
         links_broken=links_unreadable(MASTER_PATH) if MASTER_PATH else False,
         uncounted_ids=_pair_row_ids(),
         merchant_problems=read_merchants(MASTER_PATH.parent).problems if MASTER_PATH else None,
+        keywords_left=len(read_rules(RULES_PATH)),
     )
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
@@ -2395,12 +2443,13 @@ def save_setup(n_clicks, path, trigger):
     Input("open-transfer-check", "n_clicks"),
     Input("headline-label",    "n_clicks"),
     Input("open-merchants-btn", "n_clicks"),
+    Input("open-convert",      "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
     State("period-store",      "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _check, _headline, _merchants_btn, _close, trigger, store=None):
+def toggle_label_panel(_open, _review, _check, _headline, _merchants_btn, _convert, _close, trigger, store=None):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
@@ -2420,6 +2469,8 @@ def _opening_tab(trigger) -> str:
     All merchants."""
     if trigger == "open-transfer-check":
         return "pairs"
+    if trigger == "open-convert":
+        return "rules"
     if trigger == "open-merchants-btn" and not _todo_groups("all"):
         return "merchants"
     return "todo"
@@ -2431,6 +2482,15 @@ def _opening_tab(trigger) -> str:
 )
 def show_merchant_sort(tab):
     return _SHOWN_INLINE if tab == "merchants" else _HIDDEN
+
+
+@app.callback(
+    Output("cv-go", "style"),
+    Input("label-tab", "value"),
+    Input("label-version", "data"),
+)
+def show_convert_all(tab, _version):
+    return _SHOWN_INLINE if tab == "rules" and len(read_rules(RULES_PATH)) else _HIDDEN
 
 
 @app.callback(
@@ -2503,7 +2563,7 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
     if tab == "merchants":
         return _merchants_view(merchant_sort)
     if tab == "rules":
-        return _rules_view(), "Rules label every matching unlabeled row, past and future"
+        return _convert_view()
     shown, n_pairs = _shown_pairs(filt)
     if tab == "pairs":
         summary = f"{n_pairs} likely transfer pair{'s' if n_pairs != 1 else ''}" + _filter_ids(filt, pairs=True)[1]
@@ -2710,6 +2770,12 @@ def _hand_labels() -> pd.DataFrame:
     return master.dropna(subset=["amount"])          # as load_transactions does
 
 
+def _spelling_spend(frame: pd.DataFrame) -> dict[str, float]:
+    """Money out by spelling: names a merchant made by a merge (ADR 0025)."""
+    out = frame[frame["amount"] < 0]
+    return (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
+
+
 def _merchant_change(m, pending: dict):
     """((table, aliases), preview wording, status wording) for a pending
     rename, merge, move, split, pattern change, or accepted or dismissed
@@ -2724,8 +2790,7 @@ def _merchant_change(m, pending: dict):
         target = find_merchant(value, {i["name"]: i["mkey"] for i in items} | {i["mkey"]: i["mkey"] for i in items})
         if target is None or target == key:
             raise ValueError("Pick another merchant (start typing its name)")
-        out = frame[frame["amount"] < 0]
-        spend = (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
+        spend = _spelling_spend(frame)
         source = pending["spelling"] if act == "move" else key
         what = (f"Move {source} to {display_name(target)}" if act == "move"
                 else f"Merge {display_name(key)} into {display_name(target)}")
@@ -2735,13 +2800,11 @@ def _merchant_change(m, pending: dict):
     if act in ("accept", "dismiss"):
         target = pattern_suggestions([key], m).get(key)
         if target is None:
-            raise ValueError("That suggestion is gone — the list has been refreshed")
+            raise ValueError("That suggestion no longer applies — nothing was changed")
         if act == "dismiss":
             return (dismiss(m, key, target), f"Stop suggesting {display_name(key)} as {display_name(target)}",
                     f"Won't suggest {display_name(key)} as {display_name(target)} again")
-        out = frame[frame["amount"] < 0]
-        spend = (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
-        return (merge(m, key, target, spend), f"Join {display_name(key)} to {display_name(target)}",
+        return (merge(m, key, target, _spelling_spend(frame)), f"Join {display_name(key)} to {display_name(target)}",
                 f"Joined {display_name(key)} to {display_name(target)}")
     if act == "patterns":
         table, aliases = set_patterns(m, key, value)
@@ -2850,6 +2913,87 @@ def _do_relabel(pending: dict, version):
             undo, _SHOWN_INLINE, (version or 0) + 1)
 
 
+def _convert_preview(reviewed: list[dict]):
+    """(pending, text) for converting the reviewed keywords: what loading
+    would show once they're merchants and rules.csv is retired."""
+    m = _merchants()
+    try:
+        table, aliases = apply_conversion(m, reviewed)
+    except ValueError as e:
+        return None, str(e)
+    moves = label_changes(_hand_labels(), m, merchants_from(table, aliases), RULES_PATH, None)
+    effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
+                       f"{r['from']} → {r['to']}" for r in moves) or "no labels change"
+    rules = Path(RULES_PATH).read_bytes() if RULES_PATH and Path(RULES_PATH).exists() else b""
+    pending = {"act": "convert", "props": reviewed, "version": m.version,
+               "rules": hashlib.sha1(rules).hexdigest()}
+    return pending, f"Convert {len(reviewed)} rules.csv keyword{'s' if len(reviewed) != 1 else ''} into merchants: {effect}"
+
+
+def _do_convert(pending: dict, version):
+    """Write the merchants, then retire rules.csv to a dated backup. One
+    UNDO puts both merchant files and rules.csv back."""
+    global df
+    with MASTER_LOCK:
+        m = _merchants()
+        rules_path = Path(RULES_PATH)
+        rules = rules_path.read_bytes() if rules_path.exists() else b""
+        if m.version != pending["version"] or hashlib.sha1(rules).hexdigest() != pending["rules"]:
+            return ("The merchants or rules.csv changed since the preview — nothing was changed.",
+                    dash.no_update, dash.no_update, (version or 0) + 1)
+        folder = MASTER_PATH.parent
+        locked = _first_locked([folder / MERCHANTS_NAME, folder / ALIASES_NAME, rules_path])
+        if locked:
+            return (f"⚠ Nothing changed: {locked} is open in another program (Excel?) — close it and try again.",
+                    dash.no_update, dash.no_update, dash.no_update)
+        table, aliases = apply_conversion(m, pending["props"])
+        saved = snapshot_files(folder)
+        try:
+            save_change(folder, m, table, aliases)
+        except PermissionError as e:
+            return f"⚠ {e} (Excel?) — close it and try again.", dash.no_update, dash.no_update, dash.no_update
+        kept = folder / "backups" / f"rules-converted-{date.today().isoformat()}.csv"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        kept.write_bytes(rules)
+        rules_path.unlink()
+        undo = {"merchant_files": saved, "rules_file": rules.decode("latin-1"), "stamps": _stamps()}
+    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    n = len(pending["props"])
+    return (f"Converted {n} keyword{'s' if n != 1 else ''} into merchants · rules.csv kept as "
+            f"SORTED/backups/{kept.name}", undo, _SHOWN_INLINE, (version or 0) + 1)
+
+
+@app.callback(
+    Output("merchant-pending",      "data",     allow_duplicate=True),
+    Output("merchant-preview",      "style",    allow_duplicate=True),
+    Output("merchant-preview-text", "children", allow_duplicate=True),
+    Output("label-status",          "children", allow_duplicate=True),
+    Input("cv-go", "n_clicks"),
+    State({"type": "cv-name", "rule": ALL}, "value"),
+    State({"type": "cv-label", "rule": ALL}, "value"),
+    State({"type": "cv-cat", "rule": ALL}, "value"),
+    State({"type": "cv-pat", "rule": ALL}, "value"),
+    State({"type": "cv-spell", "rule": ALL}, "value"),
+    State({"type": "cv-spell", "rule": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def convert_click(n, names, labels, cats, pats, spells, spell_ids):
+    if not n:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    props = _convert_proposals()
+    if not props or len(props) != len(names):
+        return None, _HIDDEN, "", "The list changed — reopen CONVERT RULES to see it again."
+    ticked = {i["rule"]: v for i, v in zip(spell_ids, spells)}
+    reviewed = [dict(p, name=(names[i] or "").strip(), label=labels[i] or "", category=(cats[i] or "").strip(),
+                     pattern=p["pattern"] if "keep" in (pats[i] or []) else "",
+                     spellings=[s for s in p["spellings"] if s in ticked.get(i, [])])
+                for i, p in enumerate(props)]
+    pending, text = _convert_preview(reviewed)
+    if pending is None:
+        return None, _HIDDEN, "", text
+    return pending, {"display": "flex"}, text, ""
+
+
 def _merchant_preview(act: str, mkey: str, value=None, spelling=None, cat=None):
     """(pending change, preview text): what CONFIRM would do and which labels
     it would move, or (None, why it can't)."""
@@ -2884,6 +3028,8 @@ def _do_merchant_change(pending: dict, version):
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     if pending["act"] == "relabel":
         return _do_relabel(pending, version)
+    if pending["act"] == "convert":
+        return _do_convert(pending, version)
     with MASTER_LOCK:
         m = _merchants()
         if m.version != pending["version"]:
@@ -2980,6 +3126,10 @@ def _do_undo(undo: dict, version):
             labeled = snapshot_files(folder)
             if undo.get("merchant_files"):
                 restore_files(folder, undo["merchant_files"])
+            if undo.get("rules_file") is not None:      # a conversion retired it
+                tmp = Path(RULES_PATH).with_suffix(".csv.tmp")
+                tmp.write_bytes(undo["rules_file"].encode("latin-1"))
+                os.replace(tmp, RULES_PATH)
             try:
                 if undo.get("backup"):              # a merchant change wrote no master
                     restore_backup(Path(undo["backup"]), MASTER_PATH)

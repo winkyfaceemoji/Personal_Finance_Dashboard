@@ -40,11 +40,18 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - Patterns live in `merchants.csv`'s `patterns` cell, `"a | b"` (`PATTERN_SEP`), and match normalized spellings by substring. They only ever **suggest** (`pattern_suggestions`): a spelling joins on CONFIRM (a merge), never on its own (ADR 0025).
 - Only spellings with no alias get suggestions; a dismissed pairing (`dismiss` writes a `dismissed` alias row) never comes back. The longest matching pattern wins.
 - `merchant_overview` fills `suggested` / `suggestions` (pattern suggestions by default; pass `suggested=` to add others), which the needs-attention sort ranks first.
-- `set_patterns` gives a bare spelling a merchant row (and its alias) to hold them.
+- `set_patterns` gives a bare spelling a merchant row (and its alias) to hold them, so it refuses empty patterns there (the alias would stop it ever being suggested elsewhere), and any pattern under `MIN_PATTERN` (3) letters.
+- Patterns match the *spelling*, which has already lost words with digits and ID tails: a pattern like "store 123" never matches.
+- A merge carries the source's patterns over to the target, as it does its dismissals.
+
+## Converting the old rules (ticket 08)
+- `convert_proposals` must reproduce what the keywords give each spelling on load (`_keyword_rule` is `apply_auto_categories` for one row): keywords **stack** (`cashout` labels a row, a later `venmo` adds its category), so a spelling's merchant carries both. A keyword whose spellings end up labeled differently makes one proposal each. A first version gave each spelling only its first keyword and dropped 71 demo rows' category.
+- Spellings already a merchant's are never proposed again. A keyword matching nothing today becomes a merchant holding only its pattern.
+- `apply_conversion` refuses two proposals with one name, or a name already a merchant's. The review's edits (name, label, category, ticked spellings, keep pattern) arrive as the edited proposals.
 
 ## Overview (`merchant_overview`, `sort_merchants`)
 - One item per merchant over **all** its rows. `out`/`inn` are positive sums of money out and in. `labels` are the valid labels its rows carry; `has_rule` is the merchant's own rule only.
-- Needs attention: open suggestions (always 0 until ticket 07 fills `suggestions`), then rows whose labels differ, then no rule, each by spend.
+- Needs attention: open suggestions (`suggestions`, filled from pattern suggestions), then rows whose labels differ, then no rule, each by spend.
 - `display_name` is the one rule for showing a name: as typed when you gave it, capitals for a bare spelling. Groups and cards both use it.
 
 ## Rules on load

@@ -196,6 +196,19 @@ def test_a_suggestion_line_stays_readable_and_only_previews(browser, server, the
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_rules_conversion_review_stays_readable_and_previews(browser, server, theme):
+    page = _open(browser, server, theme)
+    page.click("#open-convert")
+    page.wait_for_selector("#label-list .lg-example")                  # one card per keyword
+    page.wait_for_selector("#cv-go", state="visible")
+    _assert_readable(page, "#label-list .lg-tag, #label-list .lg-example, #label-list label, #cv-go",
+                     f"{theme}: conversion review")
+    page.click("#cv-go")
+    page.wait_for_selector("#merchant-preview-text:has-text('Convert')")
+    page.click("#merchant-cancel")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_settings_buttons_stay_readable(browser, server, theme):
     page = _open(browser, server, theme)
     page.click("#settings-menu-btn")
