@@ -8,7 +8,7 @@ paths:
 
 # Labeling panel, rules & transfer pairs
 
-The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, rules tab) live in `app.py`. Background: ADR 0025 (which replaces 0008) and 0017.
+The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The panel callbacks (`_do_label`, `_write_labels`, undo, conversion) live in `app.py`. Background: ADR 0025 (which replaces 0008) and 0017.
 
 ## Where rules live
 - The real rules are `SORTED/rules.csv` in the data folder (`get_rules_path`), never the repo: they name real merchants (ADR 0024). `RULES_PATH` must follow the data folder when setup changes it.
@@ -70,12 +70,13 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - The settings menu's LABELS & MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
 
 ## Converting rules.csv (ticket 08)
-- While `rules.csv` holds keywords, the header shows CONVERT →, which opens the CONVERT RULES tab: one editable proposal per keyword (`_convert_view`). CONVERT ALL (`cv-go`, in the static layout because every callback id must be) previews the whole result with `label_changes(..., rules_path_after=None)`, since the keywords stop applying.
-- CONFIRM (`_do_convert`) refuses if the merchant files or `rules.csv` changed since the preview (a hash of its bytes rides in the pending change), or if any of the three is open elsewhere. It saves the merchants first, then moves `rules.csv` to `SORTED/backups/rules-converted-<date>.csv`. One UNDO restores both merchant files and `rules.csv` byte for byte.
+- While `rules.csv` holds keywords loading applies (`valid_keywords`), the header shows CONVERT →, which opens the CONVERT RULES tab: one editable proposal per keyword (`_convert_view`). CONVERT ALL (`cv-go`, in the static layout because every callback id must be) previews the whole result.
+- **No past label moves, by construction.** A keyword can label part of a spelling's rows (`… 0142` and `… 0377` share a spelling), or stack with others, so a merchant rule can't always reproduce it. `_conversion` therefore stores every label and category the keywords give a row today on that row (`freeze_keyword_labels`), then `keep_past` takes the rule off any proposal that would still move a past row: its new rows wait for a person. The preview names the rows that get a stored label and the merchants left without a rule; "no labels change" unless the review changed one.
+- CONFIRM (`_do_convert`) refuses if the merchant files or `rules.csv` changed since the preview (a hash of its bytes rides in the pending change), or if any of the four files is open elsewhere. Order: back up and write the master (only when a label gets stored), save the merchants, copy `rules.csv` to `SORTED/backups/rules-converted-<date>[-n].csv`, delete it. An `OSError` on any step restores all of them. One UNDO restores the master backup, both merchant files and `rules.csv` byte for byte.
 - Until then the keywords keep applying on load, under the merchants' rules.
 
 ## `rules.csv` keywords (until ticket 10)
-- The RULES tab still lists and deletes them. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:
+- No tab lists or deletes them any more; CONVERT RULES replaces it. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:
   1. Keyword is at least `MIN_KEYWORD` (4) characters.
   2. It matches this merchant only, across **all** rows, labeled ones included.
   3. No existing rule equals, contains or is contained by it, or matches the group.
@@ -97,4 +98,4 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
   2. Copy the snapshot over the master.
   3. Restart the app, or use RELOAD DATA.
 
-  Restoring doesn't touch `rules.csv`. Delete the session's rules on the RULES tab.
+  Restoring doesn't touch the merchant files or `rules.csv`. A snapshot taken before a conversion has the keyword labels unstored; restore the matching `rules-converted-*.csv` too, or UNDO the conversion instead.

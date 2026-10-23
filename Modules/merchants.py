@@ -431,52 +431,79 @@ def set_patterns(merchants: Merchants, name: str, text: str):
 
 # ── Converting the old rules (ticket 08) ──────────────────────────────────────
 
-def _keyword_rule(text: str, rules: list[tuple[str, str, str]]) -> tuple[str, str]:
-    """The (label, category) the rules.csv keywords give one unlabeled bank
-    text on load: the first keyword with a label labels it, and each keyword
-    with a category fills a blank one where its label (if any) agrees —
-    exactly apply_auto_categories, for one row."""
+def valid_keywords(rules: pd.DataFrame) -> list[dict]:
+    """The rules.csv keywords loading applies, in order: a keyword with a
+    valid label or a category (a typo'd label alone is skipped on load)."""
+    out = []
+    for r in rules.itertuples():
+        kw = normalize_description(getattr(r, "keyword", ""))
+        label = r.master_category if r.master_category in PREDEFINED_CATEGORIES else ""
+        if kw and r.master_category in PREDEFINED_CATEGORIES + [""] and (label or r.sub_category):
+            out.append({"keyword": r.keyword, "kw": kw, "label": label, "category": r.sub_category})
+    return out
+
+
+def spend_by_spelling(rows: pd.DataFrame) -> dict[str, float]:
+    """Money out by spelling: what names a merchant made from several."""
+    out = rows[rows["amount"] < 0]
+    return (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
+
+
+def _keyword_rule(text: str, keywords: list[dict]) -> tuple[str, str]:
+    """The (label, category) the keywords give one unlabeled bank text on
+    load: the first with a label labels it, and each with a category fills a
+    blank one where its label (if any) agrees (apply_auto_categories, one row)."""
     label = sub = ""
-    for kw, mc, sc in rules:
-        if kw in text:
-            if mc and not label:
-                label = mc
-            if sc and not sub and (not mc or label == mc):
-                sub = sc
+    for k in keywords:
+        if k["kw"] in text:
+            if k["label"] and not label:
+                label = k["label"]
+            if k["category"] and not sub and (not k["label"] or label == k["label"]):
+                sub = k["category"]
     return label, sub
 
 
 def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Merchants) -> list[dict]:
-    """Proposed merchants for the rules.csv keywords, in rule order. Each
+    """Proposed merchants for the rules.csv keywords, in rule order: each
     spelling not already a merchant's goes to the first keyword that matches
-    it, with the label and category the keywords give it today (several can
-    stack: one labels, a later one adds a category). A keyword's spellings
-    that end up labeled differently make one proposal each. Each is named
-    after its spelling with the most money out; the keyword becomes its
-    pattern (on the first only). A keyword that matches nothing today is kept
-    as a merchant with only its pattern. Each: {keyword, name, label,
-    category, pattern, spellings, rows}."""
+    it, with the label and category the keywords give it (several can stack);
+    a keyword whose spellings end up labeled differently makes one proposal
+    each. Named after the spelling with the most money out, unless that name
+    is taken; the keyword is the first proposal's pattern. A keyword that
+    matches nothing today keeps only its pattern. These are the merchants'
+    rules for *new* rows: the past is kept by freeze_keyword_labels, and
+    keep_past drops any rule that would still move it. Each: {keyword,
+    name, label, category, pattern, spellings, rows}."""
+    keywords = valid_keywords(rules)
     spelling = rows["description"].map(merchant_key)
     text = rows["description"].map(normalize_description)
-    out = rows[rows["amount"] < 0]
-    spend = (-out["amount"]).groupby(spelling[out.index]).sum().to_dict()
-    valid = [(normalize_description(r.keyword), r.master_category if r.master_category in PREDEFINED_CATEGORIES else "",
-              r.sub_category, r.keyword) for r in rules.itertuples()]
-    valid = [v for v in valid if v[0] and (v[1] or v[2])]         # skipped on load too
-    first_text = dict(zip(spelling, text))
+    spend = spend_by_spelling(rows)
+    taken = {n.casefold() for n in set(merchants.table["merchant"]) | set(merchants.alias_of.values())}
+    every_spelling = set(spelling) | set(merchants.alias_of)
     claimed, props = set(merchants.alias_of), []
-    for kw, mc, sc, original in valid:
-        hit = text.str.contains(kw, regex=False)
+    for k in keywords:
+        hit = text.str.contains(k["kw"], regex=False)
         mine = sorted(set(spelling[hit]) - {""} - claimed)
         claimed |= set(mine)
+        first_hit = dict(zip(spelling[hit][::-1], text[hit][::-1]))   # each spelling's first matching row
         groups: dict[tuple[str, str], list[str]] = {}
         for s in mine:
-            groups.setdefault(_keyword_rule(first_text[s], [v[:3] for v in valid]), []).append(s)
-        for n, ((label, sub), spellings) in enumerate(groups.items() or [((mc, sc), [])]):
-            props.append({"keyword": original, "label": label, "category": sub, "pattern": kw if n == 0 else "",
-                          "name": min(spellings, key=lambda x: (-spend.get(x, 0.0), x)) if spellings else kw,
-                          "spellings": spellings, "rows": int(hit.sum())})
+            groups.setdefault(_keyword_rule(first_hit[s], keywords), []).append(s)
+        for n, ((label, sub), spellings) in enumerate(groups.items() or [((k["label"], k["category"]), [])]):
+            name = _free_name([min(spellings, key=lambda x: (-spend.get(x, 0.0), x))] if spellings else [],
+                              k["kw"], spellings, taken, every_spelling)
+            taken.add(name.casefold())
+            props.append({"keyword": k["keyword"], "name": name, "label": label, "category": sub,
+                          "pattern": k["kw"] if n == 0 else "", "spellings": spellings, "rows": int(hit.sum())})
     return props
+
+
+def _free_name(preferred: list[str], kw: str, own: list[str], taken: set[str], spellings: set[str]) -> str:
+    """The first of `preferred`, the keyword, "keyword 2", … that no other
+    merchant uses and that isn't someone else's spelling."""
+    candidates = preferred + [kw] + [f"{kw} {i}" for i in range(2, 100)]
+    return next(c for c in candidates
+                if c.casefold() not in taken and (c not in spellings or c in own))
 
 
 def apply_conversion(merchants: Merchants, props: list[dict]):
@@ -498,6 +525,31 @@ def apply_conversion(merchants: Merchants, props: list[dict]):
     return pd.concat([merchants.table, rows], ignore_index=True), aliases
 
 
+def freeze_keyword_labels(hand: pd.DataFrame, merchants: Merchants, rules_path):
+    """(frozen, shown, changed): `hand` with every label and category the
+    rules.csv keywords give a row today stored on that row, so retiring them
+    moves nothing in the past; `shown` is what loading shows now; `changed`
+    marks the rows that got one. Merchants' own rules aren't frozen."""
+    shown = rule_labels(hand, merchants, rules_path)
+    changed = (shown != rule_labels(hand, merchants, None)).any(axis=1)
+    frozen = hand.copy()
+    for c in ("master_category", "sub_category"):
+        frozen[c] = frozen[c].fillna("").astype(str).str.strip()
+        frozen.loc[changed, c] = shown.loc[changed, c]
+    return frozen, shown, changed
+
+
+def keep_past(frozen: pd.DataFrame, shown: pd.DataFrame, merchants: Merchants, props: list[dict]):
+    """(props, dropped): a proposal whose rule would still move a past row
+    (one a keyword didn't label, but its broader merchant would) keeps its
+    spellings and pattern but no rule, so every total stays as it is."""
+    after = merchants_from(*apply_conversion(merchants, props))
+    moved = (rule_labels(frozen, after, None) != shown).any(axis=1)
+    bad = set(merchant_of(frozen.loc[moved, "description"], after))
+    out = [dict(p, label="", category="") if p["name"] in bad and (p["label"] or p["category"]) else p for p in props]
+    return out, sum(1 for p, q in zip(props, out) if p is not q)
+
+
 def rule_labels(hand: pd.DataFrame, merchants: Merchants, rules_path) -> pd.DataFrame:
     """Each row's label and category as loading would show them: the hand
     labels in `hand`, then the merchants' rules, then the rules.csv keywords."""
@@ -516,14 +568,13 @@ def describe_label(label: str, category: str) -> str:
 
 
 def label_changes(hand: pd.DataFrame, before: Merchants, after: Merchants, rules_path,
-                  rules_path_after="same") -> list[dict]:
+                  rules_path_after) -> list[dict]:
     """What a change would relabel: rows whose label or category (after
     rules, on top of the hand labels in `hand`) differs, as [{from, to, rows,
     dollars}]. The rules.csv keywords are applied too, so the preview is what
-    loading shows. `rules_path_after`: the keywords after the change, when
-    it retires them (None)."""
-    after_rules = rules_path if rules_path_after == "same" else rules_path_after
-    was, now = rule_labels(hand, before, rules_path), rule_labels(hand, after, after_rules)
+    loading shows. `rules_path_after`: the keywords after the change (the
+    same file, or None once they're retired)."""
+    was, now = rule_labels(hand, before, rules_path), rule_labels(hand, after, rules_path_after)
     moved = (was != now).any(axis=1)
     frame = pd.DataFrame({"from": [describe_label(*x) for x in was[moved].itertuples(index=False)],
                           "to": [describe_label(*x) for x in now[moved].itertuples(index=False)],

@@ -255,12 +255,6 @@ def test_render_keeps_what_the_user_set_on_cards(appmod):
     assert by_id[str({"type": "lbl-rows", "group": g["key"]})].open is True
 
 
-def test_rules_view_pluralizes_matches(appmod):
-    texts = [c.children for c in _walk(appmod["_rules_view"]())
-             if isinstance(getattr(c, "children", None), str)]
-    assert not any("matches 1 rows" in t for t in texts)
-
-
 def _live(appmod):
     """The app module's live globals (runpy returns a copy; callbacks rebind df)."""
     return appmod["_do_label"].__globals__
@@ -820,15 +814,46 @@ def test_converting_keeps_every_label_retires_rules_csv_and_undoes(appmod, keep_
     props = g_["_convert_proposals"]()
     assert len(props) == len(g_["read_rules"](keep_rules))
     pending, text = g_["_convert_preview"](props)
-    assert text == f"Convert {len(props)} rules.csv keywords into merchants: no labels change"
+    assert text.startswith(f"Convert {len(props)} rules.csv keywords into merchants: no labels change")
     status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
     assert status.startswith(f"Converted {len(props)} keywords into merchants · rules.csv kept as SORTED/backups/")
     assert not keep_rules.exists()
-    assert g_["df"][["master_category", "sub_category"]].equals(before_labels)       # same labels, from merchants now
+    after = g_["df"][["master_category", "sub_category"]]
+    diff = (after != before_labels).any(axis=1)                                       # same labels, every row
+    assert not diff.any(), pd.concat([g_["df"].loc[diff, ["description"]], before_labels[diff], after[diff]],
+                                     axis=1).head(8).to_string()
     assert (g_["MASTER_PATH"].parent / "backups" / status.rsplit("/", 1)[1]).read_bytes() == before_files[0]
     status2, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
     assert status2 == "Undone."
     assert [keep_rules.read_bytes(), *[f.read_bytes() for f in _files_of(g_)]] == before_files
+
+
+def test_converting_keeps_every_label_and_every_total_on_hard_keyword_sets(appmod, keep_rules, merchant_files):
+    from Modules.transforms import period_totals
+    g_ = _live(appmod)
+    demo = REPO / "Test Data" / "SORTED"
+    merchant_files((demo / "merchants.csv").read_text(encoding="utf-8"),
+                   (demo / "merchant_aliases.csv").read_text(encoding="utf-8"))
+    keep_rules.write_text(keep_rules.read_text(encoding="utf-8")
+                          + "maple street grocery 0142,Expense,Groceries,\n"     # only some of a spelling's rows
+                          + "real time payment received,Income,,\n"             # rows with no merchant name
+                          + "streamly,Expnse,Streaming,\n"                       # ignored on load: a typo'd label
+                          + "venmo payment,,P2P,\n", encoding="utf-8")          # stacks on Venmo's category
+    g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
+    before = g_["df"][["master_category", "sub_category"]].copy()
+    totals = {f: period_totals(g_["df"], f) for f in ("week", "month", "year")}
+    pending, text = g_["_convert_preview"](g_["_convert_proposals"]())
+    assert ": no labels change" in text
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("Converted ")
+    assert not keep_rules.exists()
+    after = g_["df"][["master_category", "sub_category"]]
+    diff = (after != before).any(axis=1)
+    assert not diff.any(), pd.concat([g_["df"].loc[diff, ["description"]], before[diff], after[diff]], axis=1).head(8).to_string()
+    for f, t in totals.items():
+        assert period_totals(g_["df"], f).equals(t), f
+    g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    assert keep_rules.exists()
 
 
 def test_a_conversion_previewed_before_rules_csv_changed_writes_nothing(appmod, keep_rules):
@@ -1065,23 +1090,6 @@ def test_label_rejects_unknown_category(appmod):
     assert "Groceries" in status and not status.startswith("Labeled")
     assert undo is g_["dash"].no_update
     assert master.read_bytes() == before
-
-
-def test_delete_rule_unlabels_its_rows(appmod):
-    from Modules.labels import add_rule, read_rules, row_ids, rule_check
-    g_ = _live(appmod)
-    grp = _rule_safe_group(g_)
-    kw = rule_check(g_["df"], read_rules(g_["RULES_PATH"]), grp)["keyword"]
-    ids = {r["row_id"] for r in grp["rows"]}
-    assert add_rule(g_["RULES_PATH"], kw, "Expense")
-    g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
-    sel = row_ids(g_["df"]).isin(ids)
-    assert sel.any() and (g_["df"].loc[sel, "master_category"] == "Expense").all()
-    status, version = g_["_do_delete_rule"](kw, 0)
-    assert status.startswith("Rule") and version == 1
-    df = g_["df"]
-    sel = row_ids(df).isin(ids)
-    assert sel.any() and (df.loc[sel, "master_category"] == "").all()   # unlabeled again
 
 
 def test_snapshot_failure_does_not_block_panel(appmod, monkeypatch):

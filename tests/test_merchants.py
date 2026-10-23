@@ -8,7 +8,8 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    apply_conversion, convert_proposals, dismiss, find_merchant, label_changes, rule_labels, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
+    apply_conversion, convert_proposals, dismiss, find_merchant, freeze_keyword_labels, keep_past, label_changes,
+    rule_labels, valid_keywords, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
     names_in_use, pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
@@ -440,7 +441,7 @@ def test_label_changes_lists_what_a_change_would_relabel(tmp_path):
                  ("2026-01-03", "AMZN Mktp US*2", -30.0, "Income"),     # a hand label: never moves
                  ("2026-01-04", "PRIME VIDEO", -9.0, ""))               # unlabeled
     after = merchants_from(*merge(before, "prime video", "Amazon", {}))
-    assert label_changes(hand, before, after, None) == [
+    assert label_changes(hand, before, after, None, None) == [
         {"from": "unlabeled", "to": "Expense · Shopping", "rows": 1, "dollars": 9.0}]
 
 
@@ -448,9 +449,9 @@ def test_label_changes_shows_a_category_that_goes_away(tmp_path):
     before = read_merchants(_files(tmp_path, *VENMO))
     hand = _rows(("2026-01-02", "VENMO PAYMENT 1", -20.0, ""))
     after = merchants_from(*rename(before, "Venmo", "Pay apps", in_use=set()))
-    assert label_changes(hand, before, after, None) == []
+    assert label_changes(hand, before, after, None, None) == []
     after = merchants_from(*split(before, "venmo payment"))
-    assert label_changes(hand, before, after, None) == [
+    assert label_changes(hand, before, after, None, None) == [
         {"from": "unlabeled · Venmo", "to": "unlabeled", "rows": 1, "dollars": 20.0}]
 
 
@@ -581,6 +582,37 @@ def test_converting_keeps_every_label_the_rules_gave(tmp_path):
     after = merchants_from(*apply_conversion(m, props))
     assert rule_labels(hand, after, None).equals(rule_labels(hand, m, rules_path))   # no keywords needed now
     assert after.table.set_index("merchant").loc["zelle payment from ann", "patterns"] == "zelle payment from"
+
+
+def test_the_past_is_frozen_and_a_rule_that_would_move_it_is_dropped(tmp_path):
+    rules_path = tmp_path / "rules.csv"
+    # "maple street grocery 0142" labels only the 0142 store's rows of that spelling
+    rules_path.write_text("keyword,master_category,sub_category\nmaple street grocery 0142,Expense,Groceries\n",
+                          encoding="utf-8")
+    hand = _rows(("2026-01-02", "MAPLE STREET GROCERY 0142", -20.0, ""),
+                 ("2026-01-03", "MAPLE STREET GROCERY 0377", -30.0, ""))
+    m = read_merchants(tmp_path / "m")
+    frozen, shown, changed = freeze_keyword_labels(hand, m, rules_path)
+    assert changed.tolist() == [True, False]
+    assert frozen[["master_category", "sub_category"]].values.tolist() == [["Expense", "Groceries"], ["", ""]]
+    props = convert_proposals(hand, read_rules_csv(rules_path), m)
+    kept, dropped = keep_past(frozen, shown, m, props)
+    assert dropped == 1 and (kept[0]["label"], kept[0]["category"]) == ("", "")   # it would label the 0377 row
+    after = merchants_from(*apply_conversion(m, kept))
+    assert rule_labels(frozen, after, None).equals(shown)
+
+
+def test_default_names_never_collide(tmp_path):
+    rows = _rows(("2026-01-02", "VENMO CASHOUT", 40.0, ""), ("2026-01-03", "VENMO PAYMENT 1", -8.0, ""))
+    rules = _keywords(("venmo", "Expense", ""), ("venmo cashout", "Income", ""), ("venmo", "Transfer", ""))
+    names = [p["name"] for p in convert_proposals(rows, rules, read_merchants(tmp_path))]
+    assert len(set(n.casefold() for n in names)) == len(names) == 3
+
+
+def test_only_keywords_loading_applies_count(tmp_path):
+    rules = _keywords(("good", "Expense", ""), ("", "Income", ""), ("typo", "Expnse", ""), ("typo2", "Expnse", "Cat"),
+                      ("cat only", "", "Cat"))
+    assert [k["keyword"] for k in valid_keywords(rules)] == ["good", "cat only"]
 
 
 def test_the_review_can_split_spellings_out_drop_a_pattern_and_rename(tmp_path):

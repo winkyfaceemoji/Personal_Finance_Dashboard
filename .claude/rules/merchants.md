@@ -47,7 +47,9 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 
 ## Converting the old rules (ticket 08)
 - `convert_proposals` must reproduce what the keywords give each spelling on load (`_keyword_rule` is `apply_auto_categories` for one row): keywords **stack** (`cashout` labels a row, a later `venmo` adds its category), so a spelling's merchant carries both. A keyword whose spellings end up labeled differently makes one proposal each. A first version gave each spelling only its first keyword and dropped 71 demo rows' category.
-- Spellings already a merchant's are never proposed again. A keyword matching nothing today becomes a merchant holding only its pattern.
+- Spellings already a merchant's are never proposed again. A keyword matching nothing today becomes a merchant holding only its pattern. Each spelling's label comes from a row the keyword matched, not an arbitrary row of the spelling.
+- Proposals are rules for *new* rows only. The past is kept by `freeze_keyword_labels` (stores what the keywords give each row) and `keep_past` (drops a rule that would still move a past row). Test the guarantee as a value diff of `rule_labels` before and after, not `DataFrame.equals` (dtypes differ after the round trip).
+- `valid_keywords` is the one list of what loading applies: a typo'd label alone is skipped, so it's never converted or counted. Default names come from `_free_name`: never another merchant's name or someone else's spelling.
 - `apply_conversion` refuses two proposals with one name, or a name already a merchant's. The review's edits (name, label, category, ticked spellings, keep pattern) arrive as the edited proposals.
 
 ## Overview (`merchant_overview`, `sort_merchants`)

@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from config import get_data_dir, get_master_path, get_rules_path, save_data_dir
 from Modules.labels import (
     apply_label_import, read_import_csv, row_ids, last_import_ids,
-    unlabeled_groups, read_rules, label_rows, delete_rule, merchant_key,
+    unlabeled_groups, read_rules, label_rows, merchant_key,
     TRANSFER_PAIR_DAYS, pair_lists, not_transfer_keys, add_not_transfer,
 )
 from Modules.linked_cards import (
@@ -25,6 +25,7 @@ from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
     ALIASES_NAME, MERCHANTS_NAME, apply_conversion, convert_proposals, describe_label, dismiss, display_name,
+    freeze_keyword_labels, keep_past, spend_by_spelling, valid_keywords,
     find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
     pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, rule_labels, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
@@ -32,7 +33,7 @@ from Modules.merchants import (
 from Modules.recurring import recurring_charges
 from Modules.similar import http_embedder, similar_merchants
 from Modules.safety import (
-    MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
+    BACKUP_DIRNAME, MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
     read_skipped, restore_backup, snapshot_master,
 )
 from Modules.transforms import (
@@ -1285,7 +1286,7 @@ def _convert_view():
             ]),
             dcc.Checklist(id={"type": "cv-pat", "rule": i}, className="lg-remember", value=["keep"],
                           options=[{"label": f" Keep \"{p['pattern']}\" as a pattern (suggests new spellings)",
-                                    "value": "keep"}]),
+                                    "value": "keep"}], style=None if p["pattern"] else {"display": "none"}),
             dcc.Checklist(id={"type": "cv-spell", "rule": i}, className="lg-remember", value=p["spellings"],
                           options=[{"label": f" {s}", "value": s} for s in p["spellings"]])
             if p["spellings"] else html.Div("Matches nothing today: kept as a pattern only", className="hint"),
@@ -1299,50 +1300,6 @@ def _convert_view():
             f"{len(props)} rules.csv keyword{'s' if len(props) != 1 else ''} to turn into merchants")
 
 
-def _rules_view():
-    """The Rules tab: rules this panel added (with DELETE), then hand-written ones."""
-    rules = read_rules(RULES_PATH)
-    norm = df["description"].map(normalize_description)
-
-    def _hits(k):
-        k = normalize_description(k)
-        return int(norm.str.contains(k, regex=False).sum()) if k else 0
-
-    def _row(r, deletable):
-        label = r.master_category or "—"
-        if r.sub_category:
-            label += f" · {r.sub_category}"
-        n = _hits(r.keyword)
-        meta = (f"{label} · matches {n} row{'s' if n != 1 else ''}"
-                + (f" · added {r.added}" if r.added else ""))
-        return html.Div(className="rule-row", children=[
-            html.Span(r.keyword, className="lg-name"),
-            html.Span(meta, className="hint"),
-            html.Button("DELETE", id={"type": "lbl-rule-del", "keyword": r.keyword}, n_clicks=0,
-                        className="btn-secondary btn-small") if deletable else None,
-        ])
-
-    added = rules[rules["added"] != ""]
-    manual = rules[rules["added"] == ""]
-    return [
-        html.Div("ADDED FROM THIS PANEL", className="settings-label"),
-        *([_row(r, True) for r in added.itertuples()] or [html.Div("None yet.", className="hint")]),
-        html.Div("IN RULES.CSV (EDIT THE FILE TO CHANGE)", className="settings-label",
-                 style={"marginTop": "20px"}),
-        *[_row(r, False) for r in manual.itertuples()],
-    ]
-
-
-# ── Callbacks ─────────────────────────────────────────────────────────────────
-
-# ── Theme ─────────────────────────────────────────────────────────────────────
-
-@app.callback(
-    Output("theme-store", "data"),
-    Input("theme-light-btn", "n_clicks"),
-    Input("theme-dark-btn",  "n_clicks"),
-    prevent_initial_call=True,
-)
 def set_theme(_, __):
     return "light" if ctx.triggered_id == "theme-light-btn" else "dark"
 
@@ -1441,7 +1398,7 @@ def update_attention(_refresh, card_ui):
         links_broken=links_unreadable(MASTER_PATH) if MASTER_PATH else False,
         uncounted_ids=_pair_row_ids(),
         merchant_problems=read_merchants(MASTER_PATH.parent).problems if MASTER_PATH else None,
-        keywords_left=len(read_rules(RULES_PATH)),
+        keywords_left=len(valid_keywords(read_rules(RULES_PATH))),
     )
     shown = {"display": "flex"} if any(parts.values()) or cards else _HIDDEN
     return (shown,
@@ -2492,7 +2449,7 @@ def show_merchant_sort(tab):
     Input("label-version", "data"),
 )
 def show_convert_all(tab, _version):
-    return _SHOWN_INLINE if tab == "rules" and len(read_rules(RULES_PATH)) else _HIDDEN
+    return _SHOWN_INLINE if tab == "rules" and valid_keywords(read_rules(RULES_PATH)) else _HIDDEN
 
 
 @app.callback(
@@ -2810,12 +2767,6 @@ def _hand_labels() -> pd.DataFrame:
     return master.dropna(subset=["amount"])          # as load_transactions does
 
 
-def _spelling_spend(frame: pd.DataFrame) -> dict[str, float]:
-    """Money out by spelling: names a merchant made by a merge (ADR 0025)."""
-    out = frame[frame["amount"] < 0]
-    return (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
-
-
 def _merchant_change(m, pending: dict):
     """((table, aliases), preview wording, status wording) for a pending
     rename, merge, move, split, pattern change, or accepted or dismissed
@@ -2830,7 +2781,7 @@ def _merchant_change(m, pending: dict):
         target = find_merchant(value, {i["name"]: i["mkey"] for i in items} | {i["mkey"]: i["mkey"] for i in items})
         if target is None or target == key:
             raise ValueError("Pick another merchant (start typing its name)")
-        spend = _spelling_spend(frame)
+        spend = spend_by_spelling(frame)
         source = pending["spelling"] if act == "move" else key
         what = (f"Move {source} to {display_name(target)}" if act == "move"
                 else f"Merge {display_name(key)} into {display_name(target)}")
@@ -2844,7 +2795,7 @@ def _merchant_change(m, pending: dict):
         if act == "dismiss":
             return (dismiss(m, key, target), f"Stop suggesting {display_name(key)} as {display_name(target)}",
                     f"Won't suggest {display_name(key)} as {display_name(target)} again")
-        return (merge(m, key, target, _spelling_spend(frame)), f"Join {display_name(key)} to {display_name(target)}",
+        return (merge(m, key, target, spend_by_spelling(frame)), f"Join {display_name(key)} to {display_name(target)}",
                 f"Joined {display_name(key)} to {display_name(target)}")
     if act == "patterns":
         table, aliases = set_patterns(m, key, value)
@@ -2953,54 +2904,101 @@ def _do_relabel(pending: dict, version):
             undo, _SHOWN_INLINE, (version or 0) + 1)
 
 
+def _rules_hash() -> str:
+    path = Path(RULES_PATH) if RULES_PATH else None
+    return hashlib.sha1(path.read_bytes() if path and path.exists() else b"").hexdigest()
+
+
+def _master_for_freeze() -> pd.DataFrame:
+    """The master as stored, read as every label write reads it."""
+    return pd.read_csv(MASTER_PATH, dtype={"card_last4": str, "master_category": str, "sub_category": str})
+
+
+def _conversion(m, reviewed: list[dict]):
+    """(props, frozen master, rows frozen, moves, rules dropped) for
+    converting the reviewed keywords: every label and category the keywords
+    give a row today is stored on it (so the past can't move), and a
+    proposal whose rule would still move a past row keeps no rule."""
+    master = _master_for_freeze()
+    frozen, shown, changed = freeze_keyword_labels(master, m, RULES_PATH)
+    props, dropped = keep_past(frozen, shown, m, reviewed)
+    after = merchants_from(*apply_conversion(m, props))
+    now = rule_labels(frozen, after, None)
+    moved = (now != shown).any(axis=1)
+    moves = [f"{int(g.size)} row{'s' if g.size != 1 else ''} ({_dollar0(g.abs().sum())}) {f} → {t}"
+             for (f, t), g in master.loc[moved, "amount"].groupby(
+                 [[describe_label(*x) for x in shown[moved].itertuples(index=False)],
+                  [describe_label(*x) for x in now[moved].itertuples(index=False)]])]
+    return props, frozen, int(changed.sum()), moves, dropped
+
+
 def _convert_preview(reviewed: list[dict]):
-    """(pending, text) for converting the reviewed keywords: what loading
-    would show once they're merchants and rules.csv is retired."""
+    """(pending, text) for converting the reviewed keywords. Every label
+    the keywords give today is kept as a stored label, so the preview's
+    first part is always "no labels change" unless the review changed one."""
     m = _merchants()
     try:
-        table, aliases = apply_conversion(m, reviewed)
+        props, _, kept, moves, dropped = _conversion(m, reviewed)
     except ValueError as e:
         return None, str(e)
-    moves = label_changes(_hand_labels(), m, merchants_from(table, aliases), RULES_PATH, None)
-    effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
-                       f"{r['from']} → {r['to']}" for r in moves) or "no labels change"
-    rules = Path(RULES_PATH).read_bytes() if RULES_PATH and Path(RULES_PATH).exists() else b""
-    pending = {"act": "convert", "props": reviewed, "version": m.version,
-               "rules": hashlib.sha1(rules).hexdigest()}
-    return pending, f"Convert {len(reviewed)} rules.csv keyword{'s' if len(reviewed) != 1 else ''} into merchants: {effect}"
+    n = len(reviewed)
+    text = (f"Convert {n} rules.csv keyword{'s' if n != 1 else ''} into merchants: "
+            f"{'; '.join(moves) or 'no labels change'}")
+    if kept:
+        text += f" · {kept} row{'s' if kept != 1 else ''} keep the label a keyword gives them, now stored"
+    if dropped:
+        text += (f" · {dropped} merchant{'s' if dropped != 1 else ''} get no rule (it would relabel past rows): "
+                 "new rows of them wait for you")
+    return {"act": "convert", "props": props, "version": m.version, "rules": _rules_hash()}, text
+
+
+def _retired_rules_path(backups: Path) -> Path:
+    """rules-converted-<date>.csv, numbered when one already exists, so a
+    second conversion (after an UNDO) never overwrites the first backup."""
+    backups.mkdir(parents=True, exist_ok=True)
+    stem = f"rules-converted-{date.today().isoformat()}"
+    return next(backups / f"{stem}{suffix}.csv" for suffix in [""] + [f"-{i}" for i in range(2, 1000)]
+                if not (backups / f"{stem}{suffix}.csv").exists())
 
 
 def _do_convert(pending: dict, version):
-    """Write the merchants, then retire rules.csv to a dated backup. One
-    UNDO puts both merchant files and rules.csv back."""
+    """Store the keywords' labels on the master, write the merchants, then
+    retire rules.csv to a dated backup — all three, or (on a refusal) none.
+    One UNDO puts the master, both merchant files and rules.csv back."""
     global df
     with MASTER_LOCK:
         m = _merchants()
-        rules_path = Path(RULES_PATH)
-        rules = rules_path.read_bytes() if rules_path.exists() else b""
-        if m.version != pending["version"] or hashlib.sha1(rules).hexdigest() != pending["rules"]:
+        if m.version != pending["version"] or _rules_hash() != pending["rules"]:
             return ("The merchants or rules.csv changed since the preview — nothing was changed.",
                     dash.no_update, dash.no_update, (version or 0) + 1)
-        folder = MASTER_PATH.parent
-        locked = _first_locked([folder / MERCHANTS_NAME, folder / ALIASES_NAME, rules_path])
+        folder, rules_path = MASTER_PATH.parent, Path(RULES_PATH)
+        locked = _first_locked([MASTER_PATH, folder / MERCHANTS_NAME, folder / ALIASES_NAME, rules_path])
         if locked:
             return (f"⚠ Nothing changed: {locked} is open in another program (Excel?) — close it and try again.",
                     dash.no_update, dash.no_update, dash.no_update)
-        table, aliases = apply_conversion(m, pending["props"])
-        saved = snapshot_files(folder)
+        props, frozen, kept, _, _ = _conversion(m, pending["props"])
+        table, aliases = apply_conversion(m, props)
+        rules = rules_path.read_bytes()
+        undo, saved = {}, snapshot_files(folder)
         try:
+            if kept:
+                undo["backup"] = str(backup_master(MASTER_PATH))
+                atomic_write_csv(frozen, MASTER_PATH)
             save_change(folder, m, table, aliases)
-        except PermissionError as e:
-            return f"⚠ {e} (Excel?) — close it and try again.", dash.no_update, dash.no_update, dash.no_update
-        kept = folder / "backups" / f"rules-converted-{date.today().isoformat()}.csv"
-        kept.parent.mkdir(parents=True, exist_ok=True)
-        kept.write_bytes(rules)
-        rules_path.unlink()
-        undo = {"merchant_files": saved, "rules_file": rules.decode("latin-1"), "stamps": _stamps()}
+            retired = _retired_rules_path(folder / BACKUP_DIRNAME)
+            retired.write_bytes(rules)
+            rules_path.unlink()
+        except OSError as e:                         # Excel got a file after the check: put everything back
+            restore_files(folder, saved)
+            if undo.get("backup"):
+                restore_backup(Path(undo["backup"]), MASTER_PATH)
+            return (f"⚠ Nothing changed: {e} — close the file and try again.",
+                    dash.no_update, dash.no_update, dash.no_update)
+        undo.update({"merchant_files": saved, "rules_file": rules.decode("latin-1"), "stamps": _stamps()})
     df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     n = len(pending["props"])
     return (f"Converted {n} keyword{'s' if n != 1 else ''} into merchants · rules.csv kept as "
-            f"SORTED/backups/{kept.name}", undo, _SHOWN_INLINE, (version or 0) + 1)
+            f"SORTED/backups/{retired.name}", undo, _SHOWN_INLINE, (version or 0) + 1)
 
 
 @app.callback(
@@ -3017,9 +3015,7 @@ def _do_convert(pending: dict, version):
     State({"type": "cv-spell", "rule": ALL}, "id"),
     prevent_initial_call=True,
 )
-def convert_click(n, names, labels, cats, pats, spells, spell_ids):
-    if not n:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+def convert_click(_n, names, labels, cats, pats, spells, spell_ids):
     props = _convert_proposals()
     if not props or len(props) != len(names):
         return None, _HIDDEN, "", "The list changed — reopen CONVERT RULES to see it again."
@@ -3049,7 +3045,7 @@ def _merchant_preview(act: str, mkey: str, value=None, spelling=None, cat=None):
     except ValueError as e:
         return None, str(e)
     after = merchants_from(table, aliases)
-    moves = label_changes(_hand_labels(), m, after, RULES_PATH)
+    moves = label_changes(_hand_labels(), m, after, RULES_PATH, RULES_PATH)
     effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
                        f"{r['from']} → {r['to']}" for r in moves) or "no labels change"
     if act == "patterns":                       # what the new patterns would put in front of you
@@ -3329,34 +3325,6 @@ def undo_label(n_clicks, undo, version):
     if not n_clicks:
         return (dash.no_update,) * 4
     return _do_undo(undo, version)
-
-
-@app.callback(
-    Output("label-status",  "children", allow_duplicate=True),
-    Output("label-version", "data",     allow_duplicate=True),
-    Input({"type": "lbl-rule-del", "keyword": ALL}, "n_clicks"),
-    State("label-version", "data"),
-    prevent_initial_call=True,
-)
-def delete_rule_click(_clicks, version):
-    if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
-        return dash.no_update, dash.no_update
-    return _do_delete_rule(ctx.triggered_id["keyword"], version)
-
-
-def _do_delete_rule(keyword: str, version):
-    """Remove a panel-added rule; the rows it labeled (and nothing saved in
-    the master) go back to unlabeled on the reload. Returns (status, version)."""
-    global df
-    try:
-        # Under the lock like every other write, so it can't interleave with a
-        # label click or an Undo
-        with MASTER_LOCK:
-            removed = delete_rule(RULES_PATH, keyword)
-    except PermissionError:
-        return "⚠ rules.csv is open in another program (Excel?) — close it and try again.", dash.no_update
-    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
-    return (f'Rule "{keyword}" deleted' if removed else "That rule was already gone"), (version or 0) + 1
 
 
 @app.callback(
