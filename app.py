@@ -207,7 +207,7 @@ LABEL_GUIDE = """
 - **Transfer** — it moved between your own accounts (credit-card payment, savings or investments, Venmo cash-out). Card purchases were already counted, so the bill payment must not count again.
 
 **Tricky cases** — card payment ("AUTOPAY", "PAYMENT THANK YOU"): Transfer, on both sides ·
-refund: Expense (it reduces spending) · friend paying you back: Expense · Venmo / Zelle / PayPal:
+refund: Expense (it reduces spending) · friend paying you back: Expense (it offsets what you paid for them) · Venmo / Zelle / PayPal:
 depends who's on the other end — expand and label row by row · ATM cash: Expense ·
 loan or mortgage payment: Expense.
 """
@@ -574,7 +574,7 @@ app = dash.Dash(
 
 app.index_string = '''
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     {%metas%}
     <title>{%title%}</title>
@@ -603,6 +603,19 @@ _SHOWN_INLINE    = {"display": "inline-block"}
 # work from the keyboard (app.css shows a focus ring)
 _PILL_INPUT = {"position": "absolute", "opacity": 0, "width": "1px", "height": "1px",
                "margin": 0, "pointerEvents": "none"}
+
+
+def _labeled(text, field):
+    """A text box with a name a screen reader says (a placeholder vanishes
+    as you type, WCAG 3.3.2). dcc.Input takes no aria props, so it goes
+    inside a <label> that adds no box of its own (app.css .input-label)."""
+    return html.Label([html.Span(text, className="sr-only"), field], className="input-label")
+
+
+def _named_group(name, field):
+    """A named group around a control that takes no aria props (pills, a
+    dropdown), so a screen reader says what it is for."""
+    return html.Div(role="group", className="input-label", **{"aria-label": name}, children=[field])
 
 
 def _attention_item(id_, button, button_id):
@@ -664,13 +677,15 @@ app.layout = html.Div(
             ]),
             html.P("Answers cover the period picked on the page, from labeled transactions only.",
                    className="hint"),
-            html.Div(id="chat-health", className="chat-health"),
-            html.Div(id="chat-log", className="chat-log"),
+            # Live regions, so a screen reader says each answer and status as it arrives
+            html.Div(id="chat-health", className="chat-health", role="status"),
+            html.Div(id="chat-log", className="chat-log", role="log", **{"aria-live": "polite"}),
             html.Div(id="chat-pending", className="chat-msg chat-user"),
-            html.Div(id="chat-status", className="hint chat-status"),
+            html.Div(id="chat-status", className="hint chat-status", role="status"),
             html.Div(className="chat-input-row", children=[
-                dcc.Input(id="chat-input", type="text", placeholder="Ask about this period's money",
-                          debounce=False, n_submit=0, className="chat-input", autoComplete="off"),
+                _labeled("Question", dcc.Input(
+                    id="chat-input", type="text", placeholder="Ask about this period's money",
+                    debounce=False, n_submit=0, className="chat-input", autoComplete="off")),
                 html.Button("SEND", id="chat-send", n_clicks=0, className="btn-primary btn-small"),
             ]),
         ]),
@@ -685,13 +700,13 @@ app.layout = html.Div(
                        "The dashboard keeps its SORTED output (and your labels) next to them.",
                        className="setup-copy"),
                 html.Div(className="setup-row", children=[
-                    dcc.Input(
+                    _labeled("Data folder", dcc.Input(
                         id="setup-path-input",
                         type="text",
                         placeholder=r"e.g. C:\Users\you\Finance\Data",
                         debounce=False,
                         className="setup-input",
-                    ),
+                    )),
                     html.Button("BROWSE", id="setup-browse-btn", n_clicks=0, className="btn-secondary"),
                 ]),
                 html.Div(className="setup-row", children=[
@@ -705,31 +720,36 @@ app.layout = html.Div(
         ),
 
         # ── Labeling panel (full-screen; opened from the header) ─────────────
-        html.Div(id="label-panel", style=_HIDDEN, children=html.Div(className="label-panel-inner", children=[
+        # assets/dialog.js moves focus in, keeps it there, closes on Escape
+        # and puts focus back on the button that opened it
+        html.Div(id="label-panel", style=_HIDDEN, role="dialog", tabIndex="-1",
+                 **{"aria-modal": "true", "aria-labelledby": "label-panel-title"},
+                 children=html.Div(className="label-panel-inner", children=[
             html.Div(className="label-head", children=[
-                html.Div([html.Div("LABEL TRANSACTIONS", className="app-label"),
+                html.Div([html.Div("LABEL TRANSACTIONS", id="label-panel-title", className="app-label"),
                           html.Div(className="label-summary-row", children=[
                               html.Span(id="label-summary", className="hint"),
                               # Opened on a subset (REVIEW →, LABEL THEM →): the way to everything
                               html.Button("SHOW ALL", id="label-show-all", n_clicks=0,
                                           className="btn-secondary btn-small", style=_HIDDEN),
                               # All merchants only: biggest spend first, or what needs a look
-                              dcc.RadioItems(id="merchant-sort", className="pills", value="spend", inline=True,
-                                             inputStyle=_PILL_INPUT, style=_HIDDEN,
-                                             options=[{"label": "BY SPEND", "value": "spend"},
-                                                      {"label": "NEEDS ATTENTION", "value": "attention"}]),
+                              _named_group("Sort merchants", dcc.RadioItems(
+                                  id="merchant-sort", className="pills", value="spend", inline=True,
+                                  inputStyle=_PILL_INPUT, style=_HIDDEN,
+                                  options=[{"label": "BY SPEND", "value": "spend"},
+                                           {"label": "NEEDS ATTENTION", "value": "attention"}])),
                               # Convert rules only: turns every reviewed keyword into a merchant (previewed)
                               html.Button("CONVERT ALL", id="cv-go", n_clicks=0, className="btn-primary btn-small",
                                           style=_HIDDEN),
                           ])]),
-                dcc.RadioItems(
+                _named_group("Panel section", dcc.RadioItems(
                     id="label-tab", className="pills", value="todo", inline=True,
                     inputStyle=_PILL_INPUT,
                     options=[{"label": "TO LABEL", "value": "todo"},
                              {"label": "ALL MERCHANTS", "value": "merchants"},
                              {"label": "TRANSFER PAIRS", "value": "pairs"},
                              {"label": "CONVERT RULES", "value": "rules"}],
-                ),
+                )),
                 html.Button("DONE", id="close-label-panel", n_clicks=0, className="btn-primary"),
             ]),
             html.Details(className="label-guide", children=[
@@ -774,7 +794,7 @@ app.layout = html.Div(
 
             html.Div(id="settings-menu-wrapper", children=[
                 html.Button(html.Span(className="gear-icon"), id="settings-menu-btn",
-                            n_clicks=0, title="Settings"),
+                            n_clicks=0, title="Settings", **{"aria-label": "Settings", "aria-expanded": "false"}),
                 html.Div(id="settings-menu-panel", className="app-card", style=_MENU_HIDDEN, children=[
                     html.Div("DATA", className="settings-label"),
                     html.Div(className="settings-row", children=[
@@ -818,9 +838,11 @@ app.layout = html.Div(
             ]),
         ]),
 
+        # The page's content, after the header (a landmark screen readers jump to)
+        html.Main(children=[
         # ── Period bar: Week / Month / Year + ‹ period › stepper ─────────────
         html.Div(className="period-bar", children=[
-            dcc.RadioItems(
+            _named_group("Period length", dcc.RadioItems(
                 id="period-freq",
                 className="pills",
                 options=[
@@ -832,14 +854,16 @@ app.layout = html.Div(
                 inline=True,
                 inputStyle=_PILL_INPUT,
                 persistence=True, persistence_type="local",
-            ),
+            )),
             html.Div(className="stepper", children=[
-                html.Button("‹", id="period-prev", n_clicks=0, className="step-btn", title="Previous period"),
+                html.Button("‹", id="period-prev", n_clicks=0, className="step-btn", title="Previous period",
+                            **{"aria-label": "Previous period"}),
                 html.Div(className="period-text", children=[
                     html.Div(id="period-label", className="period-label"),
                     html.Div(id="period-sub", className="hint"),
                 ]),
-                html.Button("›", id="period-next", n_clicks=0, className="step-btn", title="Next period"),
+                html.Button("›", id="period-next", n_clicks=0, className="step-btn", title="Next period",
+                            **{"aria-label": "Next period"}),
                 html.Button("LATEST", id="period-latest", n_clicks=0, className="btn-secondary btn-small",
                             title="Jump to the period with your newest transactions"),
             ]),
@@ -875,14 +899,21 @@ app.layout = html.Div(
                 ),
             ]),
             dcc.Graph(id="period-chart", config={"displayModeBar": False}),
+            html.P(id="period-chart-note", className="hint"),       # what the dashed line and striped bar mean
+            html.P(id="period-chart-text", className="sr-only"),
         ]),
 
         # ── Categories for the selected period, with click drilldown ─────────
         card([
             html.Div(className="card-head", children=[
                 html.Div(id="category-title", className="app-label"),
+                # The keyboard's way to a bar click (the bars can't take focus)
+                _named_group("Category", dcc.Dropdown(
+                    id="category-pick", className="title-dropdown", options=[], placeholder="Pick a category",
+                    clearable=True, searchable=False, style={"width": "220px"})),
             ]),
             dcc.Graph(id="category-chart", config={"displayModeBar": False}),
+            html.P(id="category-chart-text", className="sr-only"),
             html.Div(id="category-drilldown"),
         ]),
 
@@ -893,6 +924,7 @@ app.layout = html.Div(
                           html.Span(id="recurring-sub", className="rc-summary")]),
             html.Div(id="recurring-list"),
         ]),
+        ]),     # end of <main>
     ]
 )
 
@@ -909,12 +941,14 @@ def _span_text(g) -> str:
 def _suggestion_line(mkey: str, target: str):
     """"Same as <merchant>?" with YES and NO: both only preview; CONFIRM
     above the list applies them (ADR 0025: never joined on its own)."""
+    name, merchant = display_name(target), display_name(mkey)
     return html.Div(className="lg-text", children=[
-        html.Span(f"Same as {display_name(target)}?", className="lg-example"),
+        html.Span(f"Same as {name}?", className="lg-example"),
+        # Named in full: a screen reader lists many YES / NO buttons
         html.Button("YES", id={"type": "mer-act", "merchant": mkey, "act": "accept"}, n_clicks=0,
-                    className="btn-secondary btn-small"),
+                    className="btn-secondary btn-small", **{"aria-label": f"Same as {name}: {merchant}"}),
         html.Button("NO", id={"type": "mer-act", "merchant": mkey, "act": "dismiss"}, n_clicks=0,
-                    className="btn-secondary btn-small"),
+                    className="btn-secondary btn-small", **{"aria-label": f"Not {name}: {merchant}"}),
     ])
 
 
@@ -929,9 +963,11 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
     # group or one with money both in and out — those are labeled row by row
     bulk = not g["fallback"] and not g["mixed"]
 
+    who = g.get("merchant") or g["example"]
+
     def _btn(cat, row=None):
         id_ = ({"type": "lbl-group", "group": key, "sig": g["sig"], "cat": cat} if row is None
-               else {"type": "lbl-row", "group": key, "row": row, "cat": cat})
+               else {"type": "lbl-row", "group": key, "row": row["row_id"], "cat": cat})
         cls = "btn-secondary btn-small"
         text = cat.upper()
         if cat == "Transfer" and g["suggest_transfer"]:
@@ -939,7 +975,11 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
             # accent, so colour alone didn't stand out
             cls += " suggested"
             text = "★ " + text
-        return html.Button(text, id=id_, n_clicks=0, className=cls,
+        # Named in full: a screen reader lists dozens of EXPENSE buttons
+        d = pd.Timestamp(row["date"]) if row is not None else None
+        aria = (f"{cat}: all {g['count']} {who} rows" if row is None
+                else f"{cat}: {d:%b} {d.day}, {d.year} · {row['description']} · {_dollar(row['amount'])}")
+        return html.Button(text, id=id_, n_clicks=0, className=cls, **{"aria-label": aria},
                            title="Suggested: looks like a card payment or transfer"
                            if "suggested" in cls else None)
 
@@ -972,7 +1012,7 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
                           className="lg-desc" + ("" if _row_text(r) else " lg-desc-same"),
                           title=r["description"]),
                 html.Span(_dollar(r["amount"]), className="lg-amt"),
-                html.Div(className="lg-buttons", children=[_btn(c, r["row_id"]) for c in PREDEFINED_CATEGORIES]),
+                html.Div(className="lg-buttons", children=[_btn(c, r) for c in PREDEFINED_CATEGORIES]),
             ]) for r in g["rows"]]
 
     others = len({r["description"] for r in g["rows"]}) - 1     # the bank's other wordings
@@ -996,7 +1036,7 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
                     html.Span(f"+{others} other wording{'s' if others != 1 else ''}", className="lg-more")
                     if others else None,
                 ]),
-                html.Div(f'{g["count"]} txn{"s" if g["count"] != 1 else ""} · '
+                html.Div(f'{g["count"]} transaction{"s" if g["count"] != 1 else ""} · '
                          f'{_dollar(g["total"])} · {_span_text(g)}', className="hint"),
             ]),
             html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
@@ -1004,9 +1044,10 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = "
         ]),
         _suggestion_line(g["mkey"], suggested) if suggested else None,
         html.Div(className="lg-options", children=[
-            dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
-                      className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
-                      value=kept.get("sub") or ""),
+            _labeled(f"Subcategory for {who}",
+                     dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
+                               className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
+                               value=kept.get("sub") or "")),
             # Hidden, not left out, on a nameless card: it can never be ticked
             # there, and the label callbacks read every card's checkbox
             dcc.Checklist(
@@ -1051,7 +1092,8 @@ def _merchant_card(i: dict):
         html.Div(className="lg-text", title=", ".join(i["spellings"]), children=[
             html.Span("Spellings", className="lg-tag"), html.Span(shown, className="lg-example")]),
         _line("Patterns", i["patterns"]) if i["patterns"] else None,
-        html.Div(f"{_dollar(i['out'])} out · {_dollar(i['inn'])} in · {i['rows']} txn{'s' if i['rows'] != 1 else ''}"
+        html.Div(f"{_dollar(i['out'])} out · {_dollar(i['inn'])} in · "
+                 f"{i['rows']} transaction{'s' if i['rows'] != 1 else ''}"
                  f" · {_span_text(i) if pd.notna(i['first']) else 'no dates'}", className="hint"),
         _merchant_changes(i),
     ])
@@ -1063,39 +1105,47 @@ def _merchant_changes(i: dict):
     key = i["mkey"]
 
     def _act(text, act, **extra):
+        # Named in full: every merchant card repeats these buttons
+        what = extra.get("spelling") or i["name"]
+        aria = f"Relabel every {what} row: {extra['cat']}" if act == "relabel" else f"{text.capitalize()}: {what}"
         return html.Button(text, id={"type": "mer-act", "merchant": key, "act": act, **extra}, n_clicks=0,
-                           className="btn-secondary btn-small")
+                           className="btn-secondary btn-small", **{"aria-label": aria})
     return html.Details(className="lg-rows", children=[
         html.Summary("Change this merchant"),
         html.Div(className="lg-options", children=[
-            dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"], className="setup-input lg-sub"),
+            _labeled("New name", dcc.Input(id={"type": "mer-name", "merchant": key}, value=i["name"],
+                                           className="setup-input lg-sub")),
             _act("RENAME", "rename"),
         ]),
         html.Div(className="lg-options", children=[
-            dcc.Input(id={"type": "mer-into", "merchant": key}, placeholder="Merge into… (a merchant's name)",
-                      className="setup-input lg-sub", list="mer-names"),
+            _labeled("Merge into", dcc.Input(id={"type": "mer-into", "merchant": key},
+                                             placeholder="Merge into… (a merchant's name)",
+                                             className="setup-input lg-sub", list="mer-names")),
             _act("MERGE", "merge"),
         ]),
         # One spelling of a merged merchant: on its own, or moved to another merchant
         *[html.Div(className="lg-options", children=[
               html.Span(s, className="lg-example"),
               _act("SPLIT OUT", "split", spelling=s),
-              dcc.Input(id={"type": "mer-move", "merchant": key, "spelling": s}, placeholder="Move to…",
-                        className="setup-input lg-sub", list="mer-names"),
+              _labeled(f"Move {s} to", dcc.Input(id={"type": "mer-move", "merchant": key, "spelling": s},
+                                                 placeholder="Move to…", className="setup-input lg-sub",
+                                                 list="mer-names")),
               _act("MOVE", "move", spelling=s)])
           for s in (i["spellings"] if len(i["spellings"]) > 1 else [])],
         # What new spellings it should be suggested for ("a | b")
         html.Div(className="lg-options", children=[
-            dcc.Input(id={"type": "mer-pat", "merchant": key}, value=i["patterns"],
-                      placeholder="Patterns, e.g. zelle payment from | zelle from", className="setup-input lg-sub"),
+            _labeled("Patterns", dcc.Input(id={"type": "mer-pat", "merchant": key}, value=i["patterns"],
+                                           placeholder="Patterns, e.g. zelle payment from | zelle from",
+                                           className="setup-input lg-sub")),
             _act("SAVE PATTERNS", "patterns"),
         ]),
         # Fixes a past call: its hand-labeled rows and its rule, after a preview
         html.Div(className="lg-options", children=[
             html.Span("Relabel every row", className="lg-tag"),
             *[_act(c.upper(), "relabel", cat=c) for c in PREDEFINED_CATEGORIES],
-            dcc.Input(id={"type": "mer-cat", "merchant": key}, placeholder="Subcategory (optional)",
-                      className="setup-input lg-sub", list="lbl-sub-options"),
+            _labeled("Subcategory for the relabel",
+                     dcc.Input(id={"type": "mer-cat", "merchant": key}, placeholder="Subcategory (optional)",
+                               className="setup-input lg-sub", list="lbl-sub-options")),
         ]),
     ])
 
@@ -1111,6 +1161,8 @@ def _merchants_view(sort: str):
     by_spend = sort_merchants(items, "spend")
     shown, rest = sort_merchants(by_spend[:LABEL_TOP_N], sort), by_spend[LABEL_TOP_N:]
     out = [html.Datalist(id="mer-names", children=[html.Option(value=i["name"]) for i in by_spend]),
+           html.Div("Spellings: the bank's text with store numbers, reference codes and card-processor "
+                    "prefixes removed", className="hint lg-legend"),
            *[_merchant_card(i) for i in shown]]
     if rest:
         out.append(html.Div(f"Other · {len(rest)} merchant{'s' if len(rest) != 1 else ''} · "
@@ -1124,7 +1176,7 @@ def _merchants_view(sort: str):
     summary = (f"{len(items)} merchant{'s' if len(items) != 1 else ''} · "
                f"{_dollar0(sum(i['out'] for i in items))} out · {_dollar0(sum(i['inn'] for i in items))} in, all time")
     if not items:
-        out.insert(1, html.Div("No merchants yet", className="hint"))
+        out[1] = html.Div("No merchants yet", className="hint")         # no spellings to explain
     return out, summary
 
 
@@ -1143,6 +1195,9 @@ def _pair_side(r: dict, direction: str):
 def _pair_card(p: dict):
     """One likely transfer: the row out, the row in, one button for both."""
     n = len(p["to_label"])
+    a, b = pd.Timestamp(p["out"]["date"]), pd.Timestamp(p["in"]["date"])
+    aria = (f"{'Label both' if n == 2 else 'Label as'} Transfer: {_dollar(p['amount'])} moved "
+            f"{a:%b} {a.day} to {b:%b} {b.day}")
     return html.Div(className="app-card label-group", children=[
         html.Div(className="lg-main", children=[
             html.Div(className="lg-info", children=[
@@ -1151,7 +1206,7 @@ def _pair_card(p: dict):
             ]),
             html.Button("LABEL BOTH TRANSFER" if n == 2 else "LABEL AS TRANSFER",
                         id={"type": "lbl-pair", "pair": p["key"], "sig": p["key"]}, n_clicks=0,
-                        className="btn-secondary btn-small suggested"),
+                        className="btn-secondary btn-small suggested", **{"aria-label": aria}),
         ]),
         _pair_side(p["out"], "OUT"),
         _pair_side(p["in"], "IN"),
@@ -1276,12 +1331,16 @@ def _convert_view():
             html.Div(className="lg-text", children=[html.Span("Keyword", className="lg-tag"),
                                                     html.Span(p["keyword"], className="lg-example")]),
             html.Div(className="lg-options", children=[
-                dcc.Input(id={"type": "cv-name", "rule": i}, value=p["name"], className="setup-input lg-sub"),
-                dcc.Dropdown(id={"type": "cv-label", "rule": i}, value=p["label"], clearable=False,
-                             className="lg-sub", options=[{"label": c, "value": c} for c in PREDEFINED_CATEGORIES]
-                             + [{"label": "No rule" if p["partial"] else "No label (category only)", "value": ""}]),
-                dcc.Input(id={"type": "cv-cat", "rule": i}, value=p["category"], placeholder="Subcategory (optional)",
-                          className="setup-input lg-sub", list="lbl-sub-options"),
+                _labeled(f"Merchant name for {p['keyword']}",
+                         dcc.Input(id={"type": "cv-name", "rule": i}, value=p["name"], className="setup-input lg-sub")),
+                _named_group("Label", dcc.Dropdown(
+                    id={"type": "cv-label", "rule": i}, value=p["label"], clearable=False, className="lg-sub",
+                    options=[{"label": c, "value": c} for c in PREDEFINED_CATEGORIES]
+                    + [{"label": "No rule" if p["partial"] else "No label (category only)", "value": ""}])),
+                _labeled(f"Subcategory for {p['keyword']}",
+                         dcc.Input(id={"type": "cv-cat", "rule": i}, value=p["category"],
+                                   placeholder="Subcategory (optional)", className="setup-input lg-sub",
+                                   list="lbl-sub-options")),
             ]),
             dcc.Checklist(id={"type": "cv-pat", "rule": i}, className="lg-remember", value=["keep"],
                           options=[{"label": f" Keep \"{p['pattern']}\" as a pattern (suggests new spellings)",
@@ -1324,6 +1383,8 @@ def set_theme(_, __):
     Output("app-root",        "className"),
     Output("theme-light-btn", "className"),
     Output("theme-dark-btn",  "className"),
+    Output("theme-light-btn", "aria-pressed"),
+    Output("theme-dark-btn",  "aria-pressed"),
     Input("theme-store",      "data"),
 )
 def apply_theme(theme):
@@ -1332,7 +1393,8 @@ def apply_theme(theme):
     base = "btn-secondary btn-small"
     return (f"{theme}-theme",
             f"{base} active" if theme == "light" else base,
-            f"{base} active" if theme == "dark" else base)
+            f"{base} active" if theme == "dark" else base,
+            str(theme == "light").lower(), str(theme == "dark").lower())
 
 
 # ── Settings menu ─────────────────────────────────────────────────────────────
@@ -1341,6 +1403,7 @@ def apply_theme(theme):
     Output("settings-menu-open",  "data"),
     Output("settings-menu-panel", "style"),
     Output("settings-backdrop",   "style"),
+    Output("settings-menu-btn",   "aria-expanded"),
     Input("settings-menu-btn",    "n_clicks"),
     Input("settings-backdrop",    "n_clicks"),
     Input("theme-light-btn",      "n_clicks"),
@@ -1357,7 +1420,7 @@ def toggle_settings_menu(*args):
     is_open  = args[-1]
     new_open = (not is_open) if ctx.triggered_id == "settings-menu-btn" else False
     style    = _MENU_VISIBLE if new_open else _MENU_HIDDEN
-    return new_open, style, ({"display": "block"} if new_open else _MENU_HIDDEN)
+    return new_open, style, ({"display": "block"} if new_open else _MENU_HIDDEN), str(new_open).lower()
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -1747,6 +1810,8 @@ def update_stats(store, theme, _refresh):
 
 @app.callback(
     Output("period-chart", "figure"),
+    Output("period-chart-text", "children"),
+    Output("period-chart-note", "children"),
     Input("period-store",    "data"),
     Input("cashflow-metric", "value"),
     Input("theme-store",     "data"),
@@ -1760,7 +1825,7 @@ def update_period_chart(store, metric, theme, _refresh):
 
     totals = period_totals(df, freq)
     if totals.empty:
-        return empty_figure("No transactions yet", theme, 300)
+        return empty_figure("No transactions yet", theme, 300), "No transactions yet", ""
 
     # Window: the latest N periods — or, when the selected period is older
     # than that, a window that keeps it on screen
@@ -1801,23 +1866,32 @@ def update_period_chart(store, metric, theme, _refresh):
         hovertemplate="<b>%{customdata[1]}</b><br>" + name + ": $%{y:,.2f}<extra></extra>",
     ))
 
+    # The chart as text, for screen readers (its bars can't be read out)
+    text = f"{name} per {freq}: " + "; ".join(f"{lbl} {_dollar0(v)}" for lbl, v in zip(labels, vals)) + "."
+    # The hatch said in words, under the chart (hover alone never reaches a keyboard)
+    running = [q for q, ip in zip(win.index, in_progress) if ip]
+    note = (f"Striped bar: {period_label(running[0], freq)} so far, through {as_of:%b} {as_of.day}"
+            if running else "")
+
     # Typical level: median of the complete periods on screen
     complete = [v for v, ip in zip(vals, in_progress) if not ip]
     if len(complete) >= 3:
         typical = float(pd.Series(complete).median())
+        text += f" The median of the complete {freq}s shown is {_dollar0(typical)}."
         # "median", not "typical": the headline's typical is a different measure
         # (the previous 12 periods), and two different "typical" numbers on one
-        # screen read as an error
-        fig.add_hline(y=typical, line_dash="dash", line_color=c["subtext"], line_width=1,
-                      annotation_text=f"median {_dollar0(typical)}", annotation_position="top right",
-                      annotation_font=dict(color=c["subtext"], size=11))
+        # screen read as an error. Named in the note under the chart: a label
+        # on the line sat on top of whichever bars were near it
+        fig.add_hline(y=typical, line_dash="dash", line_color=c["subtext"], line_width=1)
+        note = " · ".join(filter(None, [
+            f"Dashed line: median of the complete {freq}s shown, {_dollar0(typical)}", note]))
     if metric == "net":
         fig.add_hline(y=0, line_color=c["border"], line_width=1)
 
     fig.update_layout(**chart_template(theme), height=300, showlegend=False, bargap=0.25)
     fig.update_xaxes(type="category", showgrid=False)
 
-    return fig
+    return fig, text, note
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -1838,6 +1912,8 @@ def _category_opacity(names: list[str], selected) -> list[float]:
 @app.callback(
     Output("category-chart", "figure"),
     Output("category-title", "children"),
+    Output("category-pick",  "options"),
+    Output("category-chart-text", "children"),
     Input("period-store",    "data"),
     Input("theme-store",     "data"),
     Input("refresh-trigger", "data"),
@@ -1856,10 +1932,12 @@ def update_category_chart(store, theme, _refresh, sel_cat):
 
     top, _ = _category_split(filter_period(df, p))
     if top.empty:
-        return empty_figure(f"No labeled expenses in {label}", theme, 160), title
+        empty = f"No labeled expenses in {label}"
+        return empty_figure(empty, theme, 160), title, [], empty
 
     total = top["total_expenses"].sum()
     names = top["category"].tolist()
+    shares = [f"{_dollar0(v)} · {v / total * 100:.0f}%" for v in top["total_expenses"]]
     fig = go.Figure(go.Bar(
         orientation="h",
         y=names,
@@ -1868,9 +1946,9 @@ def update_category_chart(store, theme, _refresh, sel_cat):
             color=c["bar"],
             opacity=_category_opacity(names, sel_cat),
         ),
-        text=[f"{_dollar0(v)} · {v / total * 100:.0f}%" for v in top["total_expenses"]],
+        text=shares,
         textposition="outside",
-        textfont=dict(color=c["text"], size=11),
+        textfont=dict(color=c["text"], size=12),
         cliponaxis=False,
         hovertemplate="<b>%{y}</b><br>$%{x:,.2f}<extra></extra>",
     ))
@@ -1880,28 +1958,37 @@ def update_category_chart(store, theme, _refresh, sel_cat):
     fig.update_yaxes(autorange="reversed", automargin=True, showgrid=False,
                      tickprefix="", ticksuffix="  ")
     fig.update_xaxes(visible=False)
-    return fig, title
+    text = f"Spent by category, {label}: " + "; ".join(f"{n_} {s}" for n_, s in zip(names, shares)) + "."
+    return fig, title, names, text
 
 
 @app.callback(
     Output("selected-category", "data"),
     Output("category-chart",    "clickData"),
+    Output("category-pick",     "value"),
     Input("category-chart",     "clickData"),
     Input("period-store",       "data"),
-    State("selected-category",  "data"),
+    Input("category-pick",      "value"),
+    Input("selected-category",  "data"),
     prevent_initial_call=True,
 )
-def select_category(click_data, _store, current):
+def select_category(click_data, _store, picked, current):
     # Store the clicked bar's label. Always reset clickData to None afterwards
     # so re-clicking the SAME bar registers as a change (Dash only fires on a
     # changed input). A period change clears the selection; clicking the
-    # selected bar again toggles it off.
+    # selected bar again toggles it off. The picker is the keyboard's way to
+    # the same selection, and follows it whatever set it (a click, the chat).
     if ctx.triggered_id == "period-store":
-        return None, None
+        return None, None, None
+    if ctx.triggered_id == "category-pick":
+        return (picked or None) if picked != current else dash.no_update, dash.no_update, dash.no_update
+    if ctx.triggered_id == "selected-category":
+        return dash.no_update, dash.no_update, current
     if not click_data:
-        return dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
     label = click_data["points"][0].get("y")
-    return (None if label == current else label), None
+    new = None if label == current else label
+    return new, None, new
 
 
 @app.callback(
@@ -1950,7 +2037,7 @@ def category_drilldown(label, _theme, store):
                 # otherwise emit an invalid negative CSS width
                 style={"width": f"{max(frac, 0) * 100:.0f}%"},
             )),
-            html.Span(f"${amt:,.2f} · {frac * 100:.0f}% · {int(cnt)} txn{'s' if cnt != 1 else ''}",
+            html.Span(f"${amt:,.2f} · {frac * 100:.0f}% · {int(cnt)} transaction{'s' if cnt != 1 else ''}",
                       className="drill-stat"),
         ])
 
@@ -1971,7 +2058,7 @@ def category_drilldown(label, _theme, store):
                 "Largest: ",
                 html.Span(f"${big['amount']:,.2f}", style={"fontWeight": "600"}),
                 f" · {big['description']} · {big_date:%b} {big_date.day}",
-            ], className="muted-text", style={"fontSize": "11px"}),
+            ], className="muted-text", style={"fontSize": "12px"}),
         ])
 
     # Merchant rollup: bank descriptions embed store numbers and ids, so strip
@@ -1992,7 +2079,8 @@ def category_drilldown(label, _theme, store):
         if not rest.empty:
             rows.append(_prop_row(f"OTHER · {len(rest)} merchants",
                                   rest["sum"].sum(), rest["count"].sum(), total, muted=True))
-        return _panel(title, f"${total:,.2f} · {count} txns · ${total / count:,.2f} avg", rows, txns)
+        return _panel(title, f"${total:,.2f} · {count} transaction{'s' if count != 1 else ''} · "
+                             f"${total / count:,.2f} average", rows, txns)
 
     # ── "Other" bar: top merchants across the small categories it aggregates ─
     if str(label).startswith("Other · "):
@@ -2079,6 +2167,8 @@ def _chat_system(period: str) -> str:
     Output("chat-panel",  "className"),
     Output("chat-health", "children"),
     Output("chat-id",     "data"),
+    Output("chat-send",   "disabled"),
+    Output("chat-input",  "disabled"),
     Input("chat-toggle",  "n_clicks"),
     Input("chat-close",   "n_clicks"),
     State("chat-panel",   "className"),
@@ -2086,12 +2176,15 @@ def _chat_system(period: str) -> str:
 )
 def toggle_chat(_open, _close, cls):
     # Both buttons toggle (CLOSE only shows while open). Opening checks the
-    # model server, so a stopped server is said up front, not after a question
+    # model server, so a stopped server is said up front, not after a question,
+    # and SEND and the box are off until it runs (reopening checks again). The
+    # box too: Enter sends, and chat_send's running= would turn SEND back on.
+    # A model still loading keeps both: "try again in a moment" needs them
     if "open" in (cls or ""):
-        return "chat-panel", dash.no_update, dash.no_update
+        return "chat-panel", dash.no_update, dash.no_update, dash.no_update, dash.no_update
     state = health(llm_url())
     note = "" if state == "ok" else _CHAT_LOADING if state == "loading" else _CHAT_DOWN
-    return "chat-panel open", note, os.urandom(8).hex()
+    return "chat-panel open", note, os.urandom(8).hex(), note == _CHAT_DOWN, note == _CHAT_DOWN
 
 
 @app.callback(

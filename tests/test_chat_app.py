@@ -98,10 +98,19 @@ def test_an_empty_question_does_nothing(appmod):
 
 def test_opening_the_panel_says_when_the_model_is_not_running(appmod, monkeypatch):
     monkeypatch.setenv("FINANCE_LLM_URL", "http://127.0.0.1:9")
-    cls, note, chat_id = appmod["toggle_chat"](1, 0, "chat-panel")
+    cls, note, chat_id, send_off, input_off = appmod["toggle_chat"](1, 0, "chat-panel")
     assert "open" in cls and "start_llm.ps1" in note and chat_id
-    cls, _, _ = appmod["toggle_chat"](2, 0, cls)
+    # nothing to send to: neither SEND nor Enter in the box (chat_send's
+    # running= would switch SEND back on after an Enter)
+    assert send_off is True and input_off is True
+    cls, *_ = appmod["toggle_chat"](2, 0, cls)
     assert "open" not in cls
+
+
+def test_send_works_when_the_model_is_running(appmod, model):
+    model([])
+    _, note, _, send_off, input_off = appmod["toggle_chat"](1, 0, "chat-panel")
+    assert note == "" and send_off is False and input_off is False
 
 
 def test_the_unreviewed_note_says_what_isnt_counted(appmod):

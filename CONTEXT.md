@@ -26,6 +26,10 @@ _Avoid_: manual label, saved label
 A label a rule gives a transaction each time the app loads; it is never stored, so changing or deleting the rule changes it everywhere.
 _Avoid_: auto label, derived label
 
+**Unreviewed**:
+The money in a period's unlabeled transactions, which totals leave out and show beside them (`+ $X unreviewed`). It skips the sides of likely transfer pairs and copies waiting on a replacement-card question, so it can be less than the header's unlabeled count.
+_Avoid_: uncounted, pending
+
 ### Merchants
 
 **Merchant**:

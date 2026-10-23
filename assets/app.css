@@ -116,6 +116,16 @@ html, body {
 }
 .hint { font-size: 12px; color: var(--subtext); margin-top: 3px; }
 .muted-text { color: var(--subtext); }
+/* Read by screen readers, not shown (a chart's numbers as text) */
+.sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+/* A <label> or named group around a field, adding no box of its own */
+.input-label { display: contents; }
+/* IMPORT CSV's own file input: the button opens it, so it isn't a second,
+   nameless tab stop (it still opens the picker when clicked from script) */
+#import-csv-upload input[type=file] { display: none; }
 
 /* ── Stat cards ─────────────────────────────────────────────────────────── */
 .stats-grid {
@@ -159,7 +169,7 @@ html, body {
 .drill-track { flex: 1; height: 8px; border-radius: 4px; background: var(--accent-weak); }
 .drill-fill { height: 8px; border-radius: 4px; background: var(--subtext); }
 .drill-fill.muted { opacity: 0.4; }
-.drill-stat { flex: 0 0 180px; font-size: 11px; text-align: right; color: var(--subtext); }
+.drill-stat { flex: 0 0 180px; font-size: 12px; text-align: right; color: var(--subtext); }
 .divider { height: 1px; background: var(--border); margin: 12px 0; }
 @media (max-width: 640px) {
     .drill-name { flex-basis: 110px; }
@@ -216,7 +226,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 /* Invisible full-screen layer behind the open menu: a click anywhere outside
    the panel lands here and closes it */
 #settings-backdrop { position: fixed; inset: 0; z-index: 40; }
-.settings-label { font-size: 11px; letter-spacing: 0.04em; font-weight: 500; color: var(--subtext); }
+.settings-label { font-size: 12px; letter-spacing: 0.04em; font-weight: 500; color: var(--subtext); }
 .settings-status { font-size: 12px; color: var(--accent3); }
 .settings-row { display: flex; gap: 8px; }
 .settings-row > * { flex: 1; }
@@ -257,7 +267,7 @@ summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .dash-dropdown-option.selected::after { content: "✓"; margin-left: auto; padding-left: 12px; }
 .dash-dropdown-placeholder, .dash-dropdown-clear, .dash-dropdown-trigger-icon { color: var(--subtext) !important; }
 /* Metric dropdown styled as a card title — matches the .app-label headers */
-.title-dropdown .dash-dropdown-value {
+.title-dropdown .dash-dropdown-value, .title-dropdown .dash-dropdown-placeholder {
     font-size: 12px !important; letter-spacing: 0.04em !important;
     font-weight: 500 !important; text-transform: uppercase;
 }
@@ -286,7 +296,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-text { font-size: 12px; margin-bottom: 4px; overflow-wrap: anywhere; }
 .lg-tag { color: var(--subtext); margin-right: 8px; }
 .lg-more { color: var(--subtext); margin-left: 8px; white-space: nowrap; }
-.lg-badge { margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 999px; padding: 1px 8px; }
+.lg-badge { margin-left: 8px; font-size: 12px; font-weight: 500; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 999px; padding: 1px 8px; }
 .lg-example { overflow-wrap: anywhere; }   /* the bank's text in full, never cut */
 .lg-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
 /* Suggested: filled and starred — plain buttons are only outlined */
@@ -294,16 +304,16 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .lg-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 .lg-sub { flex: 0 0 230px; padding: 6px 10px; font-size: 12px; }
 .lg-remember { font-size: 12px; }
-.lg-rows summary { cursor: pointer; font-size: 11px; color: var(--subtext); margin-top: 10px; }
+.lg-rows summary { cursor: pointer; font-size: 12px; color: var(--subtext); margin-top: 10px; }
 .lg-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
 .lg-date { flex: 0 0 52px; color: var(--subtext); }
 .lg-desc { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
 .lg-desc-same { min-width: 0; }   /* no text to show: keep date and amount on one line */
 .lg-amt { flex: 0 0 90px; text-align: right; }
 /* Transfer pairs: the OUT and IN rows of one move between your accounts */
-.pair-dir { flex: 0 0 32px; font-size: 11px; letter-spacing: 0.04em; color: var(--subtext); }
+.pair-dir { flex: 0 0 32px; font-size: 12px; letter-spacing: 0.04em; color: var(--subtext); }
 .pair-acct { flex: 0 0 150px; color: var(--subtext); }
-.pair-label { flex: 0 0 80px; font-size: 11px; color: var(--subtext); }
+.pair-label { flex: 0 0 80px; font-size: 12px; color: var(--subtext); }
 .pair-label.open { color: var(--accent2); }
 .pairs-all { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 640px) { #label-panel { padding: 20px 16px; } .lg-sub { flex-basis: 100%; } }

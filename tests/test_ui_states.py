@@ -60,7 +60,8 @@ def server(tmp_path_factory, old_demo_rules):
     with open(data / "SORTED" / "merchants.csv", "a", encoding="utf-8") as f:
         f.write("Bakeries,Expense,,bakery,\n")
     port = _free_port()
-    env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_PORT=str(port), FINANCE_DEBUG="0")
+    env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_PORT=str(port), FINANCE_DEBUG="0",
+               FINANCE_LLM_URL="http://127.0.0.1:9")           # no chat model: the same on every machine
     env.pop("FINANCE_EMBED_URL", None)
     proc = subprocess.Popen([sys.executable, str(REPO / "app.py")], cwd=REPO, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -270,3 +271,202 @@ def test_chat_panel_opens_beside_the_page_and_stays_readable(browser, server, th
         _assert_readable(page, "#chat-panel button, #chat-panel .hint, #chat-health", f"{theme}: hovering {sel}")
     page.click("#chat-close")
     page.wait_for_selector("#chat-panel.open", state="detached")
+
+
+# ── Keyboard and screen-reader paths (WCAG 2.1 AA) ────────────────────────────
+
+_ACTIVE_IN = "sel => !!document.activeElement.closest(sel)"
+
+
+def test_label_panel_is_a_dialog_that_holds_and_returns_focus(browser, server):
+    page = _open(browser, server, "light")
+    page.focus("#open-label-panel")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#label-panel", state="visible")
+    page.wait_for_timeout(300)
+    panel = page.locator("#label-panel")
+    assert panel.get_attribute("role") == "dialog" and panel.get_attribute("aria-modal") == "true"
+    title = page.evaluate("document.getElementById(document.getElementById('label-panel')"
+                          ".getAttribute('aria-labelledby')).innerText")
+    assert title == "LABEL TRANSACTIONS"
+    assert page.evaluate(_ACTIVE_IN, "#label-panel")                  # focus moved in
+    for _ in range(30):                                                # and never leaves it
+        page.keyboard.press("Tab")
+        assert page.evaluate(_ACTIVE_IN, "#label-panel")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#label-panel", state="hidden")
+    assert page.evaluate("document.activeElement.id") == "open-label-panel"   # back where it was
+
+
+def test_escape_in_an_open_dropdown_closes_only_the_dropdown(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    page.locator("#label-tab label", has_text="CONVERT RULES").click()
+    page.wait_for_selector("#label-list .dash-dropdown")
+    page.locator("#label-list .dash-dropdown").first.click()
+    page.wait_for_selector(".dash-dropdown-content[data-state=open]")
+    page.keyboard.press("Escape")
+    page.wait_for_selector(".dash-dropdown-content[data-state=open]", state="detached")
+    page.wait_for_timeout(500)
+    assert page.is_visible("#label-panel")                             # still open
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#label-panel", state="hidden")
+
+
+def test_a_category_can_be_picked_from_the_keyboard(browser, server):
+    page = _open(browser, server, "light")
+    page.focus("#category-pick")
+    page.keyboard.press("Enter")                                       # opens the list
+    page.wait_for_selector(".dash-dropdown-option")
+    page.wait_for_timeout(300)
+    in_list = "!!document.activeElement.closest('.dash-dropdown-content')"
+    if not page.evaluate(in_list):                                     # Dash doesn't always move focus in;
+        page.keyboard.press("Tab")                                     # Tab reaches the options then
+    assert page.evaluate(in_list)
+    name = page.evaluate("document.activeElement.value")
+    page.keyboard.press("Enter")                                       # picks the option with focus
+    page.wait_for_selector("#category-drilldown .drilldown")
+    assert name.upper() in page.inner_text("#category-drilldown")      # the same drilldown as a bar click
+    # the picker has a name a screen reader can say
+    assert page.evaluate("document.getElementById('category-pick').closest('[role=group]')"
+                         ".getAttribute('aria-label')") == "Category"
+
+
+def test_chat_answers_and_status_are_announced(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#chat-toggle")
+    page.wait_for_selector("#chat-panel.open")
+    log = page.locator("#chat-log")
+    assert log.get_attribute("role") == "log" and log.get_attribute("aria-live") == "polite"
+    assert page.locator("#chat-status").get_attribute("role") == "status"
+    assert page.locator("#chat-health").get_attribute("role") == "status"
+
+
+_UNLABELED_INPUTS = """() => [...document.querySelectorAll('input[type=text], input:not([type])')]
+    .filter(i => i.getClientRects().length && !(i.labels && i.labels.length) && !i.getAttribute('aria-label'))
+    .map(i => i.id || i.placeholder)"""
+
+
+def test_every_text_box_has_a_label_not_just_a_placeholder(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#chat-toggle")
+    page.wait_for_selector("#chat-panel.open")
+    assert page.evaluate(_UNLABELED_INPUTS) == []
+    page.click("#chat-close")
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    page.locator("#label-tab label", has_text="TO LABEL").click()
+    page.wait_for_selector("#label-list .lg-sub")
+    assert page.evaluate(_UNLABELED_INPUTS) == []
+    page.locator("#label-tab label", has_text="ALL MERCHANTS").click()
+    page.wait_for_selector("#label-list .lg-other")
+    page.locator("#label-list details summary", has_text="Change this merchant").first.click()
+    assert page.evaluate(_UNLABELED_INPUTS) == []
+
+
+def test_label_buttons_say_what_they_label(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    page.locator("#label-tab label", has_text="TO LABEL").click()
+    page.wait_for_selector("#label-list .lg-buttons button")
+    page.locator("#label-list .lg-rows summary").first.click()        # one row list open too
+    names = page.evaluate("""() => [...document.querySelectorAll('#label-list button')]
+        .filter(b => b.getClientRects().length && /^(★ )?(EXPENSE|INCOME|TRANSFER|YES|NO)$/.test(b.innerText.trim()))
+        .map(b => b.getAttribute('aria-label') || '')""")
+    assert names and all(names), "a label button has only its one word as a name"
+    assert len(set(names)) == len(names), "two label buttons have the same name"
+    assert any("Same as" in n or "Not " in n for n in names)          # the suggestion's YES / NO too
+    # and every merchant's change buttons (RENAME, MERGE, relabel EXPENSE, …)
+    page.locator("#label-tab label", has_text="ALL MERCHANTS").click()
+    page.wait_for_selector("#label-list .lg-other")
+    for s in page.locator("#label-list details summary", has_text="Change this merchant").all()[:3]:
+        s.click()
+    names = page.evaluate("""() => [...document.querySelectorAll('#label-list details[open] button')]
+        .filter(b => b.getClientRects().length).map(b => b.getAttribute('aria-label') || '')""")
+    assert names and all(names), "a merchant-change button has only its one word as a name"
+    assert len(set(names)) == len(names), "two merchant-change buttons have the same name"
+
+
+def test_the_page_tells_a_screen_reader_what_each_part_is(browser, server):
+    page = _open(browser, server, "light")
+    assert page.evaluate("document.documentElement.lang") == "en"
+    assert page.locator("main").count() == 1 and page.locator("main .period-bar").count() == 1
+    # ‹ › are read out by name, not as symbols
+    assert page.get_attribute("#period-prev", "aria-label") == "Previous period"
+    assert page.get_attribute("#period-next", "aria-label") == "Next period"
+    # pill groups have a name
+    for sel, name in (("#period-freq", "Period length"), ("#label-tab", "Panel section"),
+                      ("#merchant-sort", "Sort merchants")):
+        assert page.evaluate(f"document.querySelector('{sel}').closest('[role=group]').getAttribute('aria-label')") == name
+    # the gear says whether its menu is open, the theme buttons which is on
+    assert page.get_attribute("#settings-menu-btn", "aria-expanded") == "false"
+    page.click("#settings-menu-btn")
+    page.wait_for_selector("#settings-menu-panel", state="visible")
+    assert page.get_attribute("#settings-menu-btn", "aria-expanded") == "true"
+    assert page.get_attribute("#theme-light-btn", "aria-pressed") == "true"
+    assert page.get_attribute("#theme-dark-btn", "aria-pressed") == "false"
+
+
+def test_import_csv_is_one_tab_stop_and_still_opens_the_file_picker(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#settings-menu-btn")
+    page.wait_for_selector("#settings-menu-panel", state="visible")
+    page.focus("#import-csv-upload button")
+    page.keyboard.press("Tab")
+    assert page.evaluate("document.activeElement.id") == "export-csv-btn"
+    with page.expect_file_chooser():
+        page.click("#import-csv-upload button")
+
+
+_SMALL_TEXT = """() => {
+  const out = new Set();
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walk.nextNode()) {
+    const el = walk.currentNode.parentElement, t = walk.currentNode.textContent.trim();
+    if (!t || !el || !el.getClientRects().length || el.closest('.sr-only')) continue;
+    if (parseFloat(getComputedStyle(el).fontSize) < 12) out.add(t.slice(0, 30));
+  }
+  return [...out];
+}"""
+
+
+def test_no_text_is_smaller_than_12px(browser, server):
+    page = _open(browser, server, "light")
+    assert page.evaluate(_SMALL_TEXT) == [], "main page"              # charts' SVG text included
+    page.click("#settings-menu-btn")
+    page.wait_for_selector("#settings-menu-panel", state="visible")
+    assert page.evaluate(_SMALL_TEXT) == [], "settings menu"
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    for tab in ("TO LABEL", "ALL MERCHANTS", "TRANSFER PAIRS", "CONVERT RULES"):
+        page.locator("#label-tab label", has_text=tab).click()
+        page.wait_for_timeout(1200)
+        for s in page.locator("#label-list details summary").all()[:3]:
+            s.click()                                                  # open a few row lists too
+        assert page.evaluate(_SMALL_TEXT) == [], tab
+        assert "txn" not in page.inner_text("#label-panel"), tab
+
+
+def test_spellings_say_what_a_spelling_is(browser, server):
+    page = _open(browser, server, "light")
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")
+    page.wait_for_selector("#label-tab label")
+    page.locator("#label-tab label", has_text="ALL MERCHANTS").click()
+    page.wait_for_selector("#label-list .lg-other")
+    # said once, as visible text above the cards (a title shows only on hover)
+    assert page.locator("#label-list .lg-legend").inner_text().startswith(
+        "Spellings: the bank's text with store numbers")
+
+
+def test_each_chart_has_a_text_version(browser, server):
+    page = _open(browser, server, "light")
+    spend = page.inner_text("#period-chart-text")
+    assert spend.startswith("Spent per month") and "$" in spend and "median" in spend
+    cats = page.inner_text("#category-chart-text")
+    assert "%" in cats and "$" in cats
