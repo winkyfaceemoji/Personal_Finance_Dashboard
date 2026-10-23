@@ -32,6 +32,26 @@ def test_convert_check_converts_a_copy_moves_no_label_and_writes_nothing(tmp_pat
     assert _files(data) == before                                     # the data folder is untouched
 
 
+def test_a_moved_twin_row_is_counted(tmp_path):
+    import pandas as pd
+    sys.path.insert(0, str(REPO))
+    from convert_check import labels
+    rows = {"date": ["2026-01-02"] * 2, "description": ["SHOP"] * 2, "amount": [-5.0] * 2,
+            "source": ["Chase Credit"] * 2, "card_last4": ["1111"] * 2}
+    before = pd.DataFrame(dict(rows, master_category=["Expense", "Expense"], sub_category=["", ""]))
+    after = pd.DataFrame(dict(rows, master_category=["Expense", ""], sub_category=["", ""]))   # the second twin moved
+    assert sum((labels(before) - labels(after)).values()) == 1
+
+
+def test_convert_check_needs_a_master(tmp_path):
+    (tmp_path / "SORTED").mkdir()
+    (tmp_path / "SORTED" / "rules.csv").write_text("keyword,master_category,sub_category\nshop,Expense,\n")
+    env = dict(os.environ, FINANCE_DATA_DIR=str(tmp_path))
+    out = subprocess.run([sys.executable, str(REPO / "convert_check.py")], cwd=REPO, env=env,
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 1 and "No master yet" in out.stdout and not out.stderr
+
+
 def test_convert_check_says_when_there_is_nothing_to_convert(tmp_path):
     (tmp_path / "SORTED").mkdir()
     env = dict(os.environ, FINANCE_DATA_DIR=str(tmp_path))

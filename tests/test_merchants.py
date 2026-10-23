@@ -733,6 +733,29 @@ def test_a_split_spelling_follows_the_cards_reviewed_label_and_never_clashes_by_
     assert len(set(names)) == 2
 
 
+def test_splitting_the_spelling_a_card_is_named_after_gives_the_name_to_the_split(tmp_path):
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT TO ANN", -50.0, ""), ("2026-01-03", "ZELLE PAYMENT TO DAD", -20.0, ""),
+                 ("2026-01-04", "ZELLE PAYMENT TO EVE", -10.0, ""))
+    m = read_merchants(tmp_path)
+    (p,) = convert_proposals(rows, _keywords(("zelle payment to", "Expense", "Zelle")), m)
+    assert p["name"] == "zelle payment to ann"
+    out = expand_splits(m, [dict(p, split=["zelle payment to ann"])])
+    assert [(q["name"], q["spellings"]) for q in out] == [
+        ("zelle payment to dad", ["zelle payment to dad", "zelle payment to eve"]),
+        ("zelle payment to ann", ["zelle payment to ann"])]
+
+
+def test_splitting_every_spelling_ends_the_card_unless_it_keeps_a_pattern(tmp_path):
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT TO ANN", -50.0, ""), ("2026-01-03", "ZELLE PAYMENT TO DAD", -20.0, ""))
+    m = read_merchants(tmp_path)
+    (p,) = convert_proposals(rows, _keywords(("zelle payment to", "Expense", "Zelle")), m)
+    both = ["zelle payment to ann", "zelle payment to dad"]
+    gone = expand_splits(m, [dict(p, pattern="", split=both)])
+    assert [q["name"] for q in gone] == both                          # no merchant left with nothing
+    kept = expand_splits(m, [dict(p, split=both)])
+    assert [(q["name"], q["spellings"], q["pattern"]) for q in kept][0] == ("zelle payment to", [], "zelle payment to")
+
+
 def test_default_names_never_collide(tmp_path):
     rows = _rows(("2026-01-02", "VENMO CASHOUT", 40.0, ""), ("2026-01-03", "VENMO PAYMENT 1", -8.0, ""))
     rules = _keywords(("venmo", "Expense", ""), ("venmo cashout", "Income", ""), ("venmo", "Transfer", ""))

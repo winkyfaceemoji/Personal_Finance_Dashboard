@@ -518,13 +518,24 @@ def expand_splits(merchants: Merchants, reviewed: list[dict]) -> list[dict]:
     """The reviewed proposals with each spelling the review split out
     (`split`, "Zelle to Dad") as its own merchant: named after the spelling,
     with the card's rule and no pattern. Relabel it afterwards to give it a
-    different one; its past rows keep what the card's review chose."""
+    different one; its past rows keep what the card's review chose. A card
+    named after a spelling it splits out hands that name over and takes its
+    first remaining spelling's; a card left with no spelling and no pattern
+    ends (as `split` of a last spelling does)."""
     taken = {n.casefold() for n in merchants.table["merchant"]} | {p["name"].strip().casefold() for p in reviewed}
     every_spelling = set(merchants.alias_of) | {s for p in reviewed for s in p["spellings"]}
     out = []
     for p in reviewed:
         split = [s for s in p.get("split") or [] if s in p["spellings"]]
-        out.append(dict(p, spellings=[s for s in p["spellings"] if s not in split], split=[]))
+        rest = [s for s in p["spellings"] if s not in split]
+        name = p["name"].strip()
+        if split and (name.casefold() in {s.casefold() for s in split} or not (rest or p["pattern"])):
+            taken.discard(name.casefold())
+            if rest or p["pattern"]:
+                name = _free_name(rest[:1], p["pattern"] or rest[0], rest, taken, every_spelling)
+                taken.add(name.casefold())
+        if rest or p["pattern"] or not split:
+            out.append(dict(p, name=name, spellings=rest, split=[]))
         for s in split:
             name = _free_name([s], s, [s], taken, every_spelling)
             taken.add(name.casefold())

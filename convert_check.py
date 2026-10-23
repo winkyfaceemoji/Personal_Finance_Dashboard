@@ -25,6 +25,9 @@ def main() -> int:
     if not source or not get_rules_path(source).exists():
         print("No rules.csv keywords to convert.")
         return 1
+    if not (Path(source) / "SORTED" / "edited_combined_transactions.csv").exists():
+        print("No master yet: open the dashboard once to import your statements.")
+        return 1
     with tempfile.TemporaryDirectory(prefix="convert_check_") as tmp:
         shutil.copytree(Path(source) / "SORTED", Path(tmp) / "SORTED", ignore=shutil.ignore_patterns("backups"))
         os.environ["FINANCE_DATA_DIR"] = tmp
@@ -35,7 +38,6 @@ def main() -> int:
 
 
 def report(app) -> int:
-    from Modules.labels import row_ids
     props = app._convert_proposals()
     print(f"{len(props)} proposals\n")
     for p in props:
@@ -46,17 +48,28 @@ def report(app) -> int:
     print(f"\nPreview: {text}\n")
     if pending is None:
         return 1
-    before = app.df.set_index(row_ids(app.df))[["master_category", "sub_category"]].fillna("")
+    before = labels(app.df)
     status = app._do_convert(pending, 0)[0]
     print(f"Confirm: {status}\n")
-    after = app.df.set_index(row_ids(app.df))[["master_category", "sub_category"]].fillna("")
-    after = after[~after.index.duplicated()].reindex(before.index[~before.index.duplicated()])
-    before = before[~before.index.duplicated()]
-    moved = (before != after).any(axis=1)
-    print(f"{int(moved.sum())} rows show a different label or category after converting")
-    for rid in before.index[moved][:50]:
-        print(f"  {rid}: {app.describe_label(*before.loc[rid])} -> {app.describe_label(*after.loc[rid])}")
+    if not status.startswith("Converted"):
+        return 1
+    after = labels(app.df)
+    # Identical twin rows share a row id, so compare how many rows carry each label
+    gone, new = before - after, after - before
+    print(f"{sum(gone.values())} rows show a different label or category after converting")
+    for rid in sorted({k[0] for k in gone | new})[:50]:
+        was = sorted(app.describe_label(*k[1:]) for k in gone.elements() if k[0] == rid)
+        now = sorted(app.describe_label(*k[1:]) for k in new.elements() if k[0] == rid)
+        print(f"  {rid}: {', '.join(was) or '-'} -> {', '.join(now) or '-'}")
     return 0
+
+
+def labels(df):
+    """How many rows carry each (row id, label, category)."""
+    from collections import Counter
+
+    from Modules.labels import row_ids
+    return Counter(zip(row_ids(df), df["master_category"].fillna(""), df["sub_category"].fillna("")))
 
 
 if __name__ == "__main__":

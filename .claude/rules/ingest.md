@@ -5,6 +5,7 @@ paths:
   - Modules/safety.py
   - Modules/linked_cards.py
   - check_data.py
+  - convert_check.py
 ---
 
 # Ingest pipeline & master safety
@@ -41,6 +42,7 @@ paths:
 - One bad RAW file never aborts the import. It is skipped with a `[SKIP]` line and recorded in `skipped_files.csv`, which covers the latest run only. A skipped file's whole account is missing, so the header warns.
 - `filename_date` ignores dates after today. It only feeds `exported_through.csv`, so a quiet card with a recent export isn't flagged as lagging.
 - `check_data.py` must stay read-only, apart from its `--save` file. It exits 1 when it reports a problem.
+- `convert_check.py` must stay read-only too: it sets `FINANCE_DATA_DIR` to a temp copy of `SORTED/` *before* `import app`, because importing app reads the data folder and the conversion writes it. Never import app at module top there. It exits 1 when it can't convert.
 
 ## Data directory
 - Callers that know the folder must pass it: `main(data_dir)`. `save_setup` runs before `config.json` is updated, and `reload_data` must rebuild the on-screen folder. A bare `get_data_dir()` resolves the previous folder, or `FINANCE_DATA_DIR`.

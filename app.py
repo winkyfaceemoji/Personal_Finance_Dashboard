@@ -2968,7 +2968,7 @@ def _convert_preview(reviewed: list[dict]):
         text += f" · {split} spelling{'s' if split != 1 else ''} split out, each into its own merchant"
     if kept:
         text += f" · {kept} row{'s' if kept != 1 else ''} keep their label as a stored label"
-    partial = sum(1 for p in reviewed if p.get("partial") and not (p["label"] or p["category"]))
+    partial = sum(1 for p in expand_splits(m, reviewed) if p.get("partial") and not (p["label"] or p["category"]))
     if partial:
         text += (f" · {partial} merchant{'s get' if partial != 1 else ' gets'} no rule (the keywords used text "
                  "beyond the spelling): new rows of them wait for you")
@@ -3058,8 +3058,8 @@ def convert_click(_n, names, labels, cats, pats, spells, spell_ids, splits, spli
     split = {i["rule"]: v or [] for i, v in zip(split_ids, splits)}
     reviewed = [dict(p, name=(names[i] or "").strip(), label=labels[i] or "", category=(cats[i] or "").strip(),
                      pattern=p["pattern"] if "keep" in (pats[i] or []) else "",
-                     spellings=[s for s in p["spellings"] if s in ticked.get(i, [])],
-                     split=[s for s in split.get(i, []) if s in ticked.get(i, [])])
+                     spellings=[s for s in p["spellings"] if s in ticked.get(i, []) or s in split.get(i, [])],
+                     split=split.get(i, []))
                 for i, p in enumerate(props)]
     pending, text = _convert_preview(reviewed)
     if pending is None:
