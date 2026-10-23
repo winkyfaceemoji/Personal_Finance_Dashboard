@@ -288,6 +288,7 @@ def merge(merchants: Merchants, source: str, target: str, spend: dict[str, float
     a new merchant, named after its highest-spend spelling (`spend`: money out
     by spelling)."""
     table, named = merchants.table, set(merchants.table["merchant"])
+    target = merchants.alias_of.get(target, target)        # a spelling of a merchant means that merchant
     one_spelling = merchants.alias_of.get(source, source) != source
     moving = [source] if one_spelling else _spellings(merchants, source)
     aliases = merchants.aliases
@@ -360,10 +361,59 @@ def save_change(folder, before: Merchants, table: pd.DataFrame, aliases: pd.Data
     added, removed = new - old, old - new
     if added and removed:
         both = pd.concat([table, before.table[before.table["merchant"].isin(removed)]], ignore_index=True)
+        saved = snapshot_files(folder)
         save_merchants(folder, both, aliases, adding=True)
-        save_merchants(folder, table, aliases, adding=False)
+        try:
+            save_merchants(folder, table, aliases, adding=False)
+        except PermissionError:
+            restore_files(folder, saved)              # the first save goes too: nothing changed
+            raise
     else:
         save_merchants(folder, table, aliases, adding=bool(added))
+
+
+# ── Patterns and pattern suggestions (ticket 07) ──────────────────────────────
+
+PATTERN_SEP = "|"
+
+
+def _patterns(cell: str) -> list[str]:
+    """One merchant's patterns, from its "a | b" cell, in matching form."""
+    return [normalize_description(p) for p in str(cell).split(PATTERN_SEP) if p.strip()]
+
+
+def pattern_suggestions(spellings, merchants: Merchants) -> dict[str, str]:
+    """{spelling: merchant} for each spelling with no alias that contains one
+    of a merchant's patterns — a suggestion only, never a join. A dismissed
+    pairing is never suggested again; the longest matching pattern wins."""
+    aliases = merchants.aliases
+    dismissed = set(zip(aliases.loc[aliases["status"] == "dismissed", "spelling"],
+                        aliases.loc[aliases["status"] == "dismissed", "merchant"]))
+    pats = sorted(((p, name) for name, cell in zip(merchants.table["merchant"], merchants.table["patterns"])
+                   for p in _patterns(cell)), key=lambda x: (-len(x[0]), x[1]))
+    out = {}
+    for s in sorted(set(spellings) - {""} - set(merchants.alias_of)):
+        hit = next((name for p, name in pats if p in s and name != s and (s, name) not in dismissed), None)
+        if hit:
+            out[s] = hit
+    return out
+
+
+def dismiss(merchants: Merchants, spelling: str, name: str):
+    """Never suggest `spelling` for `name` again (it joins nothing)."""
+    row = pd.DataFrame([{"spelling": spelling, "merchant": name, "status": "dismissed"}], columns=ALIAS_COLUMNS)
+    return merchants.table, pd.concat([merchants.aliases, row], ignore_index=True)
+
+
+def set_patterns(merchants: Merchants, name: str, text: str):
+    """`name`'s patterns become those in `text` ("a | b"). A bare spelling
+    gets a merchant row of its own to hold them."""
+    cell = f" {PATTERN_SEP} ".join(p.strip() for p in str(text or "").split(PATTERN_SEP) if p.strip())
+    table, aliases = merchants.table, merchants.aliases
+    if name in set(table["merchant"]):
+        return table.assign(patterns=table["patterns"].where(table["merchant"] != name, cell)), aliases
+    row = _new_row(name).assign(patterns=cell)
+    return pd.concat([table, row], ignore_index=True), _tie(aliases, [name], name)
 
 
 def rule_labels(hand: pd.DataFrame, merchants: Merchants, rules_path) -> pd.DataFrame:
@@ -410,15 +460,20 @@ def _money(rows: pd.DataFrame) -> tuple[float, float]:
             round(float(rows.loc[rows["amount"] > 0, "amount"].sum()), 2))
 
 
-def merchant_overview(df: pd.DataFrame, merchants: Merchants) -> tuple[list[dict], dict]:
+def merchant_overview(df: pd.DataFrame, merchants: Merchants, suggested: dict[str, str] | None = None
+                      ) -> tuple[list[dict], dict]:
     """Every merchant over all its rows, all time (the All merchants view
     ignores the period). Each item: name (as shown), mkey, spellings, label,
     category, patterns (its rule), out / inn (money out and in, positive),
     rows, first, last, labels (the valid labels its rows carry), has_rule,
-    suggestions (open ones; none until suggestions exist). Also the rows with
-    no spelling, which belong to no merchant: {"rows", "out", "inn"}."""
+    suggested (the merchant a bare spelling is suggested as, or "") and
+    suggestions (1 when it has one). `suggested`: {spelling: merchant}, by
+    default the pattern suggestions. Also the rows with no spelling, which
+    belong to no merchant: {"rows", "out", "inn"}."""
     who = merchant_of(df["description"], merchants)
     spelling = df["description"].map(merchant_key)
+    if suggested is None:
+        suggested = pattern_suggestions(spelling, merchants)
     rules = merchants.table.set_index("merchant")
     items = []
     for mk, rows in df[who != ""].groupby(who[who != ""], sort=False):
@@ -432,7 +487,8 @@ def merchant_overview(df: pd.DataFrame, merchants: Merchants) -> tuple[list[dict
             **dict(zip(("out", "inn"), _money(rows))),
             "rows": len(rows), "first": rows["date"].min(), "last": rows["date"].max(),
             "labels": sorted(set(rows["master_category"]) & set(PREDEFINED_CATEGORIES)),
-            "has_rule": bool(label or category), "suggestions": 0,
+            "has_rule": bool(label or category),
+            "suggested": suggested.get(mk, ""), "suggestions": int(mk in suggested),
         })
     none = df[who == ""]
     nameless = {"rows": len(none), **dict(zip(("out", "inn"), _money(none)))}

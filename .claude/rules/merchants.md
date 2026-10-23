@@ -33,7 +33,14 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - `split` of a merchant's last spelling ends the merchant, rule and all: otherwise an invisible merchant keeps its name taken.
 - A new name may not equal any merchant name or spelling in use, whatever its case (`names_in_use`), including the merchant's own spellings: that would make SPLIT OUT of the spelling impossible. Typed names resolve with `find_merchant`, case-insensitive.
 - `merchants_from(table, aliases)` builds Merchants exactly as the reader would, so a preview of a change (`label_changes`) trusts the same aliases loading will. `rule_labels` gives label *and* category per row (the keywords applied too), so the preview shows a category that goes away, as `describe_label` text ("unlabeled · Venmo").
-- `_write_pair` says "Nothing changed: <file> is open in another program" whichever of the two swaps is refused.
+- `_write_pair` says "Nothing changed: <file> is open in another program" whichever of the two swaps is refused. When `save_change`'s *second* save is refused, it restores the first from a snapshot, so "Nothing changed" stays true.
+- `merge` resolves a target that is a spelling of another merchant to that merchant: it never pulls a spelling out of its merchant.
+
+## Patterns and pattern suggestions (ticket 07)
+- Patterns live in `merchants.csv`'s `patterns` cell, `"a | b"` (`PATTERN_SEP`), and match normalized spellings by substring. They only ever **suggest** (`pattern_suggestions`): a spelling joins on CONFIRM (a merge), never on its own (ADR 0025).
+- Only spellings with no alias get suggestions; a dismissed pairing (`dismiss` writes a `dismissed` alias row) never comes back. The longest matching pattern wins.
+- `merchant_overview` fills `suggested` / `suggestions` (pattern suggestions by default; pass `suggested=` to add others), which the needs-attention sort ranks first.
+- `set_patterns` gives a bare spelling a merchant row (and its alias) to hold them.
 
 ## Overview (`merchant_overview`, `sort_merchants`)
 - One item per merchant over **all** its rows. `out`/`inn` are positive sums of money out and in. `labels` are the valid labels its rows carry; `has_rule` is the merchant's own rule only.

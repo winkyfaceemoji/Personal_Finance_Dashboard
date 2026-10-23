@@ -632,7 +632,8 @@ def test_relabel_rewrites_past_hand_labels_and_the_rule_then_undoes(appmod, merc
     assert text == (f"Relabel {spelling.upper()} as Transfer · Gifts: {n} row{'s' if n != 1 else ''} "
                     f"({g_['_dollar0'](dollars)}) Expense → Transfer · Gifts")
     status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
-    assert status == f"Relabeled {n} {spelling.upper()} row{'s' if n != 1 else ''} as Transfer · rule saved"
+    assert status == (f"Relabeled {spelling.upper()} as Transfer · Gifts · {n} hand label{'s' if n != 1 else ''} "
+                      f"rewritten · rule saved")
     df = g_["df"]
     assert (df.loc[mine, "master_category"] == "Transfer").all() and (df.loc[mine, "sub_category"] == "Gifts").all()
     rule = g_["_merchants"]().table.set_index("merchant").loc[spelling]
@@ -655,7 +656,8 @@ def test_relabel_leaves_a_row_whose_label_changed_since_and_says_so(appmod, merc
     raw.loc[first, "master_category"] = "Transfer"                      # changed in Excel since the preview
     raw.to_csv(master, index=False)
     status, _, _, _ = g_["_do_merchant_change"](pending, 0)
-    assert status.startswith(f"Relabeled {n - 1} ") and "1 row left as it was (its label changed since)" in status
+    assert f" · {n - 1} hand label{'s' if n - 1 != 1 else ''} rewritten" in status
+    assert status.endswith(" · 1 row left as it was (its label changed since)")
     assert pd.read_csv(master, dtype=str, keep_default_na=False).loc[first, "master_category"] == "Transfer"
 
 
@@ -676,6 +678,45 @@ def test_relabel_keeps_labels_and_undo_when_the_rule_cant_be_saved(appmod, merch
     assert undo["backup"] and "merchant_files" not in undo
 
 
+def test_relabel_rewrites_a_hand_label_that_has_an_unlabeled_twin(appmod, merchant_files):
+    from Modules.labels import merchant_key
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    master = g_["MASTER_PATH"]
+    raw = pd.read_csv(master, dtype=str, keep_default_na=False)
+    mine = raw.index[raw["description"].map(merchant_key) == spelling]
+    raw = pd.concat([raw.loc[mine[:1]].assign(master_category="Expense"), raw.loc[mine[:1]], raw.drop(mine[:1])],
+                    ignore_index=True)                          # one row hand-labeled, its identical twin not
+    raw.to_csv(master, index=False)
+    g_["df"] = g_["load_transactions"](master, rules_path=g_["RULES_PATH"])
+    pending, _ = g_["_merchant_preview"]("relabel", spelling, "", cat="Income")
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert "left as it was" not in status
+    after = pd.read_csv(master, dtype=str, keep_default_na=False)
+    assert (after.loc[after["description"].map(merchant_key) == spelling, "master_category"]
+            .isin(["Income", ""])).all() and (after["master_category"] == "Income").any()
+
+
+def test_relabel_with_the_master_open_in_excel_changes_nothing(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    _hand_labeled(g_, spelling)
+    pending, _ = g_["_merchant_preview"]("relabel", spelling, "", cat="Income")
+    files = [g_["MASTER_PATH"], *_files_of(g_)]
+    before = [f.read_bytes() for f in files]
+
+    def locked(*a, **k):
+        raise PermissionError("open in Excel")
+    monkeypatch.setitem(g_, "atomic_write_csv", locked)
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status == g_["_LOCKED_MSG"] and undo is g_["dash"].no_update
+    assert [f.read_bytes() for f in files] == before
+
+
 def test_relabel_preview_lists_refunds_on_their_own(appmod, merchant_files):
     g_ = _live(appmod)
     merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10),
@@ -688,6 +729,57 @@ def test_relabel_preview_lists_refunds_on_their_own(appmod, merchant_files):
     refunds = [r for r in harbor["rows"] if r["amount"] > 0]
     n = sum(r["count"] for r in refunds)
     assert f" · includes {n} refund{'s' if n != 1 else ''} (" in text
+
+
+# ── Patterns and pattern suggestions (ticket 07) ──────────────────────────────
+
+def _with_pattern(spelling):
+    """Merchant files where 'Look-alikes' owns a pattern matching `spelling`."""
+    word = spelling.split()[-1]
+    return ("merchant,master_category,sub_category,patterns,added" + chr(10) + f"Look-alikes,Expense,,{word}," + chr(10),
+            "spelling,merchant,status" + chr(10))
+
+
+def test_a_pattern_suggestion_shows_on_both_views_and_joins_only_on_confirm(appmod, merchant_files):
+    from Modules.merchants import display_name
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files(*_with_pattern(spelling))
+    assert spelling not in g_["_merchants"]().alias_of                    # suggested, not joined
+    todo, _ = g_["render_label_list"]({"display": "block"}, 0, "todo", "all", [], [], [], [], [], [], [], [])
+    allm, _ = _merchants_view(g_)
+    line = "Same as Look-alikes?"
+    assert line in list(_in_order(todo)) and line in list(_in_order(allm))
+    pending, text = g_["_merchant_preview"]("accept", spelling)
+    assert text.startswith(f"Join {display_name(spelling)} to Look-alikes: ") and "unlabeled → Expense" in text
+    status, _, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status == f"Joined {display_name(spelling)} to Look-alikes."
+    assert g_["_merchants"]().alias_of[spelling] == "Look-alikes"
+
+
+def test_a_dismissed_suggestion_never_comes_back(appmod, merchant_files):
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files(*_with_pattern(spelling))
+    pending, text = g_["_merchant_preview"]("dismiss", spelling)
+    assert text.endswith("no labels change")
+    status, undo, _, _ = g_["_do_merchant_change"](pending, 0)
+    assert status.startswith("Won't suggest")
+    todo, _ = g_["render_label_list"]({"display": "block"}, 0, "todo", "all", [], [], [], [], [], [], [], [])
+    assert "Same as Look-alikes?" not in list(_in_order(todo))
+    assert spelling not in g_["_merchants"]().alias_of                    # dismissing joins nothing
+
+
+def test_saving_patterns_previews_what_they_would_suggest(appmod, merchant_files):
+    g_ = _live(appmod)
+    spelling, = _open_spellings(g_, 1)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10) + "Look-alikes,Expense,,," + chr(10),
+                   "spelling,merchant,status" + chr(10))
+    word = spelling.split()[-1]
+    pending, text = g_["_merchant_preview"]("patterns", "Look-alikes", f" {word} | ")
+    assert text.startswith(f"Patterns for Look-alikes: {word}: no labels change · suggests ")
+    g_["_do_merchant_change"](pending, 0)
+    assert g_["_merchants"]().table.set_index("merchant").loc["Look-alikes", "patterns"] == word
 
 
 def test_label_click_ignores_rerender(appmod):

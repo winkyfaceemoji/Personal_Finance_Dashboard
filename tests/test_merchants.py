@@ -8,9 +8,9 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
-    names_in_use, read_merchants, remember, remember_check, rename, restore_files, save_change, save_merchants,
-    snapshot_files, sort_merchants, split,
+    dismiss, find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
+    names_in_use, pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, save_change,
+    save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
 from Modules.transforms import load_transactions
 
@@ -397,6 +397,30 @@ def test_a_crash_at_any_point_of_a_change_leaves_files_that_agree(tmp_path, monk
     assert read_merchants(tmp_path).problems == []
 
 
+def test_a_refused_second_save_of_a_two_step_change_puts_everything_back(tmp_path, monkeypatch):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    table, aliases = rename(m, "Venmo", "Pay apps", in_use=set())
+    real, calls = os.replace, []
+
+    def replace(src, dst):
+        calls.append(Path(dst).name)
+        if len(calls) == 4:                       # the second save's second swap
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", replace)
+    with pytest.raises(PermissionError, match="Nothing changed: .* is open in another program"):
+        save_change(tmp_path, m, table, aliases)
+    monkeypatch.setattr(os, "replace", real)
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+def test_merging_into_a_spelling_of_another_merchant_merges_into_that_merchant(tmp_path):
+    m = read_merchants(_files(tmp_path, *VENMO))
+    after = merchants_from(*merge(m, "streamly.com", "venmo payment", {}))
+    assert after.alias_of["streamly.com"] == "Venmo" and after.alias_of["venmo payment"] == "Venmo"
+
+
 def test_a_locked_first_file_says_nothing_changed(tmp_path, monkeypatch):
     m = read_merchants(_files(tmp_path, *VENMO))
     real = os.replace
@@ -428,6 +452,61 @@ def test_label_changes_shows_a_category_that_goes_away(tmp_path):
     after = merchants_from(*split(before, "venmo payment"))
     assert label_changes(hand, before, after, None) == [
         {"from": "unlabeled · Venmo", "to": "unlabeled", "rows": 1, "dollars": 20.0}]
+
+
+# ── Patterns and pattern suggestions (ticket 07) ──────────────────────────────
+
+ZELLE = ("merchant,master_category,sub_category,patterns,added\n"
+         "Zelle in,Income,,zelle payment from,\n"
+         "Bakery,Expense,,bake | bread,\n",
+         "spelling,merchant,status\n"
+         "zelle payment from sam,Zelle in,alias\n"
+         "zelle payment from jo,Bakery,dismissed\n")
+
+
+def test_a_spelling_containing_a_pattern_is_suggested_never_joined(tmp_path):
+    m = read_merchants(_files(tmp_path, *ZELLE))
+    spellings = ["zelle payment from sam", "zelle payment from ann", "zelle payment from jo",
+                 "little fern bakery", "corner bread bakery", "trader joe s"]
+    assert pattern_suggestions(spellings, m) == {
+        "zelle payment from ann": "Zelle in",      # contains Zelle in's pattern
+        "zelle payment from jo": "Zelle in",       # dismissed for Bakery only, not for Zelle in
+        "little fern bakery": "Bakery",
+        "corner bread bakery": "Bakery",           # either of Bakery's patterns
+    }                                              # sam is already Zelle in's; joe matches nothing
+    assert merchant_of(pd.Series(["ZELLE PAYMENT FROM ANN"]), m).tolist() == ["zelle payment from ann"]
+
+
+def test_a_dismissed_pattern_suggestion_stays_dismissed(tmp_path):
+    m = read_merchants(_files(tmp_path, *ZELLE))
+    m2 = merchants_from(*dismiss(m, "little fern bakery", "Bakery"))
+    assert pattern_suggestions(["little fern bakery"], m2) == {}
+    assert m2.alias_of.get("little fern bakery") is None             # dismissing joins nothing
+
+
+def test_the_longest_matching_pattern_wins(tmp_path):
+    m = read_merchants(_files(tmp_path, "merchant,master_category,sub_category,patterns,added\n"
+                                        "Zelle,,,zelle,\nZelle in,Income,,zelle payment from,\n",
+                              "spelling,merchant,status\n"))
+    assert pattern_suggestions(["zelle payment from ann"], m) == {"zelle payment from ann": "Zelle in"}
+
+
+def test_patterns_are_set_on_a_merchant_and_a_bare_spelling_gets_a_row(tmp_path):
+    m = read_merchants(_files(tmp_path, *ZELLE))
+    after = merchants_from(*set_patterns(m, "Bakery", " bakery |  | patisserie "))
+    assert after.table.set_index("merchant").loc["Bakery", "patterns"] == "bakery | patisserie"
+    after = merchants_from(*set_patterns(m, "trader joe s", "trader joe"))
+    assert after.alias_of["trader joe s"] == "trader joe s"
+    assert after.table.set_index("merchant").loc["trader joe s", "patterns"] == "trader joe"
+
+
+def test_suggestions_count_in_the_overview_and_needs_attention(tmp_path):
+    m = read_merchants(_files(tmp_path, *ZELLE))
+    df = _rows(("2026-01-02", "ZELLE PAYMENT FROM ANN", 20.0, ""), ("2026-01-03", "TRADER JOE S #1", -5.0, ""))
+    items, _ = merchant_overview(df, m)
+    by = {i["mkey"]: i for i in items}
+    assert by["zelle payment from ann"]["suggestions"] == 1 and by["trader joe s"]["suggestions"] == 0
+    assert by["zelle payment from ann"]["suggested"] == "Zelle in"
 
 
 # ── All merchants (ticket 04) ─────────────────────────────────────────────────

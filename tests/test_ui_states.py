@@ -55,6 +55,9 @@ def server(tmp_path_factory):
     (data / "SORTED").mkdir()
     for name in ("merchants.csv", "merchant_aliases.csv"):
         shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
+    # and a pattern that matches a demo bakery, so a "Same as …?" line is drawn
+    with open(data / "SORTED" / "merchants.csv", "a", encoding="utf-8") as f:
+        f.write("Bakeries,Expense,,bakery,\n")
     port = _free_port()
     env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_RULES_PATH=str(data / "rules.csv"),
                FINANCE_PORT=str(port), FINANCE_DEBUG="0")
@@ -161,6 +164,12 @@ def test_all_merchants_view_and_its_sort_stay_readable(browser, server, theme):
                      f"{theme}: merchant change preview")
     page.click("#merchant-cancel")
     page.wait_for_selector("#merchant-preview", state="hidden")
+    # Relabel previews the past rows it would change, then CANCEL leaves them
+    opened.locator("button", has_text="TRANSFER").click()
+    page.wait_for_selector("#merchant-preview-text:has-text('Relabel')")
+    _assert_readable(page, "#merchant-preview-text, #merchant-preview button", f"{theme}: relabel preview")
+    page.click("#merchant-cancel")
+    page.wait_for_selector("#merchant-preview", state="hidden")
     # A merge all the way through: CONFIRM applies it, UNDO takes it back
     second = page.locator("#label-list .lg-name").nth(1).inner_text()
     opened.locator("input").nth(1).fill(second)
@@ -171,6 +180,19 @@ def test_all_merchants_view_and_its_sort_stay_readable(browser, server, theme):
     _assert_readable(page, "#label-status, #label-undo-btn", f"{theme}: after a merge")
     page.click("#label-undo-btn")
     page.wait_for_selector("#label-status:has-text('Undone.')")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_a_suggestion_line_stays_readable_and_only_previews(browser, server, theme):
+    page = _open(browser, server, theme)
+    page.click("#open-label-panel")
+    page.wait_for_selector("#label-list .lg-example:has-text('Same as Bakeries?')")
+    line = page.locator("#label-list .lg-text", has_text="Same as Bakeries?").first
+    line.locator("button", has_text="YES").hover()
+    _assert_readable(page, "#label-list .lg-text", f"{theme}: suggestion line")
+    line.locator("button", has_text="YES").click()
+    page.wait_for_selector("#merchant-preview-text:has-text('Join')")      # a preview, nothing joined yet
+    page.click("#merchant-cancel")
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

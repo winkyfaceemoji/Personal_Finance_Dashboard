@@ -24,8 +24,9 @@ from Modules.linked_cards import (
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
-    ALIASES_NAME, MERCHANTS_NAME, describe_label, display_name, find_merchant, label_changes, merchant_of,
-    merchant_overview, merchants_from, merge, names_in_use, read_merchants, remember, remember_check, rename,
+    ALIASES_NAME, MERCHANTS_NAME, describe_label, dismiss, display_name, find_merchant, label_changes, merchant_of,
+    merchant_overview, merchants_from, merge, names_in_use, pattern_suggestions, read_merchants, remember,
+    remember_check, rename, set_patterns,
     restore_files, rule_labels, save_change, save_merchants, snapshot_files, sort_merchants, split,
 )
 from Modules.recurring import recurring_charges
@@ -898,7 +899,19 @@ def _span_text(g) -> str:
     return f"{a:%b} {a.day}, {a.year} – {b:%b} {b.day}, {b.year}"
 
 
-def _group_card(g: dict, chk: dict, kept: dict | None = None):
+def _suggestion_line(mkey: str, target: str):
+    """"Same as <merchant>?" with YES and NO: both only preview; CONFIRM
+    above the list applies them (ADR 0025: never joined on its own)."""
+    return html.Div(className="lg-text", children=[
+        html.Span(f"Same as {display_name(target)}?", className="lg-example"),
+        html.Button("YES", id={"type": "mer-act", "merchant": mkey, "act": "accept"}, n_clicks=0,
+                    className="btn-secondary btn-small"),
+        html.Button("NO", id={"type": "mer-act", "merchant": mkey, "act": "dismiss"}, n_clicks=0,
+                    className="btn-secondary btn-small"),
+    ])
+
+
+def _group_card(g: dict, chk: dict, kept: dict | None = None, suggested: str = ""):
     """One merchant group: three label buttons, subcategory, remember, rows.
     kept: what the user had set on this card before the list re-rendered
     ({"sub", "remember", "open"}), so a click elsewhere doesn't wipe it."""
@@ -982,6 +995,7 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
             html.Div(className="lg-buttons", children=[_btn(c) for c in PREDEFINED_CATEGORIES]) if bulk
             else html.Div("Label these one at a time below", className="hint"),
         ]),
+        _suggestion_line(g["mkey"], suggested) if suggested else None,
         html.Div(className="lg-options", children=[
             dcc.Input(id={"type": "lbl-sub", "group": key}, placeholder="Subcategory (optional)",
                       className="setup-input lg-sub", list="lbl-sub-options", debounce=False,
@@ -1022,6 +1036,7 @@ def _merchant_card(i: dict):
             html.Span("LABELS DIFFER", className="lg-badge", title="Its rows carry different labels")
             if len(i["labels"]) > 1 else None,
         ]),
+        _suggestion_line(i["mkey"], i["suggested"]) if i["suggested"] else None,
         _line("Rule", rule),
         # What its rows carry now, whatever labeled them (a hand label, its
         # rule, or a rules.csv keyword until those are converted)
@@ -1062,6 +1077,12 @@ def _merchant_changes(i: dict):
                         className="setup-input lg-sub", list="mer-names"),
               _act("MOVE", "move", spelling=s)])
           for s in (i["spellings"] if len(i["spellings"]) > 1 else [])],
+        # What new spellings it should be suggested for ("a | b")
+        html.Div(className="lg-options", children=[
+            dcc.Input(id={"type": "mer-pat", "merchant": key}, value=i["patterns"],
+                      placeholder="Patterns, e.g. zelle payment from | zelle from", className="setup-input lg-sub"),
+            _act("SAVE PATTERNS", "patterns"),
+        ]),
         # Fixes a past call: its hand-labeled rows and its rule, after a preview
         html.Div(className="lg-options", children=[
             html.Span("Relabel every row", className="lg-tag"),
@@ -2514,7 +2535,9 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             k["open"] = not k["open"]
     named = [g for g in groups if not g["fallback"]]
     nameless = [g for g in groups if g["fallback"]]
-    cards = [_group_card(g, remember_check(df, g, merchants), kept.get(g["key"])) for g in named[:LABEL_TOP_N]]
+    suggested = pattern_suggestions(_without_pending_dups(df)["description"].map(merchant_key), merchants)
+    cards = [_group_card(g, remember_check(df, g, merchants), kept.get(g["key"]), suggested.get(g["mkey"], ""))
+             for g in named[:LABEL_TOP_N]]
     if nameless:
         n_nameless = sum(g["count"] for g in nameless)
         cards += [html.Div(className="lg-section", children=[
@@ -2555,8 +2578,8 @@ def _undo_files() -> list:
 
 def _first_locked(paths) -> str | None:
     """The first of `paths` another program holds open for writing (Excel on
-    Windows), or None. Checked before an UNDO so it changes nothing at all,
-    and the user can close the file and try again."""
+    Windows), or None. Checked before an UNDO or a merchant change so it
+    changes nothing at all, and the user can close the file and try again."""
     for path in paths:
         if path and Path(path).exists():
             try:
@@ -2688,8 +2711,9 @@ def _hand_labels() -> pd.DataFrame:
 
 
 def _merchant_change(m, pending: dict):
-    """The (table, aliases, adding) a pending merge / split / rename makes of
-    `m`, and what to call it. ValueError for a name that can't be used."""
+    """((table, aliases), preview wording, status wording) for a pending
+    rename, merge, move, split, pattern change, or accepted or dismissed
+    suggestion. ValueError when it can't be done (a name in use, no target)."""
     frame = _without_pending_dups(df)
     items, _ = merchant_overview(frame, m)
     act, key, value = pending["act"], pending["mkey"], (pending.get("value") or "").strip()
@@ -2708,6 +2732,22 @@ def _merchant_change(m, pending: dict):
         done = (f"Moved {source} to {display_name(target)}" if act == "move"
                 else f"Merged {display_name(key)} into {display_name(target)}")
         return merge(m, source, target, spend), what, done
+    if act in ("accept", "dismiss"):
+        target = pattern_suggestions([key], m).get(key)
+        if target is None:
+            raise ValueError("That suggestion is gone — the list has been refreshed")
+        if act == "dismiss":
+            return (dismiss(m, key, target), f"Stop suggesting {display_name(key)} as {display_name(target)}",
+                    f"Won't suggest {display_name(key)} as {display_name(target)} again")
+        out = frame[frame["amount"] < 0]
+        spend = (-out["amount"]).groupby(out["description"].map(merchant_key)).sum().to_dict()
+        return (merge(m, key, target, spend), f"Join {display_name(key)} to {display_name(target)}",
+                f"Joined {display_name(key)} to {display_name(target)}")
+    if act == "patterns":
+        table, aliases = set_patterns(m, key, value)
+        cell = table.set_index("merchant").loc[key, "patterns"]
+        return ((table, aliases), f"Patterns for {display_name(key)}: {cell or 'none'}",
+                f"Saved the patterns for {display_name(key)}")
     what = f"Split {pending['spelling']} out of {display_name(key)}"
     return split(m, pending["spelling"]), what, what
 
@@ -2723,9 +2763,13 @@ def _relabel_plan(m, pending: dict):
     hand = _hand_labels()
     mine = (merchant_of(hand["description"], m) == key) & hand["master_category"].isin(PREDEFINED_CATEGORIES)
     change = mine & ((hand["master_category"] != cat) | ((sub != "") & (hand["sub_category"] != sub)))
-    ids = ["date", "description", "amount", "source", "card_last4", "master_category"]
-    rows = [{**dict(zip(ids, k)), "amount": float(k[2]), "label": k[-1], "count": int(n)}
-            for k, n in hand[change].groupby(ids, sort=False).size().items()]
+    ids = ["date", "description", "amount", "source", "card_last4"]
+    # label_rows also takes an identical twin that has no label, so a row's
+    # expected count includes those (else CONFIRM would wrongly skip it)
+    open_twins = hand[~hand["master_category"].isin(PREDEFINED_CATEGORIES)].groupby(ids).size()
+    rows = [{**dict(zip(ids, k[:-1])), "amount": float(k[2]), "label": k[-1],
+             "count": int(n) + int(open_twins.get(k[:-1], 0))}
+            for k, n in hand[change].groupby(ids + ["master_category"], sort=False).size().items()]
     rewritten = hand.copy()
     rewritten.loc[change, "master_category"] = cat
     if sub:
@@ -2796,10 +2840,13 @@ def _do_relabel(pending: dict, version):
         except Exception:
             note = " · rule not saved: the merchant files couldn't be read or written"
         undo["stamps"] = _stamps()
-    df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
-    name = display_name(pending["mkey"])
+    try:
+        df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
+    except Exception:
+        note += " · couldn't reload the data — use RELOAD DATA"
+    rewritten = f" · {done} hand label{'s' if done != 1 else ''} rewritten" if done else ""
     left = f" · {skipped} row{'s' if skipped != 1 else ''} left as it was (its label changed since)" if skipped else ""
-    return (f"Relabeled {done} {name} row{'s' if done != 1 else ''} as {cat}{note}{left}",
+    return (f"Relabeled {display_name(pending['mkey'])} as {describe_label(cat, sub)}{rewritten}{note}{left}",
             undo, _SHOWN_INLINE, (version or 0) + 1)
 
 
@@ -2817,9 +2864,14 @@ def _merchant_preview(act: str, mkey: str, value=None, spelling=None, cat=None):
         (table, aliases), what, _ = _merchant_change(m, pending)
     except ValueError as e:
         return None, str(e)
-    moves = label_changes(_hand_labels(), m, merchants_from(table, aliases), RULES_PATH)
+    after = merchants_from(table, aliases)
+    moves = label_changes(_hand_labels(), m, after, RULES_PATH)
     effect = "; ".join(f"{r['rows']} row{'s' if r['rows'] != 1 else ''} ({_dollar0(r['dollars'])}) "
                        f"{r['from']} → {r['to']}" for r in moves) or "no labels change"
+    if act == "patterns":                       # what the new patterns would put in front of you
+        spellings = _without_pending_dups(df)["description"].map(merchant_key)
+        n = sum(1 for t in pattern_suggestions(spellings, after).values() if t == mkey)
+        effect += f" · suggests {n} spelling{'s' if n != 1 else ''}"
     return pending, f"{what}: {effect}"
 
 
@@ -2872,16 +2924,19 @@ def _do_merchant_change(pending: dict, version):
     State({"type": "mer-cat", "merchant": ALL}, "id"),
     State({"type": "mer-move", "merchant": ALL, "spelling": ALL}, "value"),
     State({"type": "mer-move", "merchant": ALL, "spelling": ALL}, "id"),
+    State({"type": "mer-pat", "merchant": ALL}, "value"),
+    State({"type": "mer-pat", "merchant": ALL}, "id"),
     prevent_initial_call=True,
 )
-def merchant_action(_s, _a, _c, names, name_ids, intos, into_ids, cats, cat_ids, moves, move_ids):
+def merchant_action(_s, _a, _c, names, name_ids, intos, into_ids, cats, cat_ids, moves, move_ids, pats, pat_ids):
     if not _is_real_click(ctx.triggered) or not isinstance(ctx.triggered_id, dict):
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     trig = ctx.triggered_id
     key = trig["merchant"]
     value = {"rename": dict(zip([i["merchant"] for i in name_ids], names)),
              "merge": dict(zip([i["merchant"] for i in into_ids], intos)),
-             "relabel": dict(zip([i["merchant"] for i in cat_ids], cats))}.get(trig["act"], {}).get(key)
+             "relabel": dict(zip([i["merchant"] for i in cat_ids], cats)),
+             "patterns": dict(zip([i["merchant"] for i in pat_ids], pats))}.get(trig["act"], {}).get(key)
     if trig["act"] == "move":
         value = dict(zip([(i["merchant"], i["spelling"]) for i in move_ids], moves)).get((key, trig["spelling"]))
     pending, text = _merchant_preview(trig["act"], key, value, trig.get("spelling"), trig.get("cat"))
