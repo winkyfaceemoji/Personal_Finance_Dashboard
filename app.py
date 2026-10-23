@@ -1362,9 +1362,10 @@ def _convert_view():
             dcc.Checklist(id={"type": "cv-spell", "rule": i}, className="lg-remember", value=p["spellings"],
                           options=[{"label": f" {s}", "value": s} for s in p["spellings"]])
             if p["spellings"] else html.Div("Matches nothing today: kept as a pattern only", className="hint"),
-            dcc.Dropdown(id={"type": "cv-split", "rule": i}, multi=True, value=[], className="lg-sub",
-                         placeholder="Split spellings out into their own merchants",
-                         options=[{"label": s, "value": s} for s in p["spellings"]])
+            _named_group("Split spellings out into their own merchants", dcc.Dropdown(
+                id={"type": "cv-split", "rule": i}, multi=True, value=[], className="lg-sub",
+                placeholder="Split spellings out into their own merchants",
+                options=[{"label": s, "value": s} for s in p["spellings"]]))
             if len(p["spellings"]) > 1 else None,
             html.Div("No rule unless you pick one: the keywords labeled these rows using text beyond the spelling "
                      "(such as a store number), so a rule could label a new store's rows differently. Past rows keep "

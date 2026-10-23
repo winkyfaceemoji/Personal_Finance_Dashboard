@@ -307,6 +307,8 @@ def test_escape_in_an_open_dropdown_closes_only_the_dropdown(browser, server):
     page.wait_for_selector("#label-list .dash-dropdown")
     page.locator("#label-list .dash-dropdown").first.click()
     page.wait_for_selector(".dash-dropdown-content[data-state=open]")
+    # Escape only reaches the list once it has focus (it takes it a moment after opening)
+    page.wait_for_function("!!document.activeElement.closest('.dash-dropdown-content')")
     page.keyboard.press("Escape")
     page.wait_for_selector(".dash-dropdown-content[data-state=open]", state="detached")
     page.wait_for_timeout(500)
@@ -365,6 +367,12 @@ def test_every_text_box_has_a_label_not_just_a_placeholder(browser, server):
     page.wait_for_selector("#label-list .lg-other")
     page.locator("#label-list details summary", has_text="Change this merchant").first.click()
     assert page.evaluate(_UNLABELED_INPUTS) == []
+    # and every dropdown on the Convert rules cards has a name
+    page.locator("#label-tab label", has_text="Convert rules").click()
+    page.wait_for_selector("#label-list .dash-dropdown")
+    unnamed = page.evaluate("""() => [...document.querySelectorAll('#label-list .dash-dropdown')]
+        .filter(d => d.getClientRects().length && !d.closest('[role=group][aria-label]')).length""")
+    assert unnamed == 0
 
 
 def test_label_buttons_say_what_they_label(browser, server):

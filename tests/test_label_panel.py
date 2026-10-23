@@ -1525,3 +1525,23 @@ def test_label_them_opens_on_the_rows_holding_back_the_period(appmod):
     assert g_["show_all_button"]("all", "todo") == g_["_HIDDEN"]
     assert g_["show_all_unlabeled"](1, 3) == ("all", 4)
     assert g_["_period_filter"]("period|nonsense") is None and g_["_period_filter"]("all") is None
+
+
+def test_the_split_dropdown_has_a_name(appmod, keep_rules):
+    # dcc.Dropdown takes no aria props, so a named group around it says what it's for
+    g_ = _live(appmod)
+    cards, _ = g_["_convert_view"]()
+
+    def parents(c, parent=None):
+        yield parent, c
+        kids = getattr(c, "children", None)
+        for k in kids if isinstance(kids, (list, tuple)) else [kids]:
+            if k is not None and not isinstance(k, (str, int, float)):
+                yield from parents(k, c)
+    from dash import html
+    split = [(p, c) for p, c in parents(html.Div(cards))
+             if isinstance(getattr(c, "id", None), dict) and c.id.get("type") == "cv-split"]
+    assert split, "no card with two or more spellings to split"
+    for parent, _ in split:
+        assert getattr(parent, "role", None) == "group"
+        assert getattr(parent, "aria-label") == "Split spellings out into their own merchants"
