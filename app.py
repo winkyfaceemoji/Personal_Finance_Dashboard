@@ -25,11 +25,12 @@ from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
     ALIASES_NAME, MERCHANTS_NAME, apply_conversion, convert_proposals, describe_label, dismiss, display_name,
-    find_merchant, label_changes, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
+    find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
     pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, rule_labels, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
 from Modules.recurring import recurring_charges
+from Modules.similar import http_embedder, similar_merchants
 from Modules.safety import (
     MASTER_LOCK, atomic_write_csv, backup_master, orphan_count, read_exported_through, read_overlap_only,
     read_skipped, restore_backup, snapshot_master,
@@ -1103,7 +1104,8 @@ def _merchants_view(sort: str):
     """Every merchant, all time (the period bar doesn't apply), top
     LABEL_TOP_N in the chosen order and the rest folded into one line."""
     # Copies waiting on a replacement-card question count nowhere else either
-    items, nameless = merchant_overview(_without_pending_dups(df), _merchants())
+    frame, m = _without_pending_dups(df), _merchants()
+    items, nameless = merchant_overview(frame, m, suggested=_suggestions(m, frame))
     # The biggest merchants by spend always get a card, in the chosen order;
     # "Other" always holds the smallest, so no sort can fold a big one away
     by_spend = sort_merchants(items, "spend")
@@ -2595,7 +2597,7 @@ def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem
             k["open"] = not k["open"]
     named = [g for g in groups if not g["fallback"]]
     nameless = [g for g in groups if g["fallback"]]
-    suggested = pattern_suggestions(_without_pending_dups(df)["description"].map(merchant_key), merchants)
+    suggested = _suggestions(merchants)
     cards = [_group_card(g, remember_check(df, g, merchants), kept.get(g["key"]), suggested.get(g["mkey"], ""))
              for g in named[:LABEL_TOP_N]]
     if nameless:
@@ -2648,6 +2650,44 @@ def _first_locked(paths) -> str | None:
             except PermissionError:
                 return Path(path).name
     return None
+
+
+# Name-similarity suggestions need the app's embedding server (ADR 0023),
+# set up separately. Until it exists, FINANCE_EMBED_URL names one; without
+# it they stay off. A server that stops answering isn't asked again until
+# the app restarts (ADR 0023: no retry), so a down server never slows pages.
+_EMBED = http_embedder(os.environ["FINANCE_EMBED_URL"]) if os.environ.get("FINANCE_EMBED_URL") else None
+_EMBED_DOWN = False
+
+
+def _embedder():
+    return None if _EMBED_DOWN else _EMBED
+
+
+def _suggestions(m, frame: pd.DataFrame | None = None) -> dict[str, str]:
+    """{spelling: merchant} to offer as "Same as …?": pattern matches first,
+    then, for spellings no pattern names, the merchant whose spelling looks
+    most alike (when the embedding server answers). Never applied on its own."""
+    global _EMBED_DOWN
+    frame = _without_pending_dups(df) if frame is None else frame
+    spellings = frame["description"].map(merchant_key)
+    out = pattern_suggestions(spellings, m)
+    embed = _embedder()
+    if embed is None:
+        return out
+
+    def asked(texts):
+        global _EMBED_DOWN
+        vectors = embed(texts)
+        if vectors is None:
+            _EMBED_DOWN = True
+        return vectors
+    aliases = m.aliases
+    dismissed = set(zip(aliases.loc[aliases["status"] == "dismissed", "spelling"],
+                        aliases.loc[aliases["status"] == "dismissed", "merchant"]))
+    open_ = sorted(set(spellings) - {""} - set(m.alias_of) - set(out))
+    alike = similar_merchants(open_, merchant_list(spellings, m), asked, dismissed)
+    return out | {s: target for s, (target, _) in alike.items()}
 
 
 def _merchants():
@@ -2798,7 +2838,7 @@ def _merchant_change(m, pending: dict):
                 else f"Merged {display_name(key)} into {display_name(target)}")
         return merge(m, source, target, spend), what, done
     if act in ("accept", "dismiss"):
-        target = pattern_suggestions([key], m).get(key)
+        target = _suggestions(m, frame).get(key)
         if target is None:
             raise ValueError("That suggestion no longer applies — nothing was changed")
         if act == "dismiss":

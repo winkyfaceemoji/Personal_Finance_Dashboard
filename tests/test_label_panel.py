@@ -840,6 +840,57 @@ def test_a_conversion_previewed_before_rules_csv_changed_writes_nothing(appmod, 
     assert keep_rules.exists()
 
 
+# ── Name-similarity suggestions (ticket 09) ───────────────────────────────────
+
+def _fake_embedder(alike: set[str]):
+    """An embed() where the spellings in `alike` share one vector and every
+    other text gets its own: alike ones score 1.0, others 0."""
+    import numpy as np
+    index: dict[str, int] = {}
+    calls = []
+
+    def embed(texts):
+        calls.append(list(texts))
+        vecs = np.zeros((len(texts), 512))
+        for row, t in enumerate(texts):
+            vecs[row, 0 if t in alike else 1 + index.setdefault(t, len(index)) % 511] = 1.0
+        return vecs
+    embed.calls = calls
+    return embed
+
+
+def test_a_name_alike_spelling_is_suggested_and_a_pattern_one_comes_first(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    a, b, c = _open_spellings(g_, 3)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10) + "Travel,Expense,,," + chr(10)
+                   + f"Look-alikes,Expense,,{c.split()[-1]}," + chr(10),
+                   "spelling,merchant,status" + chr(10) + f"{a},Travel,alias" + chr(10))
+    monkeypatch.setitem(g_, "_EMBED_DOWN", False)
+    monkeypatch.setitem(g_, "_embedder", lambda: _fake_embedder({a, b, c}))
+    suggested = g_["_suggestions"](g_["_merchants"]())
+    assert suggested[b] == "Travel"                        # looks like Travel's spelling
+    assert suggested[c] == "Look-alikes"                   # a pattern match wins over a lookalike
+    pending, text = g_["_merchant_preview"]("accept", b)
+    assert text.startswith(f"Join {b.upper()} to Travel: ")
+
+
+def test_with_the_embedding_server_down_only_patterns_suggest_and_it_stops_asking(appmod, merchant_files, monkeypatch):
+    g_ = _live(appmod)
+    a, b = _open_spellings(g_, 2)
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10) + "Travel,Expense,,," + chr(10),
+                   "spelling,merchant,status" + chr(10) + f"{a},Travel,alias" + chr(10))
+    asked = []
+
+    def down(texts):
+        asked.append(texts)
+        return None
+    monkeypatch.setitem(g_, "_EMBED_DOWN", False)
+    monkeypatch.setitem(g_, "_embedder", lambda: None if g_["_EMBED_DOWN"] else down)
+    assert g_["_suggestions"](g_["_merchants"]()) == {}
+    assert g_["_suggestions"](g_["_merchants"]()) == {} and len(asked) == 1    # not asked again until restart
+    _merchants_view(g_)                                                        # the views still draw
+
+
 def test_label_click_ignores_rerender(appmod):
     real = appmod["_is_real_click"]
     pid = '{"cat":"Expense","group":"x","sig":"s","type":"lbl-group"}.n_clicks'

@@ -30,6 +30,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 |----------|--------|
 | `FINANCE_DATA_DIR` | Data folder. It overrides `config.json`, which overrides `Test Data/` (ADR 0001). |
 | `FINANCE_RULES_PATH` | Rules file. Defaults to `SORTED/rules.csv` in the data dir (ADR 0024). |
+| `FINANCE_EMBED_URL` | An embedding llama-server for merchant name-similarity suggestions. Unset: they stay off (until the app runs its own, ADR 0023). |
 | `FINANCE_LLM_URL` / `FINANCE_LLM_MODEL` | The chat's llama-server, default `http://127.0.0.1:8080`, and the model `start_llm.ps1` loads (ADR 0021). |
 | `FINANCE_HOST` / `FINANCE_DEBUG` / `FINANCE_PORT` | Defaults are `127.0.0.1` / `0` / `8050`. Keep local-only and debug-off as defaults (ADR 0016). |
 
