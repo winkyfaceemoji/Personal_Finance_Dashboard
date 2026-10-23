@@ -248,7 +248,6 @@ def test_render_label_list_top_n(appmod):
 def test_render_keeps_what_the_user_set_on_cards(appmod):
     # Labeling one group re-renders the list; typed subcategories, Remember
     # choices and opened row lists on the other cards must survive it
-    from Modules.labels import unlabeled_groups
     g = next(x for x in _live(appmod)["_todo_groups"]("all") if not x["fallback"] and not x["mixed"])
     # rendered closed, then the user clicked its summary once: now open
     children, _ = _render(appmod, kept_sub={g["key"]: "Coffee"}, kept_rem={g["key"]: []},
@@ -266,7 +265,6 @@ def _live(appmod):
 
 
 def _bulk_group(g_):
-    from Modules.labels import unlabeled_groups
     return next(g for g in g_["_todo_groups"]("all") if not g["fallback"] and not g["mixed"])
 
 
@@ -395,9 +393,12 @@ def test_undo_with_a_locked_file_changes_nothing(appmod, merchant_files, monkeyp
     def refuse(*a, **k):
         raise PermissionError("open in Excel")
     monkeypatch.setitem(g_, locked, refuse)
-    status, _, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
+    status, kept, _, _ = g_["_do_undo"](json.loads(json.dumps(undo)), 1)
     assert status.startswith("⚠") and "close it and try again" in status
     assert [f.read_bytes() for f in files] == after              # not half undone
+    monkeypatch.undo()                                           # Excel closed: trying again works
+    retry = kept if isinstance(kept, dict) else undo
+    assert g_["_do_undo"](json.loads(json.dumps(retry)), 1)[0] == "Undone."
 
 
 def test_rows_with_no_merchant_name_come_last_in_their_own_section(appmod):
@@ -1004,7 +1005,6 @@ def test_label_click_refuses_stale_sig(appmod):
 
 
 def test_label_click_refuses_group_label_on_mixed_or_fallback(appmod):
-    from Modules.labels import unlabeled_groups
     g_ = _live(appmod)
     master = g_["MASTER_PATH"]
     before = master.read_bytes()

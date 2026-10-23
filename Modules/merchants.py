@@ -437,9 +437,9 @@ def valid_keywords(rules: pd.DataFrame) -> list[dict]:
     out = []
     for r in rules.itertuples():
         kw = normalize_description(getattr(r, "keyword", ""))
-        label = r.master_category if r.master_category in PREDEFINED_CATEGORIES else ""
-        if kw and r.master_category in PREDEFINED_CATEGORIES + [""] and (label or r.sub_category):
-            out.append({"keyword": r.keyword, "kw": kw, "label": label, "category": r.sub_category})
+        mc, sc = str(r.master_category).strip(), str(r.sub_category).strip()
+        if kw and mc in PREDEFINED_CATEGORIES + [""] and (mc or sc):
+            out.append({"keyword": r.keyword, "kw": kw, "label": mc, "category": sc})
     return out
 
 
@@ -557,13 +557,19 @@ def freeze_keyword_labels(hand: pd.DataFrame, merchants: Merchants, rules_path, 
     kept = shown.copy()
     keyword_given = (shown != base).any(axis=1)
     spelling = hand["description"].map(merchant_key)
+    gave_label = shown["master_category"] != base["master_category"]
+    gave_sub = shown["sub_category"] != base["sub_category"]
     for s, pair in (choices or {}).items():
         rows = keyword_given & (spelling == s)
         if pair is None:
             kept.loc[rows] = base.loc[rows]
-        else:
-            kept.loc[rows, "master_category"] = pair[0] if pair[0] else base.loc[rows, "master_category"]
-            kept.loc[rows, "sub_category"] = pair[1] if pair[1] else base.loc[rows, "sub_category"]
+            continue
+        label, cat = pair
+        lab = rows & gave_label
+        kept.loc[lab, "master_category"] = label if label else base.loc[lab, "master_category"]
+        # the reviewed category, where the row's label agrees with the reviewed one (as a rule's would)
+        fits = rows & gave_sub & ((kept["master_category"] == label) | (label == ""))
+        kept.loc[fits, "sub_category"] = cat if cat else base.loc[fits, "sub_category"]
     stored = (kept != base).any(axis=1)
     frozen = hand.copy()
     for c in ("master_category", "sub_category"):

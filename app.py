@@ -58,8 +58,7 @@ from Modules.transforms import (
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
-# FINANCE_RULES_PATH lets tests and scripted checks use a copy, so they never
-# rewrite the real rules.csv now that the app can add and delete rules
+# The old rules.csv keywords, read until they're converted (ADR 0026)
 RULES_PATH  = get_rules_path(get_data_dir())
 
 # ── Settings gear icon (Feather "settings" glyph, painted via CSS mask so it
@@ -2959,7 +2958,7 @@ def _convert_preview(reviewed: list[dict]):
     if kept:
         text += f" · {kept} row{'s' if kept != 1 else ''} keep their label as a stored label"
     if dropped:
-        text += (f" · {dropped} merchant{'s' if dropped != 1 else ''} get no rule (it would relabel past rows): "
+        text += (f" · {dropped} merchant{'s get' if dropped != 1 else ' gets'} no rule (it would relabel past rows): "
                  "new rows of them wait for you")
     return ({"act": "convert", "props": reviewed, "version": m.version, "rules": _rules_hash(),
              "master": _mtime(MASTER_PATH)}, text)
@@ -3173,6 +3172,7 @@ def _do_undo(undo: dict, version):
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     if undo.get("stamps") != _stamps():
         return "Can't undo — the data changed since.", None, _HIDDEN, dash.no_update
+    rolled_back = None
     try:
         with MASTER_LOCK:
             if _first_locked(_undo_files()):        # refuse before touching anything
@@ -3192,11 +3192,12 @@ def _do_undo(undo: dict, version):
                 restore_files(folder, labeled)      # not half undone: put the rule back too
                 if undo.get("rules_file") is not None:
                     rules_path.unlink(missing_ok=True)      # and retire rules.csv again
+                rolled_back = dict(undo, stamps=_stamps())  # same bytes, new mtimes: a retry still works
                 raise
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except PermissionError:
         return ("⚠ The data or a merchant file is open in another program (Excel?) — close it and try again.",
-                dash.no_update, dash.no_update, dash.no_update)
+                rolled_back if rolled_back else dash.no_update, dash.no_update, dash.no_update)
     return "Undone.", None, _HIDDEN, (version or 0) + 1
 
 

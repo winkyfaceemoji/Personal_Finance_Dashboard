@@ -638,6 +638,18 @@ def test_the_review_decides_what_past_rows_keep(tmp_path):
         review_choices(defaults, reviewed[:1])
 
 
+def test_a_review_change_never_overwrites_a_hand_label(tmp_path):
+    rules_path = tmp_path / "rules.csv"
+    rules_path.write_text("keyword,master_category,sub_category\nbrightleaf,Expense,Health\n", encoding="utf-8")
+    hand = _rows(("2026-01-02", "BRIGHTLEAF PHARMACY", -6.0, "Expense"),     # hand label; the keyword gave the category
+                 ("2026-01-03", "BRIGHTLEAF PHARMACY", -7.0, ""))
+    m = read_merchants(tmp_path / "m")
+    defaults = convert_proposals(hand, read_rules_csv(rules_path), m)
+    choices = review_choices(defaults, [dict(defaults[0], label="Income", category="Changed")])
+    _, kept, _ = freeze_keyword_labels(hand, m, rules_path, choices)
+    assert kept.values.tolist() == [["Expense", "Health"], ["Income", "Changed"]]
+
+
 def test_conversion_names_clash_ignoring_case(tmp_path):
     folder = tmp_path / "m"
     save_merchants(folder, pd.DataFrame([{"merchant": "Venmo", "master_category": "", "sub_category": "Venmo",
@@ -659,8 +671,10 @@ def test_default_names_never_collide(tmp_path):
 
 def test_only_keywords_loading_applies_count(tmp_path):
     rules = _keywords(("good", "Expense", ""), ("", "Income", ""), ("typo", "Expnse", ""), ("typo2", "Expnse", "Cat"),
-                      ("cat only", "", "Cat"))
-    assert [k["keyword"] for k in valid_keywords(rules)] == ["good", "cat only"]
+                      ("cat only", "", "Cat"), ("spaced", "Expense ", " Fun "))
+    got = valid_keywords(rules)
+    assert [k["keyword"] for k in got] == ["good", "cat only", "spaced"]       # stripped, as loading strips
+    assert (got[2]["label"], got[2]["category"]) == ("Expense", "Fun")
 
 
 def test_the_review_can_split_spellings_out_drop_a_pattern_and_rename(tmp_path):

@@ -1,4 +1,4 @@
-# 0026. Converting rules.csv stores the keywords' past labels on the rows
+# 0026. Converting rules.csv stores the keywords' past labels on the rows; only the review moves the past
 
 Status: Accepted
 
