@@ -632,7 +632,7 @@ def test_the_review_decides_what_past_rows_keep(tmp_path):
     reviewed = [dict(defaults[0], spellings=[], label="", category=""),
                 dict(defaults[1], label="Income")]
     choices = review_choices(defaults, reviewed)
-    assert choices == {"sq little fern bakery": None, "maple street grocery": ("Income", "")}
+    assert choices == {"sq little fern bakery": None, "maple street grocery": ("Income", None)}   # None: left as shown
     frozen, kept, stored = freeze_keyword_labels(hand, m, rules_path, choices)
     assert kept.values.tolist() == [["", ""], ["Income", ""]] and stored.tolist() == [False, True]
     assert frozen[["master_category", "sub_category"]].values.tolist() == [["", ""], ["Income", ""]]
@@ -677,6 +677,35 @@ def test_a_keyword_matching_only_part_of_a_spellings_text_gives_its_merchant_no_
     assert (maple["label"], maple["category"], maple["partial"]) == ("", "", True)
     brightleaf = next(p for p in props if p["spellings"] == ["brightleaf pharmacy"])
     assert (brightleaf["label"], brightleaf["category"], brightleaf["partial"]) == ("Expense", "Health", False)
+
+
+def test_a_keyword_that_never_changes_what_a_spelling_gets_keeps_its_rule(tmp_path):
+    rules = _keywords(("maple street grocery", "Expense", "Groceries"), ("grocery 0142", "Expense", "Food"))
+    rows = _rows(("2026-01-02", "MAPLE STREET GROCERY 0142", -20.0, ""))
+    (p,) = convert_proposals(rows, rules, read_merchants(tmp_path))[:1]
+    assert (p["label"], p["category"], p["partial"]) == ("Expense", "Groceries", False)   # the first keyword wins
+
+
+def test_only_the_partly_matched_spelling_loses_its_rule(tmp_path):
+    rules = _keywords(("zelle payment from", "Income", ""), ("from bo 77", "Income", "Gift"))
+    rows = _rows(("2026-01-02", "ZELLE PAYMENT FROM ANN", 50.0, ""), ("2026-01-03", "ZELLE PAYMENT FROM BO 77", 20.0, ""))
+    props = convert_proposals(rows, rules, read_merchants(tmp_path))
+    ann = next(p for p in props if p["spellings"] == ["zelle payment from ann"])
+    bo = next(p for p in props if p["spellings"] == ["zelle payment from bo"])
+    assert (ann["label"], ann["partial"]) == ("Income", False)
+    assert (bo["label"], bo["category"], bo["partial"]) == ("", "", True)
+
+
+def test_a_label_typed_on_a_no_rule_card_keeps_the_past_category(tmp_path):
+    rules_path = tmp_path / "rules.csv"
+    rules_path.write_text("keyword,master_category,sub_category\nmaple street grocery 0142,Expense,Groceries\n",
+                          encoding="utf-8")
+    hand = _rows(("2026-01-02", "MAPLE STREET GROCERY 0142", -20.0, ""))
+    m = read_merchants(tmp_path / "m")
+    defaults = convert_proposals(hand, read_rules_csv(rules_path), m)
+    choices = review_choices(defaults, [dict(defaults[0], label="Expense")])      # category left as shown (blank)
+    _, kept, _ = freeze_keyword_labels(hand, m, rules_path, choices)
+    assert kept.values.tolist() == [["Expense", "Groceries"]]
 
 
 def test_default_names_never_collide(tmp_path):

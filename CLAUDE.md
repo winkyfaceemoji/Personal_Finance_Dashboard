@@ -97,3 +97,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0024](docs/adr/0024-no-real-data-in-the-repo.md) No real financial data in the repo: rules live in the data folder, demo data is made up
 - [0025](docs/adr/0025-merchants-own-rules-and-labeling.md) Merchants own the rules; one panel labels and reviews them, with every 0008 safeguard
 - [0026](docs/adr/0026-conversion-stores-the-past.md) Converting rules.csv stores the keywords' past labels on the rows; only the review moves the past
+- [0027](docs/adr/0027-partly-matched-spellings-get-no-rule.md) A spelling a keyword matched by its store number gets no rule at conversion

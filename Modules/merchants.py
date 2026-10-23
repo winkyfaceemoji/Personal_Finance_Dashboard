@@ -472,11 +472,12 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
     is taken; the keyword is the first proposal's pattern. A keyword that
     matches nothing today keeps only its pattern. These are the merchants'
     rules for *new* rows: the past is kept by freeze_keyword_labels, and
-    keep_past drops any rule that would still move it. A merchant one of
-    whose spellings a keyword matches only by text beyond the spelling (a
-    store number) gets no rule: its new rows could be labeled other than the
-    keywords would (`partial`). Each: {keyword, name, label, category,
-    pattern, spellings, rows, partial}."""
+    keep_past drops any rule that would still move it. A spelling whose
+    past rows got something other than the keywords give the bare spelling
+    (a keyword needed its store number) is proposed on its own with no rule
+    (`partial`): a rule would label a new store's rows as the keywords never
+    did. Each: {keyword, name, label, category, pattern, spellings, rows,
+    partial}."""
     keywords = valid_keywords(rules)
     spelling = rows["description"].map(merchant_key)
     text = rows["description"].map(normalize_description)
@@ -484,23 +485,21 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
     taken = {n.casefold() for n in set(merchants.table["merchant"]) | set(merchants.alias_of.values())}
     every_spelling = set(spelling) | set(merchants.alias_of)
     claimed = set(merchants.alias_of) | (set(spelling) & set(merchants.table["merchant"]))
-    partial = set()
-    for k in keywords:
-        partial |= {s for s in set(spelling[text.str.contains(k["kw"], regex=False)]) if k["kw"] not in s}
     props = []
     for k in keywords:
         hit = text.str.contains(k["kw"], regex=False)
         mine = sorted(set(spelling[hit]) - {""} - claimed)
         claimed |= set(mine)
         first_hit = dict(zip(spelling[hit][::-1], text[hit][::-1]))   # each spelling's first matching row
-        groups: dict[tuple[str, str], list[str]] = {}
+        groups: dict[tuple[str, str, bool], list[str]] = {}
         for s in mine:
-            groups.setdefault(_keyword_rule(first_hit[s], keywords), []).append(s)
-        for n, ((label, sub), spellings) in enumerate(groups.items() or [((k["label"], k["category"]), [])]):
+            past = _keyword_rule(first_hit[s], keywords)
+            groups.setdefault((*past, _keyword_rule(s, keywords) != past), []).append(s)
+        for n, ((label, sub, part), spellings) in enumerate(groups.items()
+                                                            or [((k["label"], k["category"], False), [])]):
             name = _free_name([min(spellings, key=lambda x: (-spend.get(x, 0.0), x))] if spellings else [],
                               k["kw"], spellings, taken, every_spelling)
             taken.add(name.casefold())
-            part = bool(partial & set(spellings))
             props.append({"keyword": k["keyword"], "name": name, "label": "" if part else label,
                           "category": "" if part else sub, "pattern": k["kw"] if n == 0 else "",
                           "spellings": spellings, "rows": int(hit.sum()), "partial": part})
@@ -540,16 +539,20 @@ def review_choices(defaults: list[dict], reviewed: list[dict]) -> dict:
     """{spelling: (label, category) or None}: what the review chose for the
     past rows a keyword labeled. An unticked spelling is None (its keyword
     labels go, so an accidental match is fixed, not copied); a proposal whose
-    label or category was changed gives its spellings the reviewed pair."""
+    label or category was changed gives its spellings the reviewed pair, with
+    None for a field left as shown (a no-rule card shows blanks, which must
+    not wipe what the keyword gave)."""
     if len(defaults) != len(reviewed):
         raise ValueError("The list changed — reopen CONVERT RULES to see it again.")
     out = {}
     for d, r in zip(defaults, reviewed):
         for s in set(d["spellings"]) - set(r["spellings"]):
             out[s] = None
-        if (r["label"], r["category"]) != (d["label"], d["category"]):
+        pair = (r["label"] if r["label"] != d["label"] else None,
+                r["category"] if r["category"] != d["category"] else None)
+        if pair != (None, None):
             for s in r["spellings"]:
-                out[s] = (r["label"], r["category"])
+                out[s] = pair
     return out
 
 
@@ -573,11 +576,13 @@ def freeze_keyword_labels(hand: pd.DataFrame, merchants: Merchants, rules_path, 
             kept.loc[rows] = base.loc[rows]
             continue
         label, cat = pair
-        lab = rows & gave_label
-        kept.loc[lab, "master_category"] = label if label else base.loc[lab, "master_category"]
-        # the reviewed category, where the row's label agrees with the reviewed one (as a rule's would)
-        fits = rows & gave_sub & ((kept["master_category"] == label) | (label == ""))
-        kept.loc[fits, "sub_category"] = cat if cat else base.loc[fits, "sub_category"]
+        if label is not None:
+            lab = rows & gave_label
+            kept.loc[lab, "master_category"] = label if label else base.loc[lab, "master_category"]
+        if cat is not None:
+            # where the row's label agrees with the reviewed one (as a rule's would)
+            fits = rows & gave_sub & ((kept["master_category"] == label) if label else True)
+            kept.loc[fits, "sub_category"] = cat if cat else base.loc[fits, "sub_category"]
     stored = (kept != base).any(axis=1)
     frozen = hand.copy()
     for c in ("master_category", "sub_category"):
