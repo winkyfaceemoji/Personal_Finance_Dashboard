@@ -203,7 +203,7 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None, merchants=None) -> lis
     together, ADR 0025), biggest dollar total first. only_row_ids restricts
     to those rows (the last import's). merchants: read_merchants(); without
     it every spelling is its own merchant."""
-    from Modules.merchants import merchant_of, read_merchants   # merchants imports this module
+    from Modules.merchants import display_name, merchant_of, read_merchants   # merchants imports this module
     merchants = merchants if merchants is not None else read_merchants(None)
     un = df[~df["master_category"].isin(PREDEFINED_CATEGORIES)].copy()
     if un.empty:
@@ -246,10 +246,7 @@ def unlabeled_groups(df: pd.DataFrame, only_row_ids=None, merchants=None) -> lis
         groups.append({
             "key": hashlib.sha1(mk.encode()).hexdigest()[:10],
             "mkey": mk,
-            # A name you gave a merchant shows as typed; a bare spelling (all
-            # lower case) in capitals, like the bank text it came from
-            "merchant": (str(g[0]["description"]).strip().upper() if fallback
-                         else mk if mk != mk.lower() else mk.upper()),
+            "merchant": str(g[0]["description"]).strip().upper() if fallback else display_name(mk),
             "spellings": sorted({r["_spelling"] for r in g} - {""}),
             "count": len(g),
             "total": float(sum(amounts)),

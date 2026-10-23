@@ -240,6 +240,54 @@ def remember_check(df: pd.DataFrame, group: dict, merchants: Merchants) -> dict:
     return out
 
 
+def display_name(name: str) -> str:
+    """A name you gave a merchant shows as typed; a bare spelling (all lower
+    case) in capitals, like the bank text it came from."""
+    return name if name != name.lower() else name.upper()
+
+
+def merchant_overview(df: pd.DataFrame, merchants: Merchants) -> tuple[list[dict], dict]:
+    """Every merchant over all its rows, all time (the All merchants view
+    ignores the period). Each item: name (as shown), mkey, spellings, label,
+    category, patterns (its rule), out / inn (money out and in, positive),
+    rows, first, last, labels (the valid labels its rows carry), has_rule,
+    suggestions (open ones; none until suggestions exist). Also the rows with
+    no spelling, which belong to no merchant: {"rows", "out", "inn"}."""
+    who = merchant_of(df["description"], merchants)
+    spelling = df["description"].map(merchant_key)
+    rules = merchants.table.set_index("merchant")
+    items = []
+    for mk, rows in df[who != ""].groupby(who[who != ""], sort=False):
+        rule = rules.loc[mk] if mk in rules.index else None
+        label, category = (rule["master_category"], rule["sub_category"]) if rule is not None else ("", "")
+        items.append({
+            "name": display_name(mk), "mkey": mk,
+            "spellings": sorted(set(spelling[rows.index])),
+            "label": label, "category": category,
+            "patterns": rule["patterns"] if rule is not None else "",
+            "out": round(float(-rows.loc[rows["amount"] < 0, "amount"].sum()), 2),
+            "inn": round(float(rows.loc[rows["amount"] > 0, "amount"].sum()), 2),
+            "rows": len(rows), "first": rows["date"].min(), "last": rows["date"].max(),
+            "labels": sorted(set(rows["master_category"]) & set(PREDEFINED_CATEGORIES)),
+            "has_rule": bool(label or category), "suggestions": 0,
+        })
+    none = df[who == ""]
+    nameless = {"rows": len(none), "out": round(float(-none.loc[none["amount"] < 0, "amount"].sum()), 2),
+                "inn": round(float(none.loc[none["amount"] > 0, "amount"].sum()), 2)}
+    return items, nameless
+
+
+def sort_merchants(items: list[dict], by: str) -> list[dict]:
+    """By "spend" (money out, then money in), or by "attention": open
+    suggestions first, then merchants whose rows carry different labels, then
+    those with no rule, each by spend."""
+    def spend(i):
+        return -i["out"], -i["inn"], i["name"]
+    if by == "attention":
+        return sorted(items, key=lambda i: (not i["suggestions"], len(i["labels"]) < 2, i["has_rule"], *spend(i)))
+    return sorted(items, key=spend)
+
+
 def merchant_list(descriptions: pd.Series, merchants: Merchants) -> dict[str, list[str]]:
     """Every merchant, from the rows and the alias file, with the spellings it
     covers (sorted). Rows with no spelling belong to no merchant."""

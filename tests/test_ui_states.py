@@ -140,10 +140,24 @@ def test_labeling_tabs_and_buttons_stay_readable(browser, server, theme):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_all_merchants_view_and_its_sort_stay_readable(browser, server, theme):
+    page = _open(browser, server, theme)
+    page.click("#settings-menu-btn")
+    page.click("#open-merchants-btn")                          # the way in from the menu
+    page.wait_for_selector("#label-tab label")
+    assert not page.is_visible("#merchant-sort")               # only on All merchants
+    page.locator("#label-tab label", has_text="ALL MERCHANTS").click()
+    page.wait_for_selector("#label-list .lg-other")            # the folded "Other" line is drawn
+    _walk_pills(page, "#merchant-sort", f"{theme} merchant sort")
+    _assert_readable(page, "#label-list .lg-name, #label-list .lg-tag, #label-list .lg-example, "
+                           "#label-list .hint", f"{theme}: merchant cards")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_settings_buttons_stay_readable(browser, server, theme):
     page = _open(browser, server, theme)
     page.click("#settings-menu-btn")
-    for sel in ("#theme-light-btn", "#theme-dark-btn", "#reload-data-btn"):
+    for sel in ("#theme-light-btn", "#theme-dark-btn", "#reload-data-btn", "#open-merchants-btn"):
         page.hover(sel)
         _assert_readable(page, "#settings-menu-panel button", f"{theme}: hovering {sel}")
 

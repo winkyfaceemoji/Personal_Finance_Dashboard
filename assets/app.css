@@ -277,6 +277,7 @@ body .dash-spinner-container { background-color: var(--overlay) !important; }
 .label-status-row { display: flex; gap: 10px; align-items: center; min-height: 30px; margin-bottom: 8px; }
 .label-group { padding: 16px 18px; margin-bottom: 12px; }
 .lg-section { margin: 24px 0 10px; }
+.lg-other { margin: 8px 2px; }
 .lg-main { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lg-info { min-width: 0; flex: 1 1 260px; }   /* below 260px the buttons drop under it */
 .lg-title { margin-bottom: 4px; }

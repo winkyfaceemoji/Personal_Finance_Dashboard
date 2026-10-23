@@ -59,6 +59,12 @@ The pure functions live in `Modules/labels.py` and `Modules/merchants.py`. The p
 - **Measured over every row of the merchant, not just those shown.** A rule labels all of them, and REVIEW → shows only the last import. So the month count, and the money-in-and-out check (on the unlabeled rows), use the whole merchant: a merchant whose older refunds are unlabeled can't be remembered from a view that only shows its purchases.
 - Nameless rows sit in their own NO MERCHANT NAME section after the merchants, each labeled one at a time.
 
+## All merchants (`_merchants_view`, ticket 04)
+- Read-only so far. All time: it never reads the period bar. Top `LABEL_TOP_N` in the chosen sort, the rest folded into one `Other · N merchants` line, then a `No merchant name` line.
+- Cards show the merchant's own rule *and* the labels its rows carry: until `rules.csv` keywords are converted (ticket 08), a row can be labeled by a keyword while its merchant says "No rule".
+- The sort switch (`merchant-sort`) lives in the static layout, hidden off this tab; a change bumps `label-version` to re-render.
+- The settings menu's MERCHANTS is the way in when nothing is unlabeled (the header's LABEL → only shows while something is). `_opening_tab` opens it on To label while anything is unlabeled, otherwise on All merchants.
+
 ## `rules.csv` keywords (until ticket 10)
 - The RULES tab still lists and deletes them. The app no longer calls `rule_check`; it stays, with `add_rule`, until ticket 10 removes the keyword machinery. Its checks, in order:
   1. Keyword is at least `MIN_KEYWORD` (4) characters.

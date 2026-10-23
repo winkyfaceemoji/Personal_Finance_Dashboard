@@ -24,8 +24,8 @@ from Modules.linked_cards import (
 from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
-    ALIASES_NAME, MERCHANTS_NAME, read_merchants, remember, remember_check, restore_files,
-    save_merchants, snapshot_files,
+    ALIASES_NAME, MERCHANTS_NAME, merchant_overview, read_merchants, remember, remember_check, restore_files,
+    save_merchants, snapshot_files, sort_merchants,
 )
 from Modules.recurring import recurring_charges
 from Modules.safety import (
@@ -707,11 +707,17 @@ app.layout = html.Div(
                               # Opened on a subset (REVIEW →, LABEL THEM →): the way to everything
                               html.Button("SHOW ALL", id="label-show-all", n_clicks=0,
                                           className="btn-secondary btn-small", style=_HIDDEN),
+                              # All merchants only: biggest spend first, or what needs a look
+                              dcc.RadioItems(id="merchant-sort", className="pills", value="spend", inline=True,
+                                             inputStyle=_PILL_INPUT, style=_HIDDEN,
+                                             options=[{"label": "BY SPEND", "value": "spend"},
+                                                      {"label": "NEEDS ATTENTION", "value": "attention"}]),
                           ])]),
                 dcc.RadioItems(
                     id="label-tab", className="pills", value="todo", inline=True,
                     inputStyle=_PILL_INPUT,
                     options=[{"label": "TO LABEL", "value": "todo"},
+                             {"label": "ALL MERCHANTS", "value": "merchants"},
                              {"label": "TRANSFER PAIRS", "value": "pairs"},
                              {"label": "RULES", "value": "rules"}],
                 ),
@@ -767,6 +773,8 @@ app.layout = html.Div(
                     ]),
                     dcc.Download(id="export-csv-download"),
                     _settings_button("RELOAD DATA", "reload-data-btn"),
+                    # The panel is otherwise reached only while something is unlabeled
+                    _settings_button("MERCHANTS", "open-merchants-btn"),
                     html.Div(className="divider", style={"margin": "4px 0"}),
                     html.Div("SOURCE", className="settings-label"),
                     _settings_button("CHANGE DATA FOLDER", "open-setup-btn"),
@@ -989,6 +997,55 @@ def _group_card(g: dict, chk: dict, kept: dict | None = None):
                                             id={"type": "lbl-rows-sum", "group": key}, n_clicks=0),
                                *rows]),
     ])
+
+
+def _merchant_card(i: dict):
+    """One merchant in the All merchants view, read-only: its rule, its
+    spellings, and its money over all time."""
+    rule = " · ".join(x for x in (i["label"], i["category"]) if x) or "No rule"
+    shown = ", ".join(i["spellings"][:5]) + (f" +{len(i['spellings']) - 5} more" if len(i["spellings"]) > 5 else "")
+
+    def _line(tag, text):
+        return html.Div(className="lg-text", children=[html.Span(tag, className="lg-tag"),
+                                                        html.Span(text, className="lg-example")])
+    return html.Div(className="app-card label-group", children=[
+        html.Div(className="lg-title", children=[
+            html.Span(i["name"], className="lg-name", title="Merchant"),
+            html.Span("LABELS DIFFER", className="lg-badge", title="Its rows carry different labels")
+            if len(i["labels"]) > 1 else None,
+        ]),
+        _line("Rule", rule),
+        # What its rows carry now, whatever labeled them (a hand label, its
+        # rule, or a rules.csv keyword until those are converted)
+        _line("Labeled", ", ".join(i["labels"]) or "Not labeled"),
+        _line("Spellings", shown),
+        _line("Patterns", i["patterns"]) if i["patterns"] else None,
+        html.Div(f"{_dollar(i['out'])} out · {_dollar(i['inn'])} in · {i['rows']} txn{'s' if i['rows'] != 1 else ''}"
+                 f" · {_span_text(i)}", className="hint"),
+    ])
+
+
+def _merchants_view(sort: str):
+    """Every merchant, all time (the period bar doesn't apply), top
+    LABEL_TOP_N in the chosen order and the rest folded into one line."""
+    items, nameless = merchant_overview(df, _merchants())
+    ordered = sort_merchants(items, sort or "spend")
+    shown, rest = ordered[:LABEL_TOP_N], ordered[LABEL_TOP_N:]
+    out = [_merchant_card(i) for i in shown]
+    if rest:
+        out.append(html.Div(f"Other · {len(rest)} merchant{'s' if len(rest) != 1 else ''} · "
+                            f"{_dollar0(sum(i['out'] for i in rest))} out · "
+                            f"{_dollar0(sum(i['inn'] for i in rest))} in", className="hint lg-other"))
+    if nameless["rows"]:
+        n = nameless["rows"]
+        out.append(html.Div(f"No merchant name · {n} row{'s' if n != 1 else ''} · {_dollar0(nameless['out'])} out"
+                            f" · {_dollar0(nameless['inn'])} in — they belong to no merchant",
+                            className="hint lg-other"))
+    summary = (f"{len(items)} merchant{'s' if len(items) != 1 else ''} · "
+               f"{_dollar0(sum(i['out'] for i in items))} out, all time")
+    if not items:
+        return html.Div("No merchants yet", className="hint"), summary
+    return out, summary
 
 
 def _pair_side(r: dict, direction: str):
@@ -2265,12 +2322,13 @@ def save_setup(n_clicks, path, trigger):
     Input("open-label-review", "n_clicks"),
     Input("open-transfer-check", "n_clicks"),
     Input("headline-label",    "n_clicks"),
+    Input("open-merchants-btn", "n_clicks"),
     Input("close-label-panel", "n_clicks"),
     State("refresh-trigger",   "data"),
     State("period-store",      "data"),
     prevent_initial_call=True,
 )
-def toggle_label_panel(_open, _review, _check, _headline, _close, trigger, store=None):
+def toggle_label_panel(_open, _review, _check, _headline, _merchants_btn, _close, trigger, store=None):
     # Closing refreshes every card: labels written while the panel was open
     # change totals, the header notes and the period bar
     if ctx.triggered_id == "close-label-panel":
@@ -2279,9 +2337,38 @@ def toggle_label_panel(_open, _review, _check, _headline, _close, trigger, store
     if ctx.triggered_id == "headline-label":
         freq, p = _selected_period(store)
         filt = f"period|{freq}|{p.start_time:%Y-%m-%d}"   # the rows holding back its headline
-    tab = "pairs" if ctx.triggered_id == "open-transfer-check" else "todo"
+    tab = _opening_tab(ctx.triggered_id)
     _snapshot_before_labeling()
     return {"display": "block"}, filt, tab, dash.no_update
+
+
+def _opening_tab(trigger) -> str:
+    """Which view the panel opens on: the pairs for CHECK →, and for the
+    MERCHANTS menu entry, To label while anything is unlabeled, otherwise
+    All merchants."""
+    if trigger == "open-transfer-check":
+        return "pairs"
+    if trigger == "open-merchants-btn" and not _todo_groups("all"):
+        return "merchants"
+    return "todo"
+
+
+@app.callback(
+    Output("merchant-sort", "style"),
+    Input("label-tab", "value"),
+)
+def show_merchant_sort(tab):
+    return _SHOWN_INLINE if tab == "merchants" else _HIDDEN
+
+
+@app.callback(
+    Output("label-version", "data", allow_duplicate=True),
+    Input("merchant-sort", "value"),
+    State("label-version", "data"),
+    prevent_initial_call=True,
+)
+def resort_merchants(_sort, version):
+    return (version or 0) + 1                     # re-renders the list in the new order
 
 
 @app.callback(
@@ -2335,11 +2422,14 @@ def _snapshot_before_labeling() -> None:
     State({"type": "lbl-rows", "group": ALL}, "id"),
     State({"type": "lbl-rows-sum", "group": ALL}, "n_clicks"),
     State({"type": "lbl-rows-sum", "group": ALL}, "id"),
+    State("merchant-sort", "value"),
 )
 def render_label_list(style, _version, tab, filt, subs_in, sub_ids, rems_in, rem_ids,
-                      opens, open_ids, toggles, toggle_ids):
+                      opens, open_ids, toggles, toggle_ids, merchant_sort="spend"):
     if not style or style.get("display") == "none":
         return dash.no_update, dash.no_update
+    if tab == "merchants":
+        return _merchants_view(merchant_sort)
     if tab == "rules":
         return _rules_view(), "Rules label every matching unlabeled row, past and future"
     shown, n_pairs = _shown_pairs(filt)

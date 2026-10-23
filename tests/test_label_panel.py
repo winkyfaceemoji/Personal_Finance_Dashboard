@@ -415,6 +415,51 @@ def test_rows_with_no_merchant_name_come_last_in_their_own_section(appmod):
     assert "No clear merchant" in texts[heading:]
 
 
+def _in_order(c):
+    """Every string in a component tree, in page order."""
+    if isinstance(c, str):
+        yield c
+    elif isinstance(c, (list, tuple)):
+        for x in c:
+            yield from _in_order(x)
+    elif getattr(c, "children", None) is not None:
+        yield from _in_order(c.children)
+
+
+def _merchants_view(g_, sort="spend"):
+    return g_["render_label_list"]({"display": "block"}, 0, "merchants", "all",
+                                   [], [], [], [], [], [], [], [], sort)
+
+
+@pytest.mark.parametrize("sort", ["spend", "attention"])
+def test_all_merchants_lists_every_merchant_all_time_and_folds_the_rest(appmod, sort):
+    from Modules.merchants import merchant_overview, sort_merchants
+    g_ = _live(appmod)
+    children, summary = _merchants_view(g_, sort)
+    items, nameless = merchant_overview(g_["df"], g_["_merchants"]())
+    ordered = sort_merchants(items, sort)
+    n = g_["LABEL_TOP_N"]
+    assert len(items) > n                                        # the demo has enough to fold
+    texts = list(_in_order(children))
+    titles = [t for t in texts if t in {i["name"] for i in items}]
+    assert titles == [i["name"] for i in ordered[:n]]            # the top ones, in the chosen order
+    rest = ordered[n:]
+    other = next(t for t in texts if t.startswith("Other · "))
+    assert other == (f"Other · {len(rest)} merchants · {g_['_dollar0'](sum(i['out'] for i in rest))} out · "
+                     f"{g_['_dollar0'](sum(i['inn'] for i in rest))} in")
+    assert any(t.startswith(f"No merchant name · {nameless['rows']} rows") for t in texts)
+    assert summary == (f"{len(items)} merchants · {g_['_dollar0'](sum(i['out'] for i in items))} out, all time")
+
+
+def test_the_merchants_button_opens_where_the_work_is(appmod, monkeypatch):
+    g_ = _live(appmod)
+    assert g_["_todo_groups"]("all")                             # something unlabeled
+    assert g_["_opening_tab"]("open-merchants-btn") == "todo"
+    monkeypatch.setitem(g_, "_todo_groups", lambda filt: [])     # everything labeled
+    assert g_["_opening_tab"]("open-merchants-btn") == "merchants"
+    assert g_["_opening_tab"]("open-transfer-check") == "pairs"
+
+
 def test_label_click_ignores_rerender(appmod):
     real = appmod["_is_real_click"]
     pid = '{"cat":"Expense","group":"x","sig":"s","type":"lbl-group"}.n_clicks'

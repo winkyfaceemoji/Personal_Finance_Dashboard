@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 from Modules.merchants import (
-    merchant_list, merchant_of, read_merchants, remember, remember_check, restore_files, save_merchants,
-    snapshot_files,
+    merchant_list, merchant_of, merchant_overview, read_merchants, remember, remember_check, restore_files,
+    save_merchants, snapshot_files, sort_merchants,
 )
 from Modules.transforms import load_transactions
 
@@ -275,6 +275,40 @@ def test_merchant_files_round_trip_through_undo_byte_for_byte(tmp_path):
     assert read_merchants(folder).version != m.version
     restore_files(folder, json.loads(json.dumps(saved)))    # through the browser and back
     assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+# ── All merchants (ticket 04) ─────────────────────────────────────────────────
+
+def test_overview_sums_each_merchant_over_all_its_rows(tmp_path):
+    m = read_merchants(_files(tmp_path, *AMAZON))
+    df = _rows(("2024-02-01", "AMZN Mktp US*1", -20.0, "Expense"),
+               ("2025-06-01", "AMAZON PRIME*2", -14.0, "Income"),         # labels differ
+               ("2025-07-01", "AMAZON PRIME*3", 5.0, ""),                 # a refund
+               ("2025-03-01", "TRADER JOE S #552", -30.0, "Expense"),
+               ("2025-03-02", "#48213", -7.0, ""))                        # no merchant name
+    items, nameless = merchant_overview(df, m)
+    amazon = next(i for i in items if i["name"] == "Amazon")
+    assert {k: amazon[k] for k in ("spellings", "label", "category", "patterns", "out", "inn", "rows", "labels",
+                                   "has_rule")} == {
+        "spellings": ["amazon prime", "amzn mktp us"], "label": "Expense", "category": "Shopping",
+        "patterns": "amzn mktp", "out": 34.0, "inn": 5.0, "rows": 3, "labels": ["Expense", "Income"],
+        "has_rule": True}
+    assert (amazon["first"], amazon["last"]) == (pd.Timestamp("2024-02-01"), pd.Timestamp("2025-07-01"))
+    joe = next(i for i in items if i["name"] == "TRADER JOE S")       # a bare spelling, in capitals
+    assert (joe["has_rule"], joe["labels"], joe["out"]) == (False, ["Expense"], 30.0)
+    assert nameless == {"rows": 1, "out": 7.0, "inn": 0.0}
+
+
+def test_merchants_sort_by_spend_or_by_what_needs_attention(tmp_path):
+    def item(name, out, labels=("Expense",), has_rule=True, suggestions=0):
+        return {"name": name, "out": out, "inn": 0.0, "labels": list(labels), "has_rule": has_rule,
+                "suggestions": suggestions}
+    items = [item("Big", 900.0), item("Unruled", 50.0, has_rule=False), item("Mixed", 10.0, ("Expense", "Income")),
+             item("Small", 5.0), item("Suggested", 1.0, suggestions=1)]
+    assert [i["name"] for i in sort_merchants(items, "spend")] == ["Big", "Unruled", "Mixed", "Small", "Suggested"]
+    # open suggestions, then labels that differ, then no rule, then by spend
+    assert [i["name"] for i in sort_merchants(items, "attention")] == [
+        "Suggested", "Mixed", "Unruled", "Big", "Small"]
 
 
 def test_restoring_files_that_were_missing_removes_them(tmp_path):
