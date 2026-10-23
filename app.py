@@ -25,7 +25,7 @@ from Modules.chat import health, llm_url, run_turn
 from Modules.chat_tools import all_categories, call_tool, tool_schemas, unverified_amounts
 from Modules.merchants import (
     ALIASES_NAME, MERCHANTS_NAME, apply_conversion, convert_proposals, describe_label, dismiss, display_name,
-    freeze_keyword_labels, keep_past, spend_by_spelling, valid_keywords,
+    freeze_keyword_labels, keep_past, review_choices, spend_by_spelling, valid_keywords,
     find_merchant, label_changes, merchant_list, merchant_of, merchant_overview, merchants_from, merge, names_in_use,
     pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, rule_labels, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
@@ -40,7 +40,6 @@ from Modules.transforms import (
     UNLABELED_BLOCK,
     unlabeled_share,
     load_transactions,
-    normalize_description,
     category_split,
     filter_period,
     is_covered,
@@ -1300,6 +1299,16 @@ def _convert_view():
             f"{len(props)} rules.csv keyword{'s' if len(props) != 1 else ''} to turn into merchants")
 
 
+# ── Callbacks ─────────────────────────────────────────────────────────────────
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("theme-store", "data"),
+    Input("theme-light-btn", "n_clicks"),
+    Input("theme-dark-btn",  "n_clicks"),
+    prevent_initial_call=True,
+)
 def set_theme(_, __):
     return "light" if ctx.triggered_id == "theme-light-btn" else "dark"
 
@@ -2625,7 +2634,6 @@ def _suggestions(m, frame: pd.DataFrame | None = None) -> dict[str, str]:
     """{spelling: merchant} to offer as "Same as …?": pattern matches first,
     then, for spellings no pattern names, the merchant whose spelling looks
     most alike (when the embedding server answers). Never applied on its own."""
-    global _EMBED_DOWN
     frame = _without_pending_dups(df) if frame is None else frame
     spellings = frame["description"].map(merchant_key)
     out = pattern_suggestions(spellings, m)
@@ -2915,13 +2923,16 @@ def _master_for_freeze() -> pd.DataFrame:
 
 
 def _conversion(m, reviewed: list[dict]):
-    """(props, frozen master, rows frozen, moves, rules dropped) for
+    """(props, frozen master, rows stored, moves, rules dropped) for
     converting the reviewed keywords: every label and category the keywords
-    give a row today is stored on it (so the past can't move), and a
-    proposal whose rule would still move a past row keeps no rule."""
+    give a row today is stored on it, unless the review chose otherwise for
+    its spelling (so only the review moves the past), and a proposal whose
+    rule would still move a past row keeps no rule."""
     master = _master_for_freeze()
-    frozen, shown, changed = freeze_keyword_labels(master, m, RULES_PATH)
-    props, dropped = keep_past(frozen, shown, m, reviewed)
+    choices = review_choices(_convert_proposals(), reviewed)
+    shown = rule_labels(master, m, RULES_PATH)
+    frozen, kept, stored = freeze_keyword_labels(master, m, RULES_PATH, choices)
+    props, dropped = keep_past(frozen, kept, m, reviewed)
     after = merchants_from(*apply_conversion(m, props))
     now = rule_labels(frozen, after, None)
     moved = (now != shown).any(axis=1)
@@ -2929,27 +2940,29 @@ def _conversion(m, reviewed: list[dict]):
              for (f, t), g in master.loc[moved, "amount"].groupby(
                  [[describe_label(*x) for x in shown[moved].itertuples(index=False)],
                   [describe_label(*x) for x in now[moved].itertuples(index=False)]])]
-    return props, frozen, int(changed.sum()), moves, dropped
+    return props, frozen, int(stored.sum()), moves, dropped
 
 
 def _convert_preview(reviewed: list[dict]):
     """(pending, text) for converting the reviewed keywords. Every label
     the keywords give today is kept as a stored label, so the preview's
-    first part is always "no labels change" unless the review changed one."""
+    first part is "no labels change" unless the review changed one. The
+    pending change holds the review as made (CONFIRM recomputes from it)."""
     m = _merchants()
     try:
-        props, _, kept, moves, dropped = _conversion(m, reviewed)
+        _, _, kept, moves, dropped = _conversion(m, reviewed)
     except ValueError as e:
         return None, str(e)
     n = len(reviewed)
     text = (f"Convert {n} rules.csv keyword{'s' if n != 1 else ''} into merchants: "
             f"{'; '.join(moves) or 'no labels change'}")
     if kept:
-        text += f" · {kept} row{'s' if kept != 1 else ''} keep the label a keyword gives them, now stored"
+        text += f" · {kept} row{'s' if kept != 1 else ''} keep their label as a stored label"
     if dropped:
         text += (f" · {dropped} merchant{'s' if dropped != 1 else ''} get no rule (it would relabel past rows): "
                  "new rows of them wait for you")
-    return {"act": "convert", "props": props, "version": m.version, "rules": _rules_hash()}, text
+    return ({"act": "convert", "props": reviewed, "version": m.version, "rules": _rules_hash(),
+             "master": _mtime(MASTER_PATH)}, text)
 
 
 def _retired_rules_path(backups: Path) -> Path:
@@ -2968,18 +2981,22 @@ def _do_convert(pending: dict, version):
     global df
     with MASTER_LOCK:
         m = _merchants()
-        if m.version != pending["version"] or _rules_hash() != pending["rules"]:
-            return ("The merchants or rules.csv changed since the preview — nothing was changed.",
+        if (m.version != pending["version"] or _rules_hash() != pending["rules"]
+                or _mtime(MASTER_PATH) != pending.get("master")):
+            return ("The data, the merchants or rules.csv changed since the preview — nothing was changed.",
                     dash.no_update, dash.no_update, (version or 0) + 1)
         folder, rules_path = MASTER_PATH.parent, Path(RULES_PATH)
         locked = _first_locked([MASTER_PATH, folder / MERCHANTS_NAME, folder / ALIASES_NAME, rules_path])
         if locked:
             return (f"⚠ Nothing changed: {locked} is open in another program (Excel?) — close it and try again.",
                     dash.no_update, dash.no_update, dash.no_update)
-        props, frozen, kept, _, _ = _conversion(m, pending["props"])
+        try:
+            props, frozen, kept, _, _ = _conversion(m, pending["props"])
+        except ValueError as e:
+            return str(e), dash.no_update, dash.no_update, (version or 0) + 1
         table, aliases = apply_conversion(m, props)
         rules = rules_path.read_bytes()
-        undo, saved = {}, snapshot_files(folder)
+        undo, saved, retired = {}, snapshot_files(folder), None
         try:
             if kept:
                 undo["backup"] = str(backup_master(MASTER_PATH))
@@ -2989,6 +3006,8 @@ def _do_convert(pending: dict, version):
             retired.write_bytes(rules)
             rules_path.unlink()
         except OSError as e:                         # Excel got a file after the check: put everything back
+            if retired is not None:
+                retired.unlink(missing_ok=True)
             restore_files(folder, saved)
             if undo.get("backup"):
                 restore_backup(Path(undo["backup"]), MASTER_PATH)
@@ -3158,19 +3177,21 @@ def _do_undo(undo: dict, version):
         with MASTER_LOCK:
             if _first_locked(_undo_files()):        # refuse before touching anything
                 raise PermissionError
-            folder = MASTER_PATH.parent
+            folder, rules_path = MASTER_PATH.parent, Path(RULES_PATH)
             labeled = snapshot_files(folder)
             if undo.get("merchant_files"):
                 restore_files(folder, undo["merchant_files"])
             if undo.get("rules_file") is not None:      # a conversion retired it
-                tmp = Path(RULES_PATH).with_suffix(".csv.tmp")
+                tmp = rules_path.with_suffix(".csv.tmp")
                 tmp.write_bytes(undo["rules_file"].encode("latin-1"))
-                os.replace(tmp, RULES_PATH)
+                os.replace(tmp, rules_path)
             try:
                 if undo.get("backup"):              # a merchant change wrote no master
                     restore_backup(Path(undo["backup"]), MASTER_PATH)
             except PermissionError:
                 restore_files(folder, labeled)      # not half undone: put the rule back too
+                if undo.get("rules_file") is not None:
+                    rules_path.unlink(missing_ok=True)      # and retire rules.csv again
                 raise
         df = load_transactions(MASTER_PATH, rules_path=RULES_PATH)
     except PermissionError:

@@ -9,7 +9,6 @@ Everything here tolerates that.
 import hashlib
 import io
 import re
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -155,21 +154,6 @@ def merchant_key(description) -> str:
     s = _CODE.sub("", s)
     s = _leading_words(s).strip(" -.,/")
     return s if re.search(r"[a-z]", s) else ""
-
-
-def rule_keyword(descriptions) -> str:
-    """The rule keyword for a group: the longest word-aligned prefix all its
-    descriptions share (normalized), cut at reference-id tails and before a
-    later word with a digit. Always a real substring of every description,
-    so the rule matches the whole group."""
-    split = [normalize_description(d).split() for d in descriptions]
-    common = []
-    for words in zip(*split):
-        if any(w != words[0] for w in words):
-            break
-        common.append(words[0])
-    prefix = _ID_TAIL.split(" ".join(common), maxsplit=1)[0]
-    return _leading_words(prefix).strip(" -.,/")
 
 
 def row_id(row: dict) -> str:
@@ -363,10 +347,9 @@ def suspect_transfers(df: pd.DataFrame, max_days: int = TRANSFER_PAIR_DAYS,
     return out
 
 
-# ── Rules: safety check and rules.csv I/O ─────────────────────────────────────
+# ── rules.csv: read for conversion only ─────────────────────────────────────
 
 RULE_COLUMNS = ["keyword", "master_category", "sub_category", "added"]
-MIN_KEYWORD  = 4
 
 
 def read_rules(path) -> pd.DataFrame:
@@ -384,77 +367,6 @@ def read_rules(path) -> pd.DataFrame:
         if col not in rules.columns:
             rules[col] = ""
     return rules
-
-
-def add_rule(path, keyword, category, sub="") -> bool:
-    """Append a rule. Refused (False, nothing written) for a short or duplicate
-    keyword or a category that isn't Expense / Income / Transfer."""
-    keyword = normalize_description(keyword)
-    if len(keyword) < MIN_KEYWORD or category not in PREDEFINED_CATEGORIES:
-        return False
-    rules = read_rules(path)
-    if (rules["keyword"].map(normalize_description) == keyword).any():
-        return False
-    row = {"keyword": keyword, "master_category": category,
-           "sub_category": (sub or "").strip(), "added": date.today().isoformat()}
-    atomic_write_csv(pd.concat([rules, pd.DataFrame([row])], ignore_index=True), Path(path))
-    return True
-
-
-def delete_rule(path, keyword) -> bool:
-    rules = read_rules(path)
-    hit = rules["keyword"].map(normalize_description) == normalize_description(keyword)
-    if not hit.any():
-        return False
-    atomic_write_csv(rules[~hit], Path(path))
-    return True
-
-
-def rule_check(df: pd.DataFrame, rules: pd.DataFrame, group: dict, norm=None) -> dict:
-    """
-    Is remembering this group as a rule safe? A rule applies to every
-    unlabeled row containing its keyword, past and future, first match wins —
-    so it must provably mean only this merchant. Checks, in order:
-    long enough · matches this merchant only (across ALL rows, labeled too)
-    · no existing rule overlaps or would win first · one direction of money.
-    Mixed direction is the only non-blocking reason (the user may still tick).
-    norm: df's descriptions already normalized (saves work across many groups).
-    """
-    descs = [r["description"] for r in group["rows"]]
-    kw = rule_keyword(descs)
-    direction = "mixed" if group["mixed"] else ("money in" if group["total"] > 0 else "money out")
-    out = {"ok": False, "keyword": kw, "reason": None, "blocking": True,
-           "rows_now": 0, "dollars_now": 0.0, "others": [], "direction": direction}
-    if group.get("fallback"):
-        out["reason"] = "no recognizable merchant name — label these one at a time"
-        return out
-    if len(kw) < MIN_KEYWORD:
-        out["reason"] = "no keyword long enough to be safe"
-        return out
-    norm = df["description"].map(normalize_description) if norm is None else norm
-    hits = norm.str.contains(kw, regex=False)
-    # Group keys exactly as unlabeled_groups makes them (nameless rows key on
-    # their own description)
-    keys = {merchant_key(d) or normalize_description(d) for d in df.loc[hits, "description"]}
-    others = sorted(keys - {group["mkey"]})
-    if others:
-        out["others"] = [o.upper() for o in others[:3]]
-        out["reason"] = "also matches " + ", ".join(out["others"])
-        return out
-    group_norm = [normalize_description(d) for d in descs]
-    for k in rules["keyword"]:
-        rk = normalize_description(k)
-        if rk and (rk in kw or kw in rk or any(rk in d for d in group_norm)):
-            out["reason"] = f'existing rule "{rk}" would override it'
-            return out
-    unl = hits & ~df["master_category"].isin(PREDEFINED_CATEGORIES)
-    out["rows_now"] = int(unl.sum())
-    out["dollars_now"] = float(df.loc[unl, "amount"].abs().sum())
-    if group["mixed"]:
-        out.update(reason="money in and out — check the rows first", blocking=False)
-        return out
-    out.update(ok=True, blocking=False)
-    return out
 
 
 # ── Writing labels; the last import's rows ────────────────────────────────────

@@ -18,7 +18,7 @@ A local Plotly Dash app for tracking personal spending across Chase and Discover
 │   └── labels.py            # Merchant groups, rule safety, label writes, imported-CSV matcher
 ├── Test Data/               # Made-up demo data (make_demo_data.py) — works out of the box
 │   ├── RAW/                 # Demo bank CSVs, one subfolder per institution (tracked in git)
-│   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored), plus made-up demo rules.csv (tracked)
+│   └── SORTED/              # Pipeline output — regenerated on first run (git-ignored), plus made-up demo merchant files (tracked)
 ├── assets/
 │   ├── app.css              # All styles — theme tokens only, generated from _CHART in app.py
 │   └── theme_sync.js        # Mirrors the theme class onto <body> for dropdown popups
@@ -151,7 +151,7 @@ The period bar under the header — **WEEK | MONTH | YEAR** and a **‹ period �
 | SPEND BY CATEGORY | Sorted bars for the selected period — top 9 categories + Other, with `$ · %`. Click a bar for its top merchants and largest transaction (click again to close) |
 | MORE → RECURRING CHARGES | (folded) Subscriptions, rent, utilities — merchants charging a steady amount monthly, quarterly or yearly (3+ times), with the latest charge and its cost per year. Stopped ones fold away under *Stopped* |
 
-> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the header shows how many unlabeled rows (and dollars) are being left out. Label transactions in the labeling panel, with the Excel workflow, or with `rules.csv`, and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals. Weekly tracking needs this most: new transactions arrive unlabeled unless a rule matches them.
+> **Note:** All totals are label-based — a row only counts as an expense or income if its **Type of Transaction** field is `Expense` or `Income`. Rows tagged `Transfer` and rows with no label are excluded from every calculation; the header shows how many unlabeled rows (and dollars) are being left out. Label transactions in the labeling panel or with the Excel workflow, and tag transfers, brokerage moves, and credit card payments as `Transfer` so they don't distort your totals. Weekly tracking needs this most: new transactions arrive unlabeled unless their merchant has a rule.
 
 ### Label transactions
 
@@ -205,20 +205,13 @@ For a handful of merchants, the labeling panel is quicker (see above). For a bul
 
 ---
 
-## Auto-labeling rules
+## Merchants and their rules
 
-`SORTED/rules.csv`, in your data folder, maps keyword substrings to labels. It names the places you spend, so it lives with your data and never in the repo ([ADR 0024](docs/adr/0024-no-real-data-in-the-repo.md)). The demo's `Test Data/SORTED/rules.csv` is made up.
+A **merchant** is one place you spend, however the bank spells it (`AMZN MKTP` and `AMAZON.COM` can be one merchant). Its **rule** is the label it gives its rows: on each data load, every row of the merchant with no label of its own gets the rule's label, so freshly imported statements count in the totals at once. A hand label always wins, and a rule's subcategory only fills a blank one. Rules are applied in memory, never written to the master, so changing a merchant's rule relabels its history; every change shows which rows would move before you confirm it, and UNDO takes it back.
 
-```csv
-keyword,master_category,sub_category
-payroll,Income,Paycheck
-netflix,Expense,Entertainment
-fidelity,Transfer,
-```
+Merchants live in two files in your data folder, `SORTED/merchants.csv` (each merchant, its rule and its patterns) and `SORTED/merchant_aliases.csv` (which spellings belong to which merchant). They name the places you spend, so they live with your data and never in the repo ([ADR 0024](docs/adr/0024-no-real-data-in-the-repo.md)); the demo's in `Test Data/SORTED/` are made up. Manage them in the labeling panel (**Remember for future statements**, **ALL MERCHANTS**) rather than by hand: the app writes both together and reports a problem if they disagree.
 
-On each data load, any transaction with no `master_category` whose description contains a matching keyword is labeled automatically — so freshly imported statements count in the totals immediately instead of sitting unlabeled and ignored. The first matching rule wins; a hand-assigned `master_category` always takes priority; `sub_category` is optional and only fills rows that don't already have one (and never rows the user labeled with a different master). A rule may also be **sub-only** (blank master, e.g. `venmo,,Venmo`) — useful for descriptions too ambiguous to label but that still deserve a display category in the category breakdown. Rules are applied in-memory, never written to the master file — edit or delete a rule and the next reload re-labels history accordingly.
-
-Edit `SORTED/rules.csv` directly to add, remove, or adjust rules — no code change needed. The labeling panel also appends rules (with an extra `added` date column, which the loader ignores) when you tick **Remember for future statements**, and its RULES tab can delete those. To make the app use a different rules file (tests and scripted checks do), set `FINANCE_RULES_PATH`. The unlabeled-rows note in the header tells you how many rows your rules don't yet cover.
+Older versions kept keyword rules in `SORTED/rules.csv`. While that file exists its keywords still apply, after the merchants' rules, and the header offers **CONVERT →** to turn them into merchants; past labels stay as they are ([ADR 0026](docs/adr/0026-conversion-stores-the-past.md)).
 
 ---
 

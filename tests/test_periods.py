@@ -209,8 +209,9 @@ def demo_df(tmp_path_factory):
     data = tmp_path_factory.mktemp("data")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
     run_ingest(data)
-    return load_transactions(data / "SORTED" / "edited_combined_transactions.csv",
-                             rules_path=REPO / "Test Data" / "SORTED" / "rules.csv")
+    for name in ("merchants.csv", "merchant_aliases.csv"):
+        shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
+    return load_transactions(data / "SORTED" / "edited_combined_transactions.csv")
 
 
 def test_demo_totals_agree_across_granularities(demo_df):

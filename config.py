@@ -32,12 +32,9 @@ def get_master_path(data_dir: Path | None) -> Path | None:
 
 
 def get_rules_path(data_dir: Path | None) -> Path | None:
-    """The rules file: FINANCE_RULES_PATH, else SORTED/rules.csv in the data
-    directory. Rules name real merchants, so they live with the data, never in
-    the repo (ADR 0024)."""
-    env = os.environ.get("FINANCE_RULES_PATH")
-    if env:
-        return Path(env)
+    """The old rules.csv keywords, SORTED/rules.csv in the data directory.
+    Read only until they're converted into merchants (ADR 0025); they name
+    real merchants, so they live with the data, never in the repo (ADR 0024)."""
     return (data_dir / "SORTED" / "rules.csv") if data_dir else None
 
 

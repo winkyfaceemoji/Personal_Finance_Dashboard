@@ -124,19 +124,20 @@ def demo(tmp_path):
     data = tmp_path / "data"
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
     run_ingest(data)
+    for name in ("merchants.csv", "merchant_aliases.csv"):
+        shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
     return data / "SORTED" / "edited_combined_transactions.csv"
 
 
 def test_labeling_a_group_raises_totals_by_exactly_its_amount(demo):
-    rules = REPO / "Test Data" / "SORTED" / "rules.csv"
-    df = load_transactions(demo, rules_path=rules)
+    df = load_transactions(demo)
     group = next(g for g in unlabeled_groups(df) if all(r["amount"] < 0 for r in g["rows"]))
     before = period_totals(df, "year")["exp"].sum()
 
     master = pd.read_csv(demo, dtype={"card_last4": str, "master_category": str, "sub_category": str})
     master, n = label_rows(master, group["rows"], "Expense")
     atomic_write_csv(master, demo)
-    df2 = load_transactions(demo, rules_path=rules)
+    df2 = load_transactions(demo)
 
     assert n >= len({r["row_id"] for r in group["rows"]})
     assert period_totals(df2, "year")["exp"].sum() - before == pytest.approx(
@@ -153,10 +154,8 @@ def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
     from main import main as run_ingest
     from Modules.merchants import read_merchants, remember, remember_check, save_merchants
     from Modules.transforms import PREDEFINED_CATEGORIES as CATS
-    rules = tmp_path / "rules.csv"
-    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)
     folder = demo.parent
-    df = load_transactions(demo, rules_path=rules)
+    df = load_transactions(demo)
     n_rows, total = len(df), df["amount"].sum()
     unrev = lambda d: d.loc[~d["master_category"].isin(CATS), "amount"].abs().sum()
     before = unrev(df)
@@ -175,7 +174,7 @@ def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
             save_merchants(folder, *remember(m, g["mkey"], g["spellings"], cat, "", "2026-01-01"), adding=True)
             remembered.append(g["spellings"][0])
     atomic_write_csv(master, demo)
-    df2 = load_transactions(demo, rules_path=rules)
+    df2 = load_transactions(demo)
 
     assert len(df2) == n_rows and df2["amount"].sum() == pytest.approx(total)   # nothing lost or duplicated
     assert unrev(df2) <= before - labeled + 0.01
@@ -193,7 +192,7 @@ def test_acceptance_label_top_groups_then_new_statement(demo, tmp_path):
         "01/07/2026,01/08/2026,NEWSHOP BETA 2,Shopping,Sale,-30.00,\n")
     run_ingest(demo.parent.parent)
     ids = last_import_ids(demo)
-    df3 = load_transactions(demo, rules_path=rules)
+    df3 = load_transactions(demo)
     new = df3[row_ids(df3).isin(set(ids))]
     assert len(ids) == 3
     assert int(new["master_category"].isin(CATS).sum()) == 1                  # the rule caught it

@@ -10,7 +10,8 @@ paths:
 - Totals are label-based. Only `master_category` decides whether a row counts, never the amount's sign (ADR 0007). `Transfer` is excluded deliberately. Unlabeled rows are excluded because they're unclassified.
 - Expense totals are *negated sums*, not absolute values. A refund labeled Expense nets against spending instead of inflating it.
 
-## Auto-labeling rules (`apply_auto_categories`)
+## The old rules.csv keywords (`apply_auto_categories`)
+- Kept only so an unconverted data folder loads as it did, and so conversion can see what the keywords give (ADR 0025, 0026). Don't add to it: new labeling goes through merchants.
 - Rules are applied **in memory on every load and never written to the master**:
   - Editing `rules.csv` relabels all history.
   - Deleting a rule un-labels rows on the next load.

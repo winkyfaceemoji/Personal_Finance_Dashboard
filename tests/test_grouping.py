@@ -2,7 +2,7 @@
 import pandas as pd
 
 from Modules.labels import (
-    looks_like_transfer, merchant_key, row_id, row_ids, rule_keyword, unlabeled_groups,
+    looks_like_transfer, merchant_key, row_id, row_ids, unlabeled_groups,
 )
 from Modules.transforms import apply_auto_categories, normalize_description
 
@@ -55,7 +55,6 @@ def test_merchant_key_reads_past_a_processor_prefix():
     assert merchant_key("PAYPAL *4029357733") == "paypal"
     assert merchant_key("SQ *THE EGG SHOP") == "sq the egg shop"
     assert merchant_key("TST*ANGELINA BAKERY - 16") == "tst angelina bakery"
-    assert rule_keyword(["TST* 7TH STREET BURGER -"] * 2) == "tst 7th street burger"
 
 
 RTP = ("REAL TIME PAYMENT CREDIT RECD FROM ABA/CONTR BNK-{}  FROM: BNF-{} REF: 1a2b "
@@ -69,18 +68,6 @@ def test_payment_network_without_a_payee_is_never_grouped():
     assert merchant_key(a) == merchant_key(b) == ""
     groups = unlabeled_groups(_df([("2025-03-01", a, 50.0, ""), ("2025-03-02", b, 80.0, "")]))
     assert len(groups) == 2 and all(g["fallback"] and g["count"] == 1 for g in groups)
-
-
-def test_rule_keyword_is_common_prefix_and_substring():
-    descs = ["STARBUCKS STORE 01234 SEATTLE", "STARBUCKS STORE 09876 NY"]
-    kw = rule_keyword(descs)
-    assert kw == "starbucks store"
-    assert all(kw in normalize_description(d) for d in descs)
-    assert rule_keyword(["PAYPAL *NETFLIX 1", "PAYPAL *NETFLIX 2"]) == "paypal netflix"
-    assert rule_keyword(["AMAZON MKTP US", "AMAZON.COM"]) == ""
-    assert rule_keyword([]) == ""
-    assert rule_keyword(["7-ELEVEN 123", "7-ELEVEN 456"]) == "7-eleven"
-    assert rule_keyword(["MORGAN STANLEY ACH DEBIT PPD ID: 123"]) == "morgan stanley"
 
 
 def test_row_id_stable_and_twins_equal():
@@ -185,7 +172,7 @@ def _old_apply(df, rules):
     return df
 
 
-def test_normalizer_regression_gate(tmp_path, capsys):
+def test_normalizer_regression_gate(tmp_path, capsys, old_demo_rules):
     """Every demo row whose rule label changes under the normalizer must be
     explained by it: the normalizer must actually have altered that row's
     description (padding, '*' or '#'). Prints the diff for the report."""
@@ -199,9 +186,9 @@ def test_normalizer_regression_gate(tmp_path, capsys):
     master = pd.read_csv(data / "SORTED" / "edited_combined_transactions.csv",
                          dtype=str, keep_default_na=False)
     base = master[["description", "master_category", "sub_category"]].copy()
-    rules = pd.read_csv(repo / "Test Data" / "SORTED" / "rules.csv", encoding="utf-8-sig").fillna("")
+    rules = pd.read_csv(old_demo_rules, encoding="utf-8-sig").fillna("")
     old = _old_apply(base.copy(), rules)
-    new = apply_auto_categories(base.copy(), repo / "Test Data" / "SORTED" / "rules.csv")
+    new = apply_auto_categories(base.copy(), old_demo_rules)
     changed = ((old["master_category"] != new["master_category"])
                | (old["sub_category"] != new["sub_category"]))
     with capsys.disabled():

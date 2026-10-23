@@ -2,3 +2,12 @@ merchant,master_category,sub_category,patterns,added
 Zelle received,Income,,zelle payment from,2026-10-22
 Venmo,,Venmo,venmo,2026-10-22
 Cityline Transit,Expense,Transit,,2026-10-22
+Northwind Labs payroll,Income,,payroll,2026-10-22
+Card payment received,Transfer,,payment thank you,2026-10-22
+Discover payment,Transfer,,e-payment,2026-10-22
+Chase card payment,Transfer,,payment to chase card,2026-10-22
+Zelle sent,Expense,Zelle,zelle payment to,2026-10-22
+ATM withdrawal,Expense,Cash,atm withdrawal,2026-10-22
+Maple Street Grocery,Expense,,maple street grocery,2026-10-22
+Brightleaf Pharmacy,Expense,,brightleaf pharmacy,2026-10-22
+Venmo cashout,Income,Venmo,,2026-10-22

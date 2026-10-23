@@ -47,9 +47,9 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 
 ## Converting the old rules (ticket 08)
 - `convert_proposals` must reproduce what the keywords give each spelling on load (`_keyword_rule` is `apply_auto_categories` for one row): keywords **stack** (`cashout` labels a row, a later `venmo` adds its category), so a spelling's merchant carries both. A keyword whose spellings end up labeled differently makes one proposal each. A first version gave each spelling only its first keyword and dropped 71 demo rows' category.
-- Spellings already a merchant's are never proposed again. A keyword matching nothing today becomes a merchant holding only its pattern. Each spelling's label comes from a row the keyword matched, not an arbitrary row of the spelling.
-- Proposals are rules for *new* rows only. The past is kept by `freeze_keyword_labels` (stores what the keywords give each row) and `keep_past` (drops a rule that would still move a past row). Test the guarantee as a value diff of `rule_labels` before and after, not `DataFrame.equals` (dtypes differ after the round trip).
-- `valid_keywords` is the one list of what loading applies: a typo'd label alone is skipped, so it's never converted or counted. Default names come from `_free_name`: never another merchant's name or someone else's spelling.
+- Spellings already a merchant's are never proposed again: an alias's, and a spelling a merchant row is named exactly after (it owns those rows through `merchant_of` with no alias row, and its rule beats the keyword). A keyword matching nothing today becomes a merchant holding only its pattern. Each spelling's label comes from a row the keyword matched, not an arbitrary row of the spelling.
+- Proposals are rules for *new* rows only. The past is kept by `freeze_keyword_labels` (stores what the keywords give each row, or what `review_choices` says the review chose) and `keep_past` (drops a rule that would still move a past row, repeating until nothing moves). Test the guarantee as a value diff of `rule_labels` before and after, not `DataFrame.equals` (dtypes differ after the round trip).
+- `valid_keywords` is the one list of what loading applies: a typo'd label alone is skipped, so it's never converted or counted. Default names come from `_free_name`: never another merchant's name or someone else's spelling. `apply_conversion` refuses a reviewed name that clashes ignoring case, as rename does.
 - `apply_conversion` refuses two proposals with one name, or a name already a merchant's. The review's edits (name, label, category, ticked spellings, keep pattern) arrive as the edited proposals.
 
 ## Overview (`merchant_overview`, `sort_merchants`)
@@ -58,7 +58,7 @@ Terms (spelling, merchant, alias, rule, pattern) are defined in `CONTEXT.md`. Th
 - `display_name` is the one rule for showing a name: as typed when you gave it, capitals for a bare spelling. Groups and cards both use it.
 
 ## Rules on load
-- `load_transactions` applies merchants' rules (`apply_rules`) **before** the `rules.csv` keywords, so a merchant's rule wins and the keywords only fill what's left (until ticket 10 removes them). Same semantics as the keywords: the label goes only on rows with none (a hand label wins), and the category only fills a blank one where the labels agree. A category-only merchant fills any of its rows.
+- `load_transactions` applies merchants' rules (`apply_rules`) **before** the `rules.csv` keywords, so a merchant's rule wins and the keywords only fill what's left (only while an unconverted `rules.csv` exists). Same semantics as the keywords: the label goes only on rows with none (a hand label wins), and the category only fills a blank one where the labels agree. A category-only merchant fills any of its rows.
 
 ## Name-similarity suggestions (`Modules/similar.py`)
 - `PREFIX` and `CUTOFF` were measured together on EmbeddingGemma 2. A different prefix or model moves every score, so re-run `merchant_eval.py` against the answer key before changing either. The research embedded spellings further cleaned (punctuation, `sq`/`tst` prefixes and `inc`/`llc` suffixes stripped); the module sends the bare spelling, so `merchant_eval.py` is the number to trust.

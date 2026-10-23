@@ -287,11 +287,12 @@ def cardapp(tmp_path_factory):
     import runpy
     data = tmp_path_factory.mktemp("cards")
     _replacement(data)
-    rules = data / "rules.csv"
-    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)
-    saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH")}
+    (data / "SORTED").mkdir(exist_ok=True)
+    for name in ("merchants.csv", "merchant_aliases.csv"):
+        shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
+    saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_EMBED_URL")}
     os.environ["FINANCE_DATA_DIR"] = str(data)
-    os.environ["FINANCE_RULES_PATH"] = str(rules)
+    os.environ.pop("FINANCE_EMBED_URL", None)
     try:
         yield runpy.run_path(str(REPO / "app.py"), run_name="test_cards_app")
     finally:

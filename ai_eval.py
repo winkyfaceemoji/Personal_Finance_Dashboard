@@ -93,10 +93,9 @@ def main() -> int:
     try:
         shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
         (data / "SORTED").mkdir()
-        for name in ("rules.csv", "merchants.csv", "merchant_aliases.csv"):     # never the real data
+        for name in ("merchants.csv", "merchant_aliases.csv"):     # never the real data
             shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
         os.environ["FINANCE_DATA_DIR"] = str(data)
-        os.environ["FINANCE_RULES_PATH"] = str(data / "SORTED" / "rules.csv")
         app = runpy.run_path(str(REPO / "app.py"), run_name="ai_eval")
         passed = 0
         for question, expected in CASES:

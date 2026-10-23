@@ -46,21 +46,22 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server(tmp_path_factory, old_demo_rules):
     data = tmp_path_factory.mktemp("uidata")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
-    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", data / "rules.csv")
     # The demo merchants too, so a merged merchant's card (Venmo: two
     # spellings, money in and out) is drawn and checked like any other
     (data / "SORTED").mkdir()
     for name in ("merchants.csv", "merchant_aliases.csv"):
         shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
+    # the old keywords too, so the CONVERT RULES review is drawn
+    shutil.copy(old_demo_rules, data / "SORTED" / "rules.csv")
     # and a pattern that matches a demo bakery, so a "Same as …?" line is drawn
     with open(data / "SORTED" / "merchants.csv", "a", encoding="utf-8") as f:
         f.write("Bakeries,Expense,,bakery,\n")
     port = _free_port()
-    env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_RULES_PATH=str(data / "rules.csv"),
-               FINANCE_PORT=str(port), FINANCE_DEBUG="0")
+    env = dict(os.environ, FINANCE_DATA_DIR=str(data), FINANCE_PORT=str(port), FINANCE_DEBUG="0")
+    env.pop("FINANCE_EMBED_URL", None)
     proc = subprocess.Popen([sys.executable, str(REPO / "app.py")], cwd=REPO, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}/"

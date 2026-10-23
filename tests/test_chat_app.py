@@ -19,12 +19,12 @@ def appmod(tmp_path_factory):
     data = tmp_path_factory.mktemp("data")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
     (data / "SORTED").mkdir()
-    for name in ("rules.csv", "merchants.csv", "merchant_aliases.csv"):     # never write the demo files
+    for name in ("merchants.csv", "merchant_aliases.csv"):     # never write the demo files
         shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
-    keys = ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH", "FINANCE_LLM_URL")
+    keys = ("FINANCE_DATA_DIR", "FINANCE_EMBED_URL", "FINANCE_LLM_URL")
     saved = {k: os.environ.get(k) for k in keys}
     os.environ["FINANCE_DATA_DIR"] = str(data)
-    os.environ["FINANCE_RULES_PATH"] = str(data / "SORTED" / "rules.csv")
+    os.environ.pop("FINANCE_EMBED_URL", None)
     try:
         yield runpy.run_path(str(REPO / "app.py"), run_name="test_chat_app")
     finally:

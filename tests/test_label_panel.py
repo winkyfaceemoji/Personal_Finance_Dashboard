@@ -17,11 +17,12 @@ def appmod(tmp_path_factory):
     import runpy
     data = tmp_path_factory.mktemp("data")
     shutil.copytree(REPO / "Test Data" / "RAW", data / "RAW")
-    rules = data / "rules.csv"
-    shutil.copy(REPO / "Test Data" / "SORTED" / "rules.csv", rules)          # never write the demo rules
-    saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_RULES_PATH")}
+    (data / "SORTED").mkdir()
+    for name in ("merchants.csv", "merchant_aliases.csv"):                # never write the demo files
+        shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
+    saved = {k: os.environ.get(k) for k in ("FINANCE_DATA_DIR", "FINANCE_EMBED_URL")}
     os.environ["FINANCE_DATA_DIR"] = str(data)
-    os.environ["FINANCE_RULES_PATH"] = str(rules)
+    os.environ.pop("FINANCE_EMBED_URL", None)                             # never a real embedding server
     try:
         yield runpy.run_path(str(REPO / "app.py"), run_name="test_app")
     finally:
@@ -32,8 +33,12 @@ def appmod(tmp_path_factory):
                 os.environ[k] = v
 
 
-def test_rules_path_override(appmod):
-    assert Path(appmod["RULES_PATH"]).parent != REPO
+def test_rules_csv_is_read_from_the_data_folder_copy(appmod):
+    assert Path(appmod["RULES_PATH"]) == Path(os.environ["FINANCE_DATA_DIR"]) / "SORTED" / "rules.csv"
+
+
+def test_the_theme_buttons_set_the_theme(appmod):
+    assert any(k.startswith("theme-store.data") for k in appmod["app"].callback_map)
 
 
 def test_unreviewed_amounts(appmod):
@@ -244,7 +249,7 @@ def test_render_keeps_what_the_user_set_on_cards(appmod):
     # Labeling one group re-renders the list; typed subcategories, Remember
     # choices and opened row lists on the other cards must survive it
     from Modules.labels import unlabeled_groups
-    g = next(x for x in unlabeled_groups(_live(appmod)["df"]) if not x["fallback"] and not x["mixed"])
+    g = next(x for x in _live(appmod)["_todo_groups"]("all") if not x["fallback"] and not x["mixed"])
     # rendered closed, then the user clicked its summary once: now open
     children, _ = _render(appmod, kept_sub={g["key"]: "Coffee"}, kept_rem={g["key"]: []},
                           kept_open={g["key"]: False}, toggles={g["key"]: 1})
@@ -262,7 +267,7 @@ def _live(appmod):
 
 def _bulk_group(g_):
     from Modules.labels import unlabeled_groups
-    return next(g for g in unlabeled_groups(g_["df"]) if not g["fallback"] and not g["mixed"])
+    return next(g for g in g_["_todo_groups"]("all") if not g["fallback"] and not g["mixed"])
 
 
 def _group_trig(grp, cat="Expense", sig=None):
@@ -284,6 +289,7 @@ def merchant_files(appmod):
     g_ = _live(appmod)
     folder = g_["MASTER_PATH"].parent
     master = g_["MASTER_PATH"].read_bytes()       # put back after, so later tests still find unlabeled rows
+    demo = {n: (folder / n).read_bytes() for n in ("merchants.csv", "merchant_aliases.csv") if (folder / n).exists()}
 
     def write(merchants_csv, aliases_csv):
         (folder / "merchants.csv").write_text(merchants_csv, encoding="utf-8")
@@ -292,6 +298,8 @@ def merchant_files(appmod):
     yield write
     for name in ("merchants.csv", "merchant_aliases.csv"):
         (folder / name).unlink(missing_ok=True)
+    for name, data in demo.items():
+        (folder / name).write_bytes(data)
     g_["MASTER_PATH"].write_bytes(master)
     g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
 
@@ -438,7 +446,7 @@ def test_all_merchants_lists_every_merchant_all_time_and_folds_the_rest(appmod, 
     by_spend = sort_merchants(items, "spend")
     biggest, rest = by_spend[:n], by_spend[n:]                   # "Other" always holds the smallest
     texts = list(_in_order(children))
-    titles = [t for t in texts if t in {i["name"] for i in items}]
+    titles = list(dict.fromkeys(t for t in texts if t in {i["name"] for i in items}))   # a card may say its name twice (Venmo: its category)
     assert titles == [i["name"] for i in sort_merchants(biggest, sort)]   # the biggest, in the chosen order
     assert max(i["out"] for i in rest) <= min(i["out"] for i in biggest)
     other = next(t for t in texts if t.startswith("Other · "))
@@ -786,14 +794,15 @@ def test_saving_patterns_previews_what_they_would_suggest(appmod, merchant_files
 # ── Converting the old rules (ticket 08) ──────────────────────────────────────
 
 @pytest.fixture
-def keep_rules(appmod, merchant_files):
-    """The shared rules.csv back as it was after the test (conversion retires it)."""
+def keep_rules(appmod, merchant_files, old_demo_rules):
+    """The demo as it was before its keywords became merchants: the old
+    keywords in rules.csv and no merchants, for one test."""
     g_ = _live(appmod)
-    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10), "spelling,merchant,status" + chr(10))
     rules = Path(g_["RULES_PATH"])
-    saved = rules.read_bytes()
+    rules.write_bytes(old_demo_rules.read_bytes())
+    merchant_files("merchant,master_category,sub_category,patterns,added" + chr(10), "spelling,merchant,status" + chr(10))
     yield rules
-    rules.write_bytes(saved)
+    rules.unlink(missing_ok=True)
     g_["df"] = g_["load_transactions"](g_["MASTER_PATH"], rules_path=g_["RULES_PATH"])
 
 
@@ -861,7 +870,7 @@ def test_a_conversion_previewed_before_rules_csv_changed_writes_nothing(appmod, 
     pending, _ = g_["_convert_preview"](g_["_convert_proposals"]())
     keep_rules.write_text(keep_rules.read_text(encoding="utf-8") + "newshop,Expense,," + chr(10), encoding="utf-8")
     status, _, _, _ = g_["_do_merchant_change"](pending, 0)
-    assert status.startswith("The merchants or rules.csv changed since the preview")
+    assert status.startswith("The data, the merchants or rules.csv changed since the preview")
     assert keep_rules.exists()
 
 
@@ -976,8 +985,11 @@ def test_undo_refuses_after_rules_change(appmod):
     master, rules = g_["MASTER_PATH"], g_["RULES_PATH"]
     _, undo, _, _ = g_["_do_label"](_group_trig(_bulk_group(g_)), "", False, 0, "all")
     after = master.read_bytes()
-    rules.write_text(rules.read_text() + "zzz unrelated shop,Expense,\n")
-    status, undo2, _, _ = g_["_do_undo"](undo, 1)
+    rules.write_text("keyword,master_category,sub_category\nzzz unrelated shop,Expense,\n")
+    try:
+        status, undo2, _, _ = g_["_do_undo"](undo, 1)
+    finally:
+        rules.unlink()
     assert status.startswith("Can't undo") and undo2 is None
     assert master.read_bytes() == after
 
@@ -996,7 +1008,7 @@ def test_label_click_refuses_group_label_on_mixed_or_fallback(appmod):
     g_ = _live(appmod)
     master = g_["MASTER_PATH"]
     before = master.read_bytes()
-    risky = [g for g in unlabeled_groups(g_["df"]) if g["fallback"] or g["mixed"]]
+    risky = [g for g in g_["_todo_groups"]("all") if g["fallback"] or g["mixed"]]
     assert risky, "Test Data should contain at least one mixed or fallback group"
     status, _, _, _ = g_["_do_label"](_group_trig(risky[0]), "", False, 0, "all")
     assert status.startswith("Label these one at a time")
@@ -1037,14 +1049,6 @@ def test_label_refreshes_when_master_changed_underneath(appmod):
     assert master.read_bytes() == before                      # nothing written
     df = g_["df"]                                             # reloaded: the list can now be redrawn correctly
     assert (df.loc[row_ids(df) == first["row_id"], "master_category"] == "Expense").all()
-
-
-def _rule_safe_group(g_):
-    """A bulk group whose rule is allowed right now (so add_rule is reached)."""
-    from Modules.labels import read_rules, rule_check, unlabeled_groups
-    rules = read_rules(g_["RULES_PATH"])
-    return next(g for g in unlabeled_groups(g_["df"])
-                if not g["fallback"] and not g["mixed"] and rule_check(g_["df"], rules, g)["ok"])
 
 
 def test_label_keeps_undo_when_merchant_files_fail(appmod, monkeypatch):

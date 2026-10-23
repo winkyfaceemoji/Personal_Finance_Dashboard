@@ -480,7 +480,8 @@ def convert_proposals(rows: pd.DataFrame, rules: pd.DataFrame, merchants: Mercha
     spend = spend_by_spelling(rows)
     taken = {n.casefold() for n in set(merchants.table["merchant"]) | set(merchants.alias_of.values())}
     every_spelling = set(spelling) | set(merchants.alias_of)
-    claimed, props = set(merchants.alias_of), []
+    claimed = set(merchants.alias_of) | (set(spelling) & set(merchants.table["merchant"]))
+    props = []
     for k in keywords:
         hit = text.str.contains(k["kw"], regex=False)
         mine = sorted(set(spelling[hit]) - {""} - claimed)
@@ -510,12 +511,14 @@ def apply_conversion(merchants: Merchants, props: list[dict]):
     """Both files with each (reviewed) proposal as a merchant: its name,
     rule, pattern and the spellings left ticked. Save with save_change."""
     names = [p["name"].strip() for p in props]
-    for name in names:
+    folded = [n.casefold() for n in names]
+    existing = {n.casefold() for n in merchants.table["merchant"]}
+    for name, f in zip(names, folded):
         if not name:
             raise ValueError("A merchant needs a name")
-        if names.count(name) > 1:
+        if folded.count(f) > 1:
             raise ValueError(f"Two merchants would be called {name}")
-        if name in set(merchants.table["merchant"]):
+        if f in existing:
             raise ValueError(f"A merchant called {name} already exists")
     rows = pd.DataFrame([{"merchant": n, "master_category": p["label"], "sub_category": p["category"],
                           "patterns": p["pattern"], "added": ""} for n, p in zip(names, props)], columns=MERCHANT_COLUMNS)
@@ -525,29 +528,65 @@ def apply_conversion(merchants: Merchants, props: list[dict]):
     return pd.concat([merchants.table, rows], ignore_index=True), aliases
 
 
-def freeze_keyword_labels(hand: pd.DataFrame, merchants: Merchants, rules_path):
-    """(frozen, shown, changed): `hand` with every label and category the
-    rules.csv keywords give a row today stored on that row, so retiring them
-    moves nothing in the past; `shown` is what loading shows now; `changed`
-    marks the rows that got one. Merchants' own rules aren't frozen."""
+def review_choices(defaults: list[dict], reviewed: list[dict]) -> dict:
+    """{spelling: (label, category) or None}: what the review chose for the
+    past rows a keyword labeled. An unticked spelling is None (its keyword
+    labels go, so an accidental match is fixed, not copied); a proposal whose
+    label or category was changed gives its spellings the reviewed pair."""
+    if len(defaults) != len(reviewed):
+        raise ValueError("The list changed — reopen CONVERT RULES to see it again.")
+    out = {}
+    for d, r in zip(defaults, reviewed):
+        for s in set(d["spellings"]) - set(r["spellings"]):
+            out[s] = None
+        if (r["label"], r["category"]) != (d["label"], d["category"]):
+            for s in r["spellings"]:
+                out[s] = (r["label"], r["category"])
+    return out
+
+
+def freeze_keyword_labels(hand: pd.DataFrame, merchants: Merchants, rules_path, choices=None):
+    """(frozen, kept, stored): `hand` with the label and category the
+    rules.csv keywords give each row today stored on that row, so retiring
+    them moves nothing in the past, except where the review chose otherwise
+    (`choices`, from review_choices). `kept` is each row's label after the
+    conversion; `stored` marks the rows that got one. Merchants' own rules
+    aren't frozen."""
     shown = rule_labels(hand, merchants, rules_path)
-    changed = (shown != rule_labels(hand, merchants, None)).any(axis=1)
+    base = rule_labels(hand, merchants, None)
+    kept = shown.copy()
+    keyword_given = (shown != base).any(axis=1)
+    spelling = hand["description"].map(merchant_key)
+    for s, pair in (choices or {}).items():
+        rows = keyword_given & (spelling == s)
+        if pair is None:
+            kept.loc[rows] = base.loc[rows]
+        else:
+            kept.loc[rows, "master_category"] = pair[0] if pair[0] else base.loc[rows, "master_category"]
+            kept.loc[rows, "sub_category"] = pair[1] if pair[1] else base.loc[rows, "sub_category"]
+    stored = (kept != base).any(axis=1)
     frozen = hand.copy()
     for c in ("master_category", "sub_category"):
         frozen[c] = frozen[c].fillna("").astype(str).str.strip()
-        frozen.loc[changed, c] = shown.loc[changed, c]
-    return frozen, shown, changed
+        frozen.loc[stored, c] = kept.loc[stored, c]
+    return frozen, kept, stored
 
 
-def keep_past(frozen: pd.DataFrame, shown: pd.DataFrame, merchants: Merchants, props: list[dict]):
+def keep_past(frozen: pd.DataFrame, kept: pd.DataFrame, merchants: Merchants, props: list[dict]):
     """(props, dropped): a proposal whose rule would still move a past row
     (one a keyword didn't label, but its broader merchant would) keeps its
-    spellings and pattern but no rule, so every total stays as it is."""
-    after = merchants_from(*apply_conversion(merchants, props))
-    moved = (rule_labels(frozen, after, None) != shown).any(axis=1)
-    bad = set(merchant_of(frozen.loc[moved, "description"], after))
-    out = [dict(p, label="", category="") if p["name"] in bad and (p["label"] or p["category"]) else p for p in props]
-    return out, sum(1 for p, q in zip(props, out) if p is not q)
+    spellings and pattern but no rule, so every past label stays as `kept`.
+    Repeats until nothing moves (each round drops at least one rule)."""
+    out = list(props)
+    while True:
+        after = merchants_from(*apply_conversion(merchants, out))
+        moved = (rule_labels(frozen, after, None) != kept).any(axis=1)
+        bad = set(merchant_of(frozen.loc[moved, "description"], after))
+        new = [dict(p, label="", category="") if p["name"] in bad and (p["label"] or p["category"]) else p
+               for p in out]
+        if all(a is b for a, b in zip(new, out)):
+            return out, sum(1 for p, q in zip(props, out) if p is not q)
+        out = new
 
 
 def rule_labels(hand: pd.DataFrame, merchants: Merchants, rules_path) -> pd.DataFrame:

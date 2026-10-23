@@ -9,7 +9,7 @@ import pytest
 
 from Modules.merchants import (
     apply_conversion, convert_proposals, dismiss, find_merchant, freeze_keyword_labels, keep_past, label_changes,
-    rule_labels, valid_keywords, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
+    review_choices, rule_labels, valid_keywords, merchant_list, merchant_of, merchant_overview, merchants_from, merge,
     names_in_use, pattern_suggestions, read_merchants, remember, remember_check, rename, restore_files, save_change,
     save_merchants, set_patterns, snapshot_files, sort_merchants, split,
 )
@@ -157,7 +157,7 @@ def test_disagreeing_files_fall_back_to_the_spelling_and_say_so(tmp_path):
 REPO = Path(__file__).resolve().parent.parent
 
 
-def test_demo_merchants_change_only_the_rows_they_mean_to(tmp_path):
+def test_demo_merchants_give_what_the_old_keywords_gave_and_only_add_their_own(tmp_path, old_demo_rules):
     import contextlib
     import io
     import shutil
@@ -168,20 +168,19 @@ def test_demo_merchants_change_only_the_rows_they_mean_to(tmp_path):
     with contextlib.redirect_stdout(io.StringIO()):
         run_ingest(data)
     master = data / "SORTED" / "edited_combined_transactions.csv"
-    rules = REPO / "Test Data" / "SORTED" / "rules.csv"
-    without = load_transactions(master, rules_path=rules)
+    keywords = load_transactions(master, rules_path=old_demo_rules)
     for name in ("merchants.csv", "merchant_aliases.csv"):
         shutil.copy(REPO / "Test Data" / "SORTED" / name, data / "SORTED" / name)
-    with_ = load_transactions(master, rules_path=rules)
+    with_ = load_transactions(master)
 
     m = read_merchants(data / "SORTED")
     assert m.problems == []
     assert merchant_list(with_["description"], m)["Zelle received"] == [
         "zelle payment from alex morrow", "zelle payment from casey lin", "zelle payment from jordan rivers",
         "zelle payment from priya nandan", "zelle payment from sam okafor"]
-    changed = (with_["master_category"] != without["master_category"]) | (
-        with_["sub_category"] != without["sub_category"])
-    assert set(with_.loc[changed, "description"]) == {"CITYLINE TRANSIT FARE"}     # the only new rule
+    changed = (with_["master_category"] != keywords["master_category"]) | (
+        with_["sub_category"] != keywords["sub_category"])
+    assert set(with_.loc[changed, "description"]) == {"CITYLINE TRANSIT FARE"}     # the only rule no keyword had
     assert (with_.loc[changed, ["master_category", "sub_category"]] == ["Expense", "Transit"]).all().all()
 
 
@@ -600,6 +599,55 @@ def test_the_past_is_frozen_and_a_rule_that_would_move_it_is_dropped(tmp_path):
     assert dropped == 1 and (kept[0]["label"], kept[0]["category"]) == ("", "")   # it would label the 0377 row
     after = merchants_from(*apply_conversion(m, kept))
     assert rule_labels(frozen, after, None).equals(shown)
+
+
+def test_a_spelling_a_merchant_is_named_after_is_never_taken_over(tmp_path):
+    # A merchant row named exactly like a spelling owns it, with no alias row
+    folder = tmp_path / "m"
+    save_merchants(folder, pd.DataFrame([{"merchant": "sq little fern bakery", "master_category": "Expense",
+                                          "sub_category": "Coffee", "patterns": "", "added": ""}]),
+                   pd.DataFrame(columns=["spelling", "merchant", "status"]), True)
+    m = read_merchants(folder)
+    rules_path = tmp_path / "rules.csv"
+    rules_path.write_text("keyword,master_category,sub_category\nlittle fern,Expense,Dining\n", encoding="utf-8")
+    hand = _rows(("2026-01-02", "SQ *LITTLE FERN BAKERY", -6.0, ""), ("2026-01-09", "SQ *LITTLE FERN BAKERY", -7.0, ""))
+    props = convert_proposals(hand, read_rules_csv(rules_path), m)
+    assert [p["spellings"] for p in props] == [[]]
+    frozen, kept, _ = freeze_keyword_labels(hand, m, rules_path)
+    props, dropped = keep_past(frozen, kept, m, props)
+    after = merchants_from(*apply_conversion(m, props))
+    assert rule_labels(frozen, after, None).values.tolist() == [["Expense", "Coffee"]] * 2
+
+
+def test_the_review_decides_what_past_rows_keep(tmp_path):
+    rules_path = tmp_path / "rules.csv"
+    rules_path.write_text("keyword,master_category,sub_category\nsq,Expense,Dining\nmaple street,Expense,\n",
+                          encoding="utf-8")
+    hand = _rows(("2026-01-02", "SQ *LITTLE FERN BAKERY", -6.0, ""),       # an accidental match
+                 ("2026-01-03", "MAPLE STREET GROCERY", 30.0, ""))
+    m = read_merchants(tmp_path / "m")
+    defaults = convert_proposals(hand, read_rules_csv(rules_path), m)
+    reviewed = [dict(defaults[0], spellings=[], label="", category=""),
+                dict(defaults[1], label="Income")]
+    choices = review_choices(defaults, reviewed)
+    assert choices == {"sq little fern bakery": None, "maple street grocery": ("Income", "")}
+    frozen, kept, stored = freeze_keyword_labels(hand, m, rules_path, choices)
+    assert kept.values.tolist() == [["", ""], ["Income", ""]] and stored.tolist() == [False, True]
+    assert frozen[["master_category", "sub_category"]].values.tolist() == [["", ""], ["Income", ""]]
+    with pytest.raises(ValueError):
+        review_choices(defaults, reviewed[:1])
+
+
+def test_conversion_names_clash_ignoring_case(tmp_path):
+    folder = tmp_path / "m"
+    save_merchants(folder, pd.DataFrame([{"merchant": "Venmo", "master_category": "", "sub_category": "Venmo",
+                                          "patterns": "", "added": ""}]),
+                   pd.DataFrame(columns=["spelling", "merchant", "status"]), True)
+    prop = {"name": "venmo", "label": "Expense", "category": "", "pattern": "", "spellings": []}
+    with pytest.raises(ValueError, match="already exists"):
+        apply_conversion(read_merchants(folder), [prop])
+    with pytest.raises(ValueError, match="Two merchants"):
+        apply_conversion(read_merchants(tmp_path / "none"), [prop, dict(prop, name="VENMO")])
 
 
 def test_default_names_never_collide(tmp_path):

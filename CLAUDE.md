@@ -29,7 +29,6 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 | Variable | Effect |
 |----------|--------|
 | `FINANCE_DATA_DIR` | Data folder. It overrides `config.json`, which overrides `Test Data/` (ADR 0001). |
-| `FINANCE_RULES_PATH` | Rules file. Defaults to `SORTED/rules.csv` in the data dir (ADR 0024). |
 | `FINANCE_EMBED_URL` | An embedding llama-server for merchant name-similarity suggestions. Unset: they stay off (until the app runs its own, ADR 0023). |
 | `FINANCE_LLM_URL` / `FINANCE_LLM_MODEL` | The chat's llama-server, default `http://127.0.0.1:8080`, and the model `start_llm.ps1` loads (ADR 0021). |
 | `FINANCE_HOST` / `FINANCE_DEBUG` / `FINANCE_PORT` | Defaults are `127.0.0.1` / `0` / `8050`. Keep local-only and debug-off as defaults (ADR 0016). |
@@ -39,9 +38,9 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - `RAW/<institution>/*.csv` is the input. The top-level folder is the institution (ADR 0004). Files may sit at any depth.
 - `SORTED/edited_combined_transactions.csv` is **the master**: the unified columns plus `master_category` / `sub_category`.
 - `SORTED/combined_transactions.csv` is raw pipeline output. The app doesn't read it.
-- `SORTED/rules.csv` holds the rules. It names real merchants, so it is data, not code (ADR 0024).
+- `SORTED/rules.csv` holds the old keywords, only until the panel's CONVERT → turns them into merchants and moves it to `backups/rules-converted-<date>.csv` (ADR 0026). It names real merchants, so it is data, not code (ADR 0024).
 - `SORTED/merchants.csv` and `SORTED/merchant_aliases.csv` hold merchants and which spellings belong to them. Read with `read_merchants`, written only with `save_merchants` (ADR 0025). When they disagree or can't be read, the header's attention line says so.
-- `SORTED/backups/` holds rotating master backups (10 kept) and the daily `before-labeling-*.csv` snapshots, which are never pruned.
+- `SORTED/backups/` holds rotating master backups (10 kept), the daily `before-labeling-*.csv` snapshots and the retired `rules-converted-*.csv`; the last two are never pruned.
 - Other side files in `SORTED/` feed the header's attention line:
   - `orphaned_labels.csv`
   - `skipped_files.csv`
@@ -50,7 +49,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
   - `linked_cards.csv`
   - `last_import.csv`
   - `not_transfers.csv`
-- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up `rules.csv` and merchant files), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
+- `Test Data/RAW/` is made-up demo data from `make_demo_data.py`, tracked. Never copy real exports into it (ADR 0024). `Test Data/SORTED/` (except its made-up merchant files), `config.json`, a root `rules.csv` and the legacy `Data/` are git-ignored. Real data never enters the repo.
 
 ## Conventions
 
@@ -66,7 +65,7 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 ## Project-wide gotchas
 
 - **The master's labels are irreplaceable.** Only `Modules/safety.py` writes the master: backup, atomic swap, `MASTER_LOCK` (ADR 0003). Never write it with `to_csv` directly.
-- **Tests and scripts must never touch the real `rules.csv` or data.** Point `FINANCE_RULES_PATH` and `FINANCE_DATA_DIR` at copies, because the app can add and delete rules. The ingest tests already run on a temp copy of `Test Data/`.
+- **Tests and scripts must never touch the real data.** Point `FINANCE_DATA_DIR` at a copy (the merchant files and `rules.csv` follow it), because the app writes labels and rules. The ingest tests already run on a temp copy of `Test Data/`.
 - **`import app` has side effects.** It resolves the data dir, auto-runs the ingest if no master exists, and loads the module-global `df`.
 - **Never anchor to today.** "Latest" means the newest transaction (ADR 0013).
 - **Excel round-trips.** Users open the CSVs in Excel. Every reader must accept a UTF-8 BOM or Windows-1252, `3/15/2024` dates, `($1,234.50)` amounts, and card numbers stripped of leading zeros. A file held open by Excel fails writes on Windows, so report it in the UI rather than crashing.
@@ -97,3 +96,4 @@ Install dev dependencies with `.venv/Scripts/python.exe -m pip install -r requir
 - [0022](docs/adr/0022-recommendations-cite-a-knowledge-base.md) Recommendations must cite a public knowledge base (not yet built)
 - [0024](docs/adr/0024-no-real-data-in-the-repo.md) No real financial data in the repo: rules live in the data folder, demo data is made up
 - [0025](docs/adr/0025-merchants-own-rules-and-labeling.md) Merchants own the rules; one panel labels and reviews them, with every 0008 safeguard
+- [0026](docs/adr/0026-conversion-stores-the-past.md) Converting rules.csv stores the keywords' past labels on the rows; only the review moves the past
